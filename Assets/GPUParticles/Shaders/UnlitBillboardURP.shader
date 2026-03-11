@@ -195,21 +195,18 @@ Shader "GPUParticles/UnlitBillboardURP"
                 }
                 else if (_RenderMode == 1) // Horizontal
                 {
-                    float3 up = float3(0,1,0);
-                    float3 cf = normalize(cross(_CameraRightWS, _CameraUpWS));
-                    Right = normalize(cross(up, cf));
-                    Up    = up;
-                    Normal= cross(Right, Up);
+                    Right = float3(1, 0, 0);
+                    Up    = float3(0, 0, 1);
+                    Normal= float3(0, 1, 0);
                 }
                 else if (_RenderMode == 2) // Vertical
                 {
-                    float3 up = float3(0,1,0);
-                    float3 toCam = normalize(_CameraPosWS - posWS);
-                    toCam.y = 0;
-                    float3 f = normalize(toCam);
-                    Right = normalize(cross(up, f));
+                    float3 up = float3(0, 1, 0);
+                    float3 cameraForward = normalize(cross(_CameraRightWS, _CameraUpWS));
+                    Right = normalize(cross(up, cameraForward));
+                    if (length(Right) < 1e-6) Right = float3(1, 0, 0);
                     Up    = up;
-                    Normal= cross(Right, Up);
+                    Normal= normalize(cross(Right, Up));
                 }
                 else // Billboard
                 {
@@ -227,7 +224,18 @@ Shader "GPUParticles/UnlitBillboardURP"
 
                 float2 quadUV[4] = { float2(0,0), float2(1,0), float2(1,1), float2(0,1) };
                 float2 localXY[4]= { float2(-0.5,-0.5), float2(0.5,-0.5), float2(0.5,0.5), float2(-0.5,0.5) };
-                float2 local = localXY[corner] * float2(W, (_RenderMode==3)?L:W);
+                
+                float2 local;
+                if (_RenderMode == 1 || _RenderMode == 2)
+                {
+                    float scale = 0.70710678; // 1/sqrt(2)
+                    local = localXY[corner] * float2(W, W) * scale;
+                }
+                else
+                {
+                    local = localXY[corner] * float2(W, (_RenderMode==3)?L:W);
+                }
+                
                 float2 pivotOff = float2(_Pivot.x*W, (_RenderMode==3)?(_Pivot.y*L):(_Pivot.y*W));
                 local -= pivotOff;
 

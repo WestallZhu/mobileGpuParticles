@@ -53,8 +53,8 @@ Shader "Hidden/GPUParticles/SimulateMRT"
                 float   _Pad0;
 
                 // ----- Shape (generic) -----
-                int     _ShapeType;          // 0 Point, 1 Cone, 2 Box, 3 Sphere, 4 Hemisphere
-                int     _ShapeEmitFrom;      // 0 Volume, 1 Surface, 2 Base (for Cone), unused for Sphere/Box
+                int     _ShapeType;          // 0 Sphere, 1 Hemisphere, 2 Cone, 3 Donut, 4 Box, 5 Circle, 6 Edge, 7 Rectangle
+                int     _ShapeEmitFrom;      // 0 Volume, 1 Surface, 2 Base (for Cone)
                 int     _AlignToDirection;   // bool
 
                 // Cone
@@ -71,6 +71,23 @@ Shader "Hidden/GPUParticles/SimulateMRT"
                 // Sphere / Hemisphere
                 float   _ShapeSphereRadius;  // scaled radius
                 float   _Pad2; float _Pad3; float _Pad4;
+
+                // Donut
+                float   _ShapeDonutRadius;   // 主圆环半径
+                float   _ShapeDonutThickness; // 环的厚度
+                float   _Pad9; float _Pad10;
+
+                // Circle
+                float   _ShapeCircleRadius;  // 圆形半径
+                float   _Pad11; float _Pad12; float _Pad13;
+
+                // Edge
+                float   _ShapeEdgeLength;     // 边缘长度
+                float   _Pad14; float _Pad15; float _Pad16;
+
+                // Rectangle
+                float2  _ShapeRectangleSize;  // 矩形尺寸 (width, height)
+                float   _Pad17; float _Pad18;
 
                 // Shape local transform (relative to emitter local)
                 float3  _ShapePosL;
@@ -284,7 +301,248 @@ Shader "Hidden/GPUParticles/SimulateMRT"
                     float3 posL = 0;
                     float3 velL = 0;
 
-                    if (_ShapeType == 1) // Cone
+                    // 0. Sphere
+                    if (_ShapeType == 0)
+                    {
+                        float3 right = normalize(_ShapeRightL);
+                        float3 up    = normalize(_ShapeUpL);
+                        float3 fwd   = normalize(_ShapeFwdL);
+                        
+                        float R = _ShapeSphereRadius;
+                        float3 dirL = SampleSphereDir(u2a);
+                        float r;
+                        if (_ShapeEmitFrom == 1) // Surface (SphereShell)
+                        {
+                            r = R; // 固定半径，表面发射
+                        }
+                        else // Volume
+                        {
+                            r = RadiusWithThickness(urnd.z, R, _ShapeRadiusThickness);
+                        }
+                        // 变换方向到Shape的局部坐标系
+                        float3 dirTransformed = right * dirL.x + up * dirL.y + fwd * dirL.z;
+                        float3 pL = dirTransformed * r;
+                        posL = _ShapePosL + pL;
+
+                        float3 vdirL = (_AlignToDirection != 0) ? normalize(pL) : fwd;
+                        velL = vdirL * _StartSpeed;
+                    }
+                    // 1. Hemisphere
+                    else if (_ShapeType == 1)
+                    {
+                        float3 right = normalize(_ShapeRightL);
+                        float3 up    = normalize(_ShapeUpL);
+                        float3 fwd   = normalize(_ShapeFwdL);
+                        
+                        float R = _ShapeSphereRadius;
+                        float3 dirL = SampleHemisphereDir(u2a); // z>=0
+                        float r;
+                        if (_ShapeEmitFrom == 1) // Surface (HemisphereShell)
+                        {
+                            r = R; // 固定半径，表面发射
+                        }
+                        else // Volume
+                        {
+                            r = RadiusWithThickness(urnd.z, R, _ShapeRadiusThickness);
+                        }
+                        // 变换方向到Shape的局部坐标系
+                        float3 dirTransformed = right * dirL.x + up * dirL.y + fwd * dirL.z;
+                        float3 pL = dirTransformed * r;
+                        posL = _ShapePosL + pL;
+
+                        float3 vdirL = (_AlignToDirection != 0) ? normalize(pL) : fwd;
+                        velL = vdirL * _StartSpeed;
+                    }
+                    // 2. Cone
+                    else if (_ShapeType == 2)
+                    {
+                        //return float4(0,0,0,1);
+                        //o.Color   = float4(0,0,0,1);
+                        float3 right = normalize(_ShapeRightL);
+                        float3 up    = normalize(_ShapeUpL);
+                        float3 fwd   = normalize(_ShapeFwdL);
+
+                        if (_ShapeEmitFrom == 2) // Base disc at shape position
+                        {
+                            float innerR = _ShapeConeRadius * saturate(1.0 - _ShapeRadiusThickness);
+                            float2 d = SampleDisk(urnd.xy, innerR, _ShapeConeRadius);
+                            posL = _ShapePosL + right * d.x + up * d.y;
+
+                            float3 dirL = SampleDirCone(fwd, _ShapeConeAngleRad, urnd.yz);
+                            velL = dirL * _StartSpeed;
+                        }
+                        else if (_ShapeEmitFrom == 0) // Volume
+                        {
+                            float z  = _ShapeConeLength * pow(urnd.x, 1.0/3.0);
+                            float Rz = (_ShapeConeLength > 1e-5) ? (_ShapeConeRadius * (z / _ShapeConeLength)) : 0.0;
+
+                            float Ri = Rz * saturate(1.0 - _ShapeRadiusThickness);
+                            float  r = sqrt(lerp(Ri*Ri, Rz*Rz, urnd.y));
+                            float  phi = 6.28318530718 * urnd.z;
+                            float2 d = float2(r * cos(phi), r * sin(phi));
+
+                            posL = _ShapePosL + right * d.x + up * d.y + fwd * z;
+
+                            float2 u2 = float2(Hash01(id*1669u), Hash01(id*7331u)); 
+                            float3 dirL = SampleDirCone(fwd, _ShapeConeAngleRad, u2);
+                            velL = dirL * _StartSpeed;
+                        }
+                    }
+                    // 3. Donut
+                    else if (_ShapeType == 3)
+                    {
+                        float3 right = normalize(_ShapeRightL);
+                        float3 up    = normalize(_ShapeUpL);
+                        float3 fwd   = normalize(_ShapeFwdL);
+                        
+                        // 在XY平面生成圆环（主圆环）
+                        float phi = 6.28318530718 * urnd.x; // [0, 2π]
+                        float R = _ShapeDonutRadius;
+                        
+                        // 环的厚度采样
+                        float r;
+                        if (_ShapeEmitFrom == 1) // Surface
+                        {
+                            r = _ShapeDonutThickness * 0.5; // 表面：使用固定厚度
+                        }
+                        else // Volume
+                        {
+                            r = _ShapeDonutThickness * 0.5 * sqrt(urnd.y); // 体积：均匀分布
+                        }
+                        
+                        // 在圆环截面内采样
+                        float theta = 6.28318530718 * urnd.z; // 截面角度
+                        float2 offset = float2(r * cos(theta), r * sin(theta));
+                        
+                        // 主圆环中心位置
+                        float2 mainRing = float2(R * cos(phi), R * sin(phi));
+                        
+                        // 最终位置（在XY平面）
+                        float2 pos2D = mainRing + offset;
+                        posL = _ShapePosL + right * pos2D.x + up * pos2D.y;
+                        
+                        // 方向：从圆环中心指向粒子位置
+                        float3 vdirL = (_AlignToDirection != 0) ? normalize(right * pos2D.x + up * pos2D.y) : fwd;
+                        velL = vdirL * _StartSpeed;
+                    }
+                    // 4. Box
+                    else if (_ShapeType == 4)
+                    {
+                        float3 right = normalize(_ShapeRightL);
+                        float3 up    = normalize(_ShapeUpL);
+                        float3 fwd   = normalize(_ShapeFwdL);
+                        float3 sizeB = _ShapeBoxSize;
+
+                        if (_ShapeEmitFrom == 1) // Surface
+                        {
+                            float3 nLocal;
+                            float3 pB = SampleBoxSurface(urnd, sizeB, nLocal);
+                            posL = _ShapePosL + right*pB.x + up*pB.y + fwd*pB.z;
+
+                            float3 dirL = (_AlignToDirection != 0) ? nLocal : fwd;
+                            velL = dirL * _StartSpeed;
+                        }
+                        else // Volume
+                        {
+                            float3 pB = SampleBoxVolume(urnd, sizeB);
+                            posL = _ShapePosL + right*pB.x + up*pB.y + fwd*pB.z;
+
+                            float3 dirL = fwd;
+                            velL = dirL * _StartSpeed;
+                        }
+                    }
+                    // 5. Circle
+                    else if (_ShapeType == 5)
+                    {
+                        float3 right = normalize(_ShapeRightL);
+                        float3 up    = normalize(_ShapeUpL);
+                        float3 fwd   = normalize(_ShapeFwdL);
+                        
+                        float R = _ShapeCircleRadius;
+                        float phi = 6.28318530718 * urnd.x; // [0, 2π]
+                        
+                        float r;
+                        if (_ShapeEmitFrom == 1) // Edge (表面)
+                        {
+                            r = R; // 固定半径，边缘发射
+                        }
+                        else // Volume
+                        {
+                            r = R * sqrt(urnd.y); // 体积：均匀分布
+                        }
+                        
+                        float2 pos2D = float2(r * cos(phi), r * sin(phi));
+                        posL = _ShapePosL + right * pos2D.x + up * pos2D.y;
+                        
+                        float3 vdirL = (_AlignToDirection != 0) ? normalize(right * pos2D.x + up * pos2D.y) : fwd;
+                        velL = vdirL * _StartSpeed;
+                    }
+                    // 6. Edge
+                    else if (_ShapeType == 6)
+                    {
+                        float3 right = normalize(_ShapeRightL);
+                        float3 up    = normalize(_ShapeUpL);
+                        float3 fwd   = normalize(_ShapeFwdL);
+                        
+                        float L = _ShapeEdgeLength;
+                        float t = urnd.x; // [0, 1]
+                        float pos1D = (t - 0.5) * L; // [-L/2, L/2]
+                        
+                        posL = _ShapePosL + right * pos1D;
+                        
+                        float3 vdirL = (_AlignToDirection != 0) ? right : fwd;
+                        velL = vdirL * _StartSpeed;
+                    }
+                    // 7. Rectangle
+                    else if (_ShapeType == 7)
+                    {
+                        float3 right = normalize(_ShapeRightL);
+                        float3 up    = normalize(_ShapeUpL);
+                        float3 fwd   = normalize(_ShapeFwdL);
+                        
+                        float2 size = _ShapeRectangleSize;
+                        
+                        float2 pos2D;
+                        if (_ShapeEmitFrom == 1) // Edge (边缘)
+                        {
+                            // 从矩形边缘采样
+                            float perimeter = 2.0 * (size.x + size.y);
+                            float t = urnd.x * perimeter;
+                            
+                            if (t < size.x)
+                            {
+                                // 底边
+                                pos2D = float2((t / size.x - 0.5) * size.x, -0.5 * size.y);
+                            }
+                            else if (t < size.x + size.y)
+                            {
+                                // 右边
+                                pos2D = float2(0.5 * size.x, ((t - size.x) / size.y - 0.5) * size.y);
+                            }
+                            else if (t < 2.0 * size.x + size.y)
+                            {
+                                // 顶边
+                                pos2D = float2(((t - size.x - size.y) / size.x - 0.5) * size.x, 0.5 * size.y);
+                            }
+                            else
+                            {
+                                // 左边
+                                pos2D = float2(-0.5 * size.x, ((t - 2.0 * size.x - size.y) / size.y - 0.5) * size.y);
+                            }
+                        }
+                        else // Volume
+                        {
+                            // 从矩形内部采样
+                            pos2D = float2((urnd.x - 0.5) * size.x, (urnd.y - 0.5) * size.y);
+                        }
+                        
+                        posL = _ShapePosL + right * pos2D.x + up * pos2D.y;
+                        
+                        float3 vdirL = (_AlignToDirection != 0) ? normalize(right * pos2D.x + up * pos2D.y) : fwd;
+                        velL = vdirL * _StartSpeed;
+                    }
+                    // Fallback (默认使用Cone)
+                    else
                     {
                         float3 right = normalize(_ShapeRightL);
                         float3 up    = normalize(_ShapeUpL);
@@ -311,78 +569,40 @@ Shader "Hidden/GPUParticles/SimulateMRT"
 
                             posL = _ShapePosL + right * d.x + up * d.y + fwd * z;
 
-    
                             float2 u2 = float2(Hash01(id*1669u), Hash01(id*7331u)); 
                             float3 dirL = SampleDirCone(fwd, _ShapeConeAngleRad, u2);
                             velL = dirL * _StartSpeed;
                         }
-                    }
-                    else if (_ShapeType == 2) // Box
-                    {
-                        float3 right = normalize(_ShapeRightL);
-                        float3 up    = normalize(_ShapeUpL);
-                        float3 fwd   = normalize(_ShapeFwdL);
-                        float3 sizeB = _ShapeBoxSize;
-
-                        if (_ShapeEmitFrom == 1) // Surface
+                        else // Surface fallback to Base
                         {
-                            float3 nLocal;
-                            float3 pB = SampleBoxSurface(urnd, sizeB, nLocal);
-                            posL = _ShapePosL + right*pB.x + up*pB.y + fwd*pB.z;
+                            float innerR = _ShapeConeRadius * saturate(1.0 - _ShapeRadiusThickness);
+                            float2 d = SampleDisk(urnd.xy, innerR, _ShapeConeRadius);
+                            posL = _ShapePosL + right * d.x + up * d.y;
 
-                            float3 dirL = (_AlignToDirection != 0) ? nLocal : fwd;
+                            float3 dirL = SampleDirCone(fwd, _ShapeConeAngleRad, urnd.yz);
                             velL = dirL * _StartSpeed;
                         }
-                        else // Volume
-                        {
-                            float3 pB = SampleBoxVolume(urnd, sizeB);
-                            posL = _ShapePosL + right*pB.x + up*pB.y + fwd*pB.z;
-
-                            float3 dirL = float3(0, 0, 1);              // emitter-local forward (Z)
-                            velL = dirL * _StartSpeed;
-                        }
-                    }
-                    else if (_ShapeType == 3) // Sphere
-                    {
-                        float R = _ShapeSphereRadius;
-                        float3 dirL = SampleSphereDir(u2a);
-                        float  r    = RadiusWithThickness(urnd.z, R, _ShapeRadiusThickness);
-                        float3 pL   = dirL * r;
-                        posL = _ShapePosL + (normalize(_ShapeRightL) * pL.x + normalize(_ShapeUpL) * pL.y + normalize(_ShapeFwdL) * pL.z);
-
-                        float3 vdirL = (_AlignToDirection != 0) ? normalize(pL) : float3(0,0,1);
-                        velL = vdirL * _StartSpeed;
-                    }
-                    else if (_ShapeType == 4) // Hemisphere (local +Z half)
-                    {
-                        float R = _ShapeSphereRadius;
-                        float3 dirL = SampleHemisphereDir(u2a); // z>=0
-                        float  r    = RadiusWithThickness(urnd.z, R, _ShapeRadiusThickness);
-                        float3 pL   = dirL * r;
-                        posL = _ShapePosL + (normalize(_ShapeRightL) * pL.x + normalize(_ShapeUpL) * pL.y + normalize(_ShapeFwdL) * pL.z);
-
-                        float3 vdirL = (_AlignToDirection != 0) ? normalize(pL) : float3(0,0,1);
-                        velL = vdirL * _StartSpeed;
-                    }
-                    else // Point (fallback)
-                    {
-                        float3 dirL = _InitialDir;
-                        posL = float3(0,0,0);
-                        velL = normalize(dirL) * _StartSpeed;
                     }
 
                     // finalize spawn in sim space
                     pos  = ToSimSpacePos(posL);
                     vel  = ToSimSpaceVec(velL);
                     life = _StartLifetime;
-                    size = _StartSize;
-                    col  = _StartColor;
+                    
+                    float tSpawn = 0.0;
+                    float4 lutColSpawn  = SAMPLE_TEXTURE2D_LOD(_GradLUT, sampler_GradLUT, float2(tSpawn, 0.5), 0);
+                    float  lutSizeSpawn = SAMPLE_TEXTURE2D_LOD(_SizeLUT, sampler_SizeLUT, float2(tSpawn, 0.5), 0).r;
+                    col   = _StartColor * lutColSpawn;
+                    size  = _StartSize * lutSizeSpawn;
                 }
                
                 // Update alive particles
                 if (life > 0.0)
                 {
-                    life = max(0.0, life - _DeltaTime);
+                    if (!spawn)
+                    {
+                        life = max(0.0, life - _DeltaTime);
+                    }
 
                     // gravity already in correct space
                     vel += _GravityWS * _DeltaTime;

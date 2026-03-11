@@ -7,7 +7,7 @@ namespace GPUParticles
 {
     public enum SimulationSpace { Local = 0, World = 1 }
 
-    public enum ShapeTypeGPU { Point = 0, Cone = 1, Box = 2, Sphere = 3, Hemisphere = 4 }
+    public enum ShapeTypeGPU { Sphere = 0, Hemisphere = 1, Cone = 2, Donut = 3, Box = 4, Circle = 5, Edge = 6, Rectangle = 7 }
     public enum ShapeEmitFromGPU { Volume = 0, Surface = 1, Base = 2 } // Base for Cone
 
     public enum GPURenderMode { Billboard = 0, HorizontalBillboard = 1, VerticalBillboard = 2, StretchedBillboard = 3 }
@@ -30,6 +30,7 @@ namespace GPUParticles
         [Min(0.0f)] public float startSize = 0.1f;
         public Color startColor = Color.white;
         public float gravityModifier = 0.0f;
+        [Min(0.0f)] public float simulationSpeed = 1.0f;
         public SimulationSpace simulationSpace = SimulationSpace.Local;
 
         [Header("Over Lifetime (LUTs)")]
@@ -44,10 +45,13 @@ namespace GPUParticles
         public Vector3 initialDirectionWS = Vector3.forward;
 
         // --------- Shape ---------
-        [Header("Shape (Point/Cone/Box/Sphere/Hemisphere)")]
-        public ShapeTypeGPU shapeType = ShapeTypeGPU.Point;
+        [Header("Shape (Sphere/Hemisphere/Cone/Donut/Box/Circle/Edge/Rectangle)")]
+        public ShapeTypeGPU shapeType = ShapeTypeGPU.Cone;
         public ShapeEmitFromGPU shapeEmitFrom = ShapeEmitFromGPU.Volume;
         public bool alignToDirection = false; // default false (match Shuriken)
+
+        // Sphere/Hemisphere
+        public float shapeSphereRadius = 0.5f;
 
         // Cone
         [Range(0,90)] public float shapeConeAngle = 25f;
@@ -56,11 +60,21 @@ namespace GPUParticles
         [Range(0,1)] public float shapeRadiusThickness = 1.0f;
         [Range(0,360)] public float shapeConeArcDeg = 360f;
 
+        // Donut
+        public float shapeDonutRadius = 1.0f; // 主圆环半径
+        public float shapeDonutThickness = 0.2f; // 环的厚度
+
         // Box
         public Vector3 shapeBoxSize = new Vector3(1,1,1);
 
-        // Sphere/Hemisphere
-        public float shapeSphereRadius = 0.5f;
+        // Circle
+        public float shapeCircleRadius = 0.5f;
+
+        // Edge
+        public float shapeEdgeLength = 1.0f;
+
+        // Rectangle
+        public Vector2 shapeRectangleSize = new Vector2(1, 1);
 
         // Shape TRS (relative to emitter local)
         public Vector3 shapeLocalPosition = Vector3.zero;
@@ -134,6 +148,11 @@ namespace GPUParticles
         static readonly int _ShapeConeArcRad = Shader.PropertyToID("_ShapeConeArcRad");
         static readonly int _ShapeBoxSize = Shader.PropertyToID("_ShapeBoxSize");
         static readonly int _ShapeSphereRadius = Shader.PropertyToID("_ShapeSphereRadius");
+        static readonly int _ShapeDonutRadius = Shader.PropertyToID("_ShapeDonutRadius");
+        static readonly int _ShapeDonutThickness = Shader.PropertyToID("_ShapeDonutThickness");
+        static readonly int _ShapeCircleRadius = Shader.PropertyToID("_ShapeCircleRadius");
+        static readonly int _ShapeEdgeLength = Shader.PropertyToID("_ShapeEdgeLength");
+        static readonly int _ShapeRectangleSize = Shader.PropertyToID("_ShapeRectangleSize");
         static readonly int _ShapePosL = Shader.PropertyToID("_ShapePosL");
         static readonly int _ShapeRightL = Shader.PropertyToID("_ShapeRightL");
         static readonly int _ShapeUpL = Shader.PropertyToID("_ShapeUpL");
@@ -258,6 +277,7 @@ namespace GPUParticles
             if (simulateMaterial == null) return;
 
             float dt = Application.isPlaying ? Time.deltaTime : (1f / 60f);
+            dt *= simulationSpeed;
             float toEmit = (emissionRateOverTime * dt) + emitCarry;
             int emitCount = Mathf.Clamp(Mathf.FloorToInt(toEmit), 0, maxParticles);
             emitCarry = toEmit - emitCount;
@@ -295,20 +315,53 @@ namespace GPUParticles
             simulateMaterial.SetInt(_ShapeType, (int)shapeType);
             simulateMaterial.SetInt(_ShapeEmitFrom, (int)shapeEmitFrom);
             simulateMaterial.SetInt(_AlignToDirection, alignToDirection ? 1 : 0);
-            simulateMaterial.SetFloat(_ShapeConeAngleRad, shapeConeAngle * Mathf.Deg2Rad);
-
-            float coneRadiusScaled = shapeConeRadius * 0.5f * (shapeLocalScale.x + shapeLocalScale.y);
-            float coneLengthScaled = shapeConeLength * shapeLocalScale.z;
-            simulateMaterial.SetFloat(_ShapeConeRadius, coneRadiusScaled);
-            simulateMaterial.SetFloat(_ShapeConeLength, coneLengthScaled);
             simulateMaterial.SetFloat(_ShapeRadiusThickness, Mathf.Clamp01(shapeRadiusThickness));
-            simulateMaterial.SetFloat(_ShapeConeArcRad, Mathf.Clamp(shapeConeArcDeg, 0f, 360f) * Mathf.Deg2Rad);
-
-            Vector3 boxSizeScaled = Vector3.Scale(shapeBoxSize, shapeLocalScale);
-            simulateMaterial.SetVector(_ShapeBoxSize, new Vector4(boxSizeScaled.x, boxSizeScaled.y, boxSizeScaled.z, 0));
 
             float avgScale = (shapeLocalScale.x + shapeLocalScale.y + shapeLocalScale.z) / 3f;
-            simulateMaterial.SetFloat(_ShapeSphereRadius, Mathf.Max(0f, shapeSphereRadius * avgScale));
+
+            // 根据shapeType设置对应的参数
+            switch (shapeType)
+            {
+                case ShapeTypeGPU.Sphere:
+                case ShapeTypeGPU.Hemisphere:
+                    simulateMaterial.SetFloat(_ShapeSphereRadius, Mathf.Max(0f, shapeSphereRadius * avgScale));
+                    break;
+
+                case ShapeTypeGPU.Cone:
+                    simulateMaterial.SetFloat(_ShapeConeAngleRad, shapeConeAngle * Mathf.Deg2Rad);
+                    float coneRadiusScaled = shapeConeRadius * 0.5f * (shapeLocalScale.x + shapeLocalScale.y);
+                    float coneLengthScaled = shapeConeLength * shapeLocalScale.z;
+                    simulateMaterial.SetFloat(_ShapeConeRadius, coneRadiusScaled);
+                    simulateMaterial.SetFloat(_ShapeConeLength, coneLengthScaled);
+                    simulateMaterial.SetFloat(_ShapeConeArcRad, Mathf.Clamp(shapeConeArcDeg, 0f, 360f) * Mathf.Deg2Rad);
+                    break;
+
+                case ShapeTypeGPU.Donut:
+                    simulateMaterial.SetFloat(_ShapeDonutRadius, Mathf.Max(0f, shapeDonutRadius * avgScale));
+                    simulateMaterial.SetFloat(_ShapeDonutThickness, Mathf.Max(0f, shapeDonutThickness * avgScale));
+                    break;
+
+                case ShapeTypeGPU.Box:
+                    Vector3 boxSizeScaled = Vector3.Scale(shapeBoxSize, shapeLocalScale);
+                    simulateMaterial.SetVector(_ShapeBoxSize, new Vector4(boxSizeScaled.x, boxSizeScaled.y, boxSizeScaled.z, 0));
+                    break;
+
+                case ShapeTypeGPU.Circle:
+                    simulateMaterial.SetFloat(_ShapeCircleRadius, Mathf.Max(0f, shapeCircleRadius * avgScale));
+                    break;
+
+                case ShapeTypeGPU.Edge:
+                    simulateMaterial.SetFloat(_ShapeEdgeLength, Mathf.Max(0f, shapeEdgeLength * avgScale));
+                    break;
+
+                case ShapeTypeGPU.Rectangle:
+                    Vector2 rectSizeScaled = new Vector2(
+                        shapeRectangleSize.x * shapeLocalScale.x,
+                        shapeRectangleSize.y * shapeLocalScale.y
+                    );
+                    simulateMaterial.SetVector(_ShapeRectangleSize, new Vector4(rectSizeScaled.x, rectSizeScaled.y, 0, 0));
+                    break;
+            }
 
             Quaternion q = Quaternion.Euler(shapeLocalRotationEuler);
             Vector3 rightL = q * Vector3.right;
