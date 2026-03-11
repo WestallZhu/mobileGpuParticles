@@ -208,8 +208,8 @@ Transform:
   m_PrefabAsset: {fileID: 0}
   m_GameObject: {fileID: 330585543}
   serializedVersion: 2
-  m_LocalRotation: {x: 0, y: 0, z: 0, w: 1}
-  m_LocalPosition: {x: 0, y: 1, z: -10}
+  m_LocalRotation: {x: -0.04378357, y: 0.023073457, z: -0.0010101823, w: -0.99877405}
+  m_LocalPosition: {x: 4.3441453, y: 12.883753, z: -26.233433}
   m_LocalScale: {x: 1, y: 1, z: 1}
   m_ConstrainProportionsScale: 0
   m_Children: []
@@ -437,7 +437,6 @@ GameObject:
   - component: {fileID: 1032664886}
   - component: {fileID: 1032664885}
   - component: {fileID: 1032664884}
-  - component: {fileID: 1032664883}
   m_Layer: 0
   m_Name: Particle System
   m_TagString: Untagged
@@ -445,31 +444,6 @@ GameObject:
   m_NavMeshLayer: 0
   m_StaticEditorFlags: 0
   m_IsActive: 1
---- !u!114 &1032664883
-MonoBehaviour:
-  m_ObjectHideFlags: 0
-  m_CorrespondingSourceObject: {fileID: 0}
-  m_PrefabInstance: {fileID: 0}
-  m_PrefabAsset: {fileID: 0}
-  m_GameObject: {fileID: 1032664882}
-  m_Enabled: 1
-  m_EditorHideFlags: 0
-  m_Script: {fileID: 11500000, guid: f0dfdc2d020fe8c4a9a1bb46f0a66f24, type: 3}
-  m_Name: 
-  m_EditorClassIdentifier: 
-  maxParticles: 65536
-  emissionRateOverTime: 2000
-  initialDirectionWS: {x: 0, y: 1, z: 0}
-  startLifetime: 2
-  startSpeed: 5
-  startSize: 0.1
-  startColor: {r: 1, g: 1, b: 1, a: 1}
-  gravityModifier: 0
-  simulationSpace: 0
-  colorOverLifetimeLUT: {fileID: 0}
-  sizeOverLifetimeLUT: {fileID: 0}
-  baseMap: {fileID: 0}
-  minAlphaCull: 0.001
 --- !u!199 &1032664884
 ParticleSystemRenderer:
   serializedVersion: 6
@@ -5279,9 +5253,111 @@ Transform:
   m_LocalPosition: {x: 0, y: 0, z: 0}
   m_LocalScale: {x: 1, y: 1, z: 1}
   m_ConstrainProportionsScale: 0
-  m_Children: []
+  m_Children:
+  - {fileID: 1751561601}
   m_Father: {fileID: 0}
   m_LocalEulerAnglesHint: {x: -90, y: 0, z: 0}
+--- !u!1 &1751561600
+GameObject:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  serializedVersion: 6
+  m_Component:
+  - component: {fileID: 1751561601}
+  - component: {fileID: 1751561603}
+  - component: {fileID: 1751561602}
+  m_Layer: 0
+  m_Name: Particle System_GPU
+  m_TagString: Untagged
+  m_Icon: {fileID: 0}
+  m_NavMeshLayer: 0
+  m_StaticEditorFlags: 0
+  m_IsActive: 1
+--- !u!4 &1751561601
+Transform:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 1751561600}
+  serializedVersion: 2
+  m_LocalRotation: {x: 0, y: 0, z: 0, w: 1}
+  m_LocalPosition: {x: 5, y: 0, z: 0}
+  m_LocalScale: {x: 1, y: 1, z: 1}
+  m_ConstrainProportionsScale: 0
+  m_Children: []
+  m_Father: {fileID: 1032664886}
+  m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
+--- !u!114 &1751561602
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 1751561600}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 4f83123929403f74d823b2e3e3be79de, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: 
+--- !u!114 &1751561603
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 1751561600}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: f0dfdc2d020fe8c4a9a1bb46f0a66f24, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: 
+  maxParticles: 1000
+  emissionRateOverTime: 10
+  startLifetime: 5
+  startSpeed: 5
+  startSize: 1
+  startColor: {r: 1, g: 1, b: 1, a: 1}
+  gravityModifier: 0
+  simulationSpeed: 1
+  simulationSpace: 0
+  colorOverLifetimeLUT: {fileID: 0}
+  sizeOverLifetimeLUT: {fileID: 0}
+  baseMap: {fileID: 10300, guid: 0000000000000000f000000000000000, type: 0}
+  minAlphaCull: 0.001
+  initialDirectionWS: {x: 0, y: 0, z: 1}
+  shapeType: 2
+  shapeEmitFrom: 2
+  alignToDirection: 0
+  shapeSphereRadius: 0.5
+  shapeConeAngle: 25
+  shapeConeRadius: 1
+  shapeConeLength: 5
+  shapeRadiusThickness: 1
+  shapeConeArcDeg: 360
+  shapeDonutRadius: 1
+  shapeDonutThickness: 0.2
+  shapeBoxSize: {x: 1, y: 1, z: 1}
+  shapeCircleRadius: 0.5
+  shapeEdgeLength: 1
+  shapeRectangleSize: {x: 1, y: 1}
+  shapeLocalPosition: {x: 0, y: 0, z: 0}
+  shapeLocalRotationEuler: {x: 0, y: 0, z: 0}
+  shapeLocalScale: {x: 1, y: 1, z: 1}
+  renderMode: 0
+  renderAlignment: 0
+  allowRoll: 1
+  normalDirection: 1
+  pivot: {x: 0, y: 0}
+  minParticleSize: 0
+  maxParticleSize: 0
+  stretchedLengthScale: 2
+  stretchedVelocityScale: 0
+  stretchedCameraVelocityScale: 0
+  freeformStretching: 0
+  rotateWithStretchDirection: 1
 --- !u!1660057539 &9223372036854775807
 SceneRoots:
   m_ObjectHideFlags: 0
