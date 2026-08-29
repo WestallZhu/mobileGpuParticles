@@ -43,8 +43,6 @@ namespace GPUParticles
         private ParticleSystemRenderSpace cachedAlignment;
 
         // LUT缓存（避免每帧重建）
-        private Gradient cachedColorGradient;
-        private AnimationCurve cachedSizeCurve;
         private float lastColorLUTUpdate = 0f;
         private float lastSizeLUTUpdate = 0f;
         private float lastForceLUTUpdate = 0f;
@@ -52,6 +50,8 @@ namespace GPUParticles
         private float lastEmissionTimelineUpdate = 0f;
         private Texture2D generatedForceLUT;
         private Texture2D generatedVelocityLUT;
+        private Texture2D generatedColorLUT;
+        private Texture2D generatedSizeLUT;
         private const float LUT_UPDATE_INTERVAL = 0.1f; // 每0.1秒更新一次LUT
 
         private bool isInitialized = false;
@@ -491,6 +491,8 @@ namespace GPUParticles
         {
             DestroyGeneratedForceLUT();
             DestroyGeneratedVelocityLUT();
+            DestroyGeneratedColorLUT();
+            DestroyGeneratedSizeLUT();
         }
 
         void DestroyGeneratedForceLUT()
@@ -509,6 +511,24 @@ namespace GPUParticles
             if (Application.isPlaying) Destroy(generatedVelocityLUT);
             else DestroyImmediate(generatedVelocityLUT);
             generatedVelocityLUT = null;
+        }
+
+        void DestroyGeneratedColorLUT()
+        {
+            if (generatedColorLUT == null) return;
+
+            if (Application.isPlaying) Destroy(generatedColorLUT);
+            else DestroyImmediate(generatedColorLUT);
+            generatedColorLUT = null;
+        }
+
+        void DestroyGeneratedSizeLUT()
+        {
+            if (generatedSizeLUT == null) return;
+
+            if (Application.isPlaying) Destroy(generatedSizeLUT);
+            else DestroyImmediate(generatedSizeLUT);
+            generatedSizeLUT = null;
         }
 
         void SyncRendererParameters(bool force = false)
@@ -643,85 +663,52 @@ namespace GPUParticles
 
         void SyncColorOverLifetime(bool force = false)
         {
-            var colOver = sourceParticleSystem.colorOverLifetime;
-            if (colOver.enabled)
+            var color = sourceParticleSystem.colorOverLifetime;
+            bool timeToUpdate =
+                Time.realtimeSinceStartup - lastColorLUTUpdate > LUT_UPDATE_INTERVAL;
+            if (!force && !timeToUpdate) return;
+
+            targetGPUParticleSystem.colorOverLifetimeMode = color.enabled
+                ? color.color.mode
+                : ParticleSystemGradientMode.Gradient;
+            DestroyGeneratedColorLUT();
+            if (color.enabled)
             {
-                Gradient g = colOver.color.gradient != null ? colOver.color.gradient : colOver.color.gradientMax;
-                
-                // 只在渐变变化或时间间隔到达时更新LUT，或强制更新
-                bool gradientChanged = g != cachedColorGradient;
-                bool timeToUpdate = Time.time - lastColorLUTUpdate > LUT_UPDATE_INTERVAL;
-                
-                if (force || gradientChanged || timeToUpdate)
-                {
-                    if (g != null)
-                    {
-                        var lut = GradientLUTBuilder.Build(g, 256);
-                        if (lut != null)
-                        {
-                            targetGPUParticleSystem.colorOverLifetimeLUT = lut;
-                            cachedColorGradient = g;
-                            lastColorLUTUpdate = Time.time;
-                        }
-                    }
-                }
+                generatedColorLUT = GradientLUTBuilder.Build(color.color);
+                targetGPUParticleSystem.colorOverLifetimeLUT = generatedColorLUT;
             }
             else
             {
-                Texture2D defaultLut = GradientLUTBuilder.GetDefaultWhiteLUT();
-                if (force || targetGPUParticleSystem.colorOverLifetimeLUT != defaultLut)
-                {
-                    targetGPUParticleSystem.colorOverLifetimeLUT = defaultLut;
-                }
+                targetGPUParticleSystem.colorOverLifetimeLUT =
+                    GradientLUTBuilder.GetDefaultWhiteLUT();
             }
+
+            lastColorLUTUpdate = Time.realtimeSinceStartup;
         }
 
         void SyncSizeOverLifetime(bool force = false)
         {
-            var sizeOver = sourceParticleSystem.sizeOverLifetime;
-            if (sizeOver.enabled)
-            {
-                var mmc = sizeOver.size;
-                AnimationCurve curveToBake = null;
-                switch (mmc.mode)
-                {
-                    case ParticleSystemCurveMode.Constant:
-                        curveToBake = AnimationCurve.Linear(0f, mmc.constant, 1f, mmc.constant);
-                        break;
-                    case ParticleSystemCurveMode.Curve:
-                        curveToBake = mmc.curve;
-                        break;
-                    case ParticleSystemCurveMode.TwoConstants:
-                        curveToBake = AnimationCurve.Linear(0f, mmc.constantMax, 1f, mmc.constantMax);
-                        break;
-                    case ParticleSystemCurveMode.TwoCurves:
-                        curveToBake = mmc.curveMax != null ? mmc.curveMax : mmc.curve;
-                        break;
-                }
+            var size = sourceParticleSystem.sizeOverLifetime;
+            bool timeToUpdate =
+                Time.realtimeSinceStartup - lastSizeLUTUpdate > LUT_UPDATE_INTERVAL;
+            if (!force && !timeToUpdate) return;
 
-                // 只在曲线变化或时间间隔到达时更新LUT，或强制更新
-                bool curveChanged = curveToBake != cachedSizeCurve;
-                bool timeToUpdate = Time.time - lastSizeLUTUpdate > LUT_UPDATE_INTERVAL;
-                
-                if ((force || curveChanged || timeToUpdate) && curveToBake != null)
-                {
-                    var lut = CurveLUTBuilder.Build(curveToBake, 256);
-                    if (lut != null)
-                    {
-                        targetGPUParticleSystem.sizeOverLifetimeLUT = lut;
-                        cachedSizeCurve = curveToBake;
-                        lastSizeLUTUpdate = Time.time;
-                    }
-                }
+            DestroyGeneratedSizeLUT();
+            if (size.enabled)
+            {
+                ParticleSystem.MinMaxCurve curve = size.separateAxes
+                    ? size.x
+                    : size.size;
+                generatedSizeLUT = CurveLUTBuilder.Build(curve);
+                targetGPUParticleSystem.sizeOverLifetimeLUT = generatedSizeLUT;
             }
             else
             {
-                Texture2D defaultLut = CurveLUTBuilder.GetDefaultUnitLUT();
-                if (force || targetGPUParticleSystem.sizeOverLifetimeLUT != defaultLut)
-                {
-                    targetGPUParticleSystem.sizeOverLifetimeLUT = defaultLut;
-                }
+                targetGPUParticleSystem.sizeOverLifetimeLUT =
+                    CurveLUTBuilder.GetDefaultUnitLUT();
             }
+
+            lastSizeLUTUpdate = Time.realtimeSinceStartup;
         }
     }
 }

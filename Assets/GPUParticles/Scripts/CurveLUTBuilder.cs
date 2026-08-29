@@ -6,28 +6,58 @@ namespace GPUParticles
     {
         static Texture2D s_DefaultUnitLut;
 
-        // Single-channel (R) LUT in 0..1
-        public static Texture2D Build(AnimationCurve curve, int resolution = 256)
+        public static Texture2D Build(
+            ParticleSystem.MinMaxCurve curve,
+            int resolution = 256,
+            bool saveAsAsset = false)
         {
-            if (curve == null) curve = AnimationCurve.Linear(0, 1, 1, 1);
             resolution = Mathf.Max(2, resolution);
-            var tex = new Texture2D(resolution, 1, TextureFormat.R8, false, true);
-            tex.wrapMode = TextureWrapMode.Clamp;
-            tex.filterMode = FilterMode.Bilinear;
+            var tex = new Texture2D(resolution, 2, TextureFormat.RHalf, false, true)
+            {
+                name = "SizeOverLife_LUT",
+                wrapMode = TextureWrapMode.Clamp,
+                filterMode = FilterMode.Bilinear
+            };
 
+#if UNITY_EDITOR
+            if (!saveAsAsset || Application.isPlaying)
+            {
+                tex.hideFlags = HideFlags.DontSaveInBuild | HideFlags.DontSaveInEditor;
+            }
+#endif
+
+            var pixels = new Color[resolution * 2];
             for (int i = 0; i < resolution; i++)
             {
                 float t = i / (float)(resolution - 1);
-                float v = Mathf.Clamp01(curve.Evaluate(t));
-                tex.SetPixel(i, 0, new Color(v, 0, 0, 1));
+                pixels[i] = new Color(Mathf.Max(0f, curve.Evaluate(t, 0f)), 0f, 0f, 1f);
+                pixels[resolution + i] = new Color(
+                    Mathf.Max(0f, curve.Evaluate(t, 1f)), 0f, 0f, 1f);
             }
-            tex.Apply();
+            tex.SetPixels(pixels);
+            tex.Apply(false, false);
+
 #if UNITY_EDITOR
-            tex.name = "SizeOverLife_LUT";
-            UnityEditor.AssetDatabase.CreateAsset(tex, UnityEditor.AssetDatabase.GenerateUniqueAssetPath("Assets/SizeOverLife_LUT.asset"));
-            UnityEditor.AssetDatabase.SaveAssets();
+            if (saveAsAsset && !Application.isPlaying)
+            {
+                string path = UnityEditor.AssetDatabase.GenerateUniqueAssetPath(
+                    "Assets/SizeOverLife_LUT.asset");
+                UnityEditor.AssetDatabase.CreateAsset(tex, path);
+                UnityEditor.AssetDatabase.SaveAssets();
+            }
 #endif
             return tex;
+        }
+
+        public static Texture2D Build(
+            AnimationCurve curve,
+            int resolution = 256,
+            bool saveAsAsset = false)
+        {
+            return Build(new ParticleSystem.MinMaxCurve(
+                1f, curve ?? AnimationCurve.Linear(0f, 1f, 1f, 1f)),
+                resolution,
+                saveAsAsset);
         }
 
         public static Texture2D GetDefaultUnitLUT(int resolution = 256)
@@ -35,18 +65,22 @@ namespace GPUParticles
             if (s_DefaultUnitLut != null) return s_DefaultUnitLut;
 
             resolution = Mathf.Max(2, resolution);
-            var tex = new Texture2D(resolution, 1, TextureFormat.R8, false, true);
-            tex.name = "SizeOverLife_LUT_Default";
-            tex.wrapMode = TextureWrapMode.Clamp;
-            tex.filterMode = FilterMode.Bilinear;
-            tex.hideFlags = HideFlags.HideAndDontSave;
-
-            for (int i = 0; i < resolution; i++)
+            var tex = new Texture2D(resolution, 2, TextureFormat.RHalf, false, true)
             {
-                tex.SetPixel(i, 0, new Color(1f, 0f, 0f, 1f));
+                name = "SizeOverLife_LUT_Default",
+                wrapMode = TextureWrapMode.Clamp,
+                filterMode = FilterMode.Bilinear,
+                hideFlags = HideFlags.HideAndDontSave
+            };
+
+            var pixels = new Color[resolution * 2];
+            for (int i = 0; i < pixels.Length; i++)
+            {
+                pixels[i] = new Color(1f, 0f, 0f, 1f);
             }
 
-            tex.Apply();
+            tex.SetPixels(pixels);
+            tex.Apply(false, false);
             s_DefaultUnitLut = tex;
             return tex;
         }

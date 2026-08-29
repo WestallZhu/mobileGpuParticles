@@ -74,6 +74,7 @@ Shader "Hidden/GPUParticles/SimulateMRT"
                 int     _ForceOverLifetimeRandomized;
                 int     _VelocityOverLifetimeEnabled;
                 int     _VelocityOverLifetimeSpace;    // 0 Local, 1 World
+                int     _ColorOverLifetimeMode;
 
                 // Initial direction already in simulation space
                 float3  _InitialDir;
@@ -422,6 +423,36 @@ Shader "Hidden/GPUParticles/SimulateMRT"
                 return ModuleVectorToSimSpace(
                     lerp(minimum, maximum, randomValue),
                     _VelocityOverLifetimeSpace);
+            }
+
+            float4 ColorOverLifetime(uint id, float normalizedAge)
+            {
+                float randomValue = Hash01(id ^ 0xC13FA9A9u);
+                if (_ColorOverLifetimeMode == 4) // RandomColor
+                {
+                    return SAMPLE_TEXTURE2D_LOD(
+                        _GradLUT, sampler_GradLUT,
+                        float2(randomValue, 0.25), 0);
+                }
+
+                float4 minimum = SAMPLE_TEXTURE2D_LOD(
+                    _GradLUT, sampler_GradLUT,
+                    float2(normalizedAge, 0.25), 0);
+                float4 maximum = SAMPLE_TEXTURE2D_LOD(
+                    _GradLUT, sampler_GradLUT,
+                    float2(normalizedAge, 0.75), 0);
+                return lerp(minimum, maximum, randomValue);
+            }
+
+            float SizeOverLifetime(uint id, float normalizedAge)
+            {
+                float minimum = SAMPLE_TEXTURE2D_LOD(
+                    _SizeLUT, sampler_SizeLUT,
+                    float2(normalizedAge, 0.25), 0).r;
+                float maximum = SAMPLE_TEXTURE2D_LOD(
+                    _SizeLUT, sampler_SizeLUT,
+                    float2(normalizedAge, 0.75), 0).r;
+                return lerp(minimum, maximum, Hash01(id ^ 0x91E10DA5u));
             }
 
             FragOut Frag(Varyings i)
@@ -777,8 +808,8 @@ Shader "Hidden/GPUParticles/SimulateMRT"
                     life = particleStartLifetime;
                     
                     float tSpawn = 0.0;
-                    float4 lutColSpawn  = SAMPLE_TEXTURE2D_LOD(_GradLUT, sampler_GradLUT, float2(tSpawn, 0.5), 0);
-                    float  lutSizeSpawn = SAMPLE_TEXTURE2D_LOD(_SizeLUT, sampler_SizeLUT, float2(tSpawn, 0.5), 0).r;
+                    float4 lutColSpawn = ColorOverLifetime(id, tSpawn);
+                    float lutSizeSpawn = SizeOverLifetime(id, tSpawn);
                     col   = particleStartColor * lutColSpawn;
                     size  = particleStartSize * lutSizeSpawn;
 
@@ -843,8 +874,8 @@ Shader "Hidden/GPUParticles/SimulateMRT"
                     float t = normalizedAgeAfterStep;
 
                     // Color over lifetime & Size over lifetime via LUTs
-                    float4 lutCol  = SAMPLE_TEXTURE2D_LOD(_GradLUT, sampler_GradLUT, float2(t, 0.5), 0);
-                    float  lutSize = SAMPLE_TEXTURE2D_LOD(_SizeLUT, sampler_SizeLUT, float2(t, 0.5), 0).r;
+                    float4 lutCol = ColorOverLifetime(id, t);
+                    float lutSize = SizeOverLifetime(id, t);
 
                     col   = particleStartColor * lutCol;
                     size  = particleStartSize  * lutSize;

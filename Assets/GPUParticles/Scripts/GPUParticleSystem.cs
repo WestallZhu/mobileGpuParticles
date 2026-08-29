@@ -72,6 +72,7 @@ namespace GPUParticles
 
         [Header("Over Lifetime (LUTs)")]
         public Texture2D colorOverLifetimeLUT;
+        public ParticleSystemGradientMode colorOverLifetimeMode = ParticleSystemGradientMode.Gradient;
         public Texture2D sizeOverLifetimeLUT;
 
         [Header("Force Over Lifetime")]
@@ -230,6 +231,7 @@ namespace GPUParticles
         static readonly int _VelocityOverLifetimeLUT = Shader.PropertyToID("_VelocityOverLifetimeLUT");
         static readonly int _VelocityOverLifetimeEnabled = Shader.PropertyToID("_VelocityOverLifetimeEnabled");
         static readonly int _VelocityOverLifetimeSpace = Shader.PropertyToID("_VelocityOverLifetimeSpace");
+        static readonly int _ColorOverLifetimeMode = Shader.PropertyToID("_ColorOverLifetimeMode");
 
         // shape params
         static readonly int _ShapeType = Shader.PropertyToID("_ShapeType");
@@ -1116,6 +1118,7 @@ namespace GPUParticles
                 _VelocityOverLifetimeEnabled, velocityOverLifetimeEnabled ? 1 : 0);
             simulateMaterial.SetInt(
                 _VelocityOverLifetimeSpace, (int)velocityOverLifetimeSpace);
+            simulateMaterial.SetInt(_ColorOverLifetimeMode, (int)colorOverLifetimeMode);
 
             Vector3 dirInitW = initialDirectionWS.sqrMagnitude > 1e-6f ? initialDirectionWS.normalized : transform.forward;
             Vector3 dirInitSim = (simulationSpace == SimulationSpace.World) ? dirInitW : transform.InverseTransformDirection(dirInitW);

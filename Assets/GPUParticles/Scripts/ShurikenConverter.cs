@@ -23,8 +23,6 @@ namespace GPUParticles
             if (gpu == null) gpu = owner.AddComponent<GPUParticleSystem>();
 
             var main = ps.main;
-            var colOver = ps.colorOverLifetime;
-            var sizeOver = ps.sizeOverLifetime;
             var shape = ps.shape;
             var psr = owner.GetComponent<ParticleSystemRenderer>();
 
@@ -38,6 +36,7 @@ namespace GPUParticles
             ApplyVelocityOverLifetime(ps, gpu, owner);
 
             ApplyEmission(ps, gpu, owner);
+            ApplyColorAndSizeOverLifetime(ps, gpu, owner);
 
             // ---- Shape TRS ----
             gpu.shapeLocalPosition = shape.position;
@@ -198,31 +197,6 @@ namespace GPUParticles
                 gpu.rotateWithStretchDirection = psr.rotateWithStretchDirection;
             }
 
-            // ---- COL/Size over lifetime LUTs ----
-            if (colOver.enabled)
-            {
-                Gradient g = colOver.color.gradient != null ? colOver.color.gradient : colOver.color.gradientMax;
-                var lut = GradientLUTBuilder.Build(g, 256);
-                gpu.colorOverLifetimeLUT = lut;
-            }
-            else gpu.colorOverLifetimeLUT = GradientLUTBuilder.GetDefaultWhiteLUT();
-
-            if (sizeOver.enabled)
-            {
-                var mmc = sizeOver.size;
-                AnimationCurve curveToBake = null;
-                switch (mmc.mode)
-                {
-                    case ParticleSystemCurveMode.Constant:    curveToBake = AnimationCurve.Linear(0f, mmc.constant,    1f, mmc.constant); break;
-                    case ParticleSystemCurveMode.Curve:       curveToBake = mmc.curve; break;
-                    case ParticleSystemCurveMode.TwoConstants:curveToBake = AnimationCurve.Linear(0f, mmc.constantMax, 1f, mmc.constantMax); break;
-                    case ParticleSystemCurveMode.TwoCurves:   curveToBake = mmc.curveMax != null ? mmc.curveMax : mmc.curve; break;
-                }
-                var lut = CurveLUTBuilder.Build(curveToBake, 256);
-                gpu.sizeOverLifetimeLUT = lut;
-            }
-            else gpu.sizeOverLifetimeLUT = CurveLUTBuilder.GetDefaultUnitLUT();
-
             Debug.Log("Shuriken → GPU conversion complete (Shapes + Renderer mapping).", owner);
 
             // Base map (texture) from ParticleSystemRenderer material
@@ -282,8 +256,6 @@ namespace GPUParticles
 
             // 使用现有的Convert逻辑来初始化GPU粒子系统
             var main = particleSystem.main;
-            var colOver = particleSystem.colorOverLifetime;
-            var sizeOver = particleSystem.sizeOverLifetime;
             var shape = particleSystem.shape;
             var psr = originalOwner.GetComponent<ParticleSystemRenderer>();
 
@@ -297,6 +269,7 @@ namespace GPUParticles
             ApplyVelocityOverLifetime(particleSystem, gpu, gpuChild);
 
             ApplyEmission(particleSystem, gpu, gpuChild);
+            ApplyColorAndSizeOverLifetime(particleSystem, gpu, gpuChild);
 
             // ---- Shape TRS ----
             gpu.shapeLocalPosition = shape.position;
@@ -455,31 +428,6 @@ namespace GPUParticles
                 gpu.rotateWithStretchDirection = psr.rotateWithStretchDirection;
             }
 
-            // ---- COL/Size over lifetime LUTs ----
-            if (colOver.enabled)
-            {
-                Gradient g = colOver.color.gradient != null ? colOver.color.gradient : colOver.color.gradientMax;
-                var lut = GradientLUTBuilder.Build(g, 256);
-                gpu.colorOverLifetimeLUT = lut;
-            }
-            else gpu.colorOverLifetimeLUT = GradientLUTBuilder.GetDefaultWhiteLUT();
-
-            if (sizeOver.enabled)
-            {
-                var mmc = sizeOver.size;
-                AnimationCurve curveToBake = null;
-                switch (mmc.mode)
-                {
-                    case ParticleSystemCurveMode.Constant:    curveToBake = AnimationCurve.Linear(0f, mmc.constant,    1f, mmc.constant); break;
-                    case ParticleSystemCurveMode.Curve:       curveToBake = mmc.curve; break;
-                    case ParticleSystemCurveMode.TwoConstants:curveToBake = AnimationCurve.Linear(0f, mmc.constantMax, 1f, mmc.constantMax); break;
-                    case ParticleSystemCurveMode.TwoCurves:   curveToBake = mmc.curveMax != null ? mmc.curveMax : mmc.curve; break;
-                }
-                var lut = CurveLUTBuilder.Build(curveToBake, 256);
-                gpu.sizeOverLifetimeLUT = lut;
-            }
-            else gpu.sizeOverLifetimeLUT = CurveLUTBuilder.GetDefaultUnitLUT();
-
             // Base map (texture) from ParticleSystemRenderer material
             if (psr != null)
             {
@@ -628,6 +576,37 @@ namespace GPUParticles
                     force.x, force.y, force.z, saveAsAsset: true,
                     assetName: "ForceOverLife_LUT")
                 : MinMaxCurveVector3LUTBuilder.GetDefaultZeroLUT();
+        }
+
+        static void ApplyColorAndSizeOverLifetime(
+            ParticleSystem particleSystem,
+            GPUParticleSystem gpu,
+            Object context)
+        {
+            var color = particleSystem.colorOverLifetime;
+            gpu.colorOverLifetimeMode = color.enabled
+                ? color.color.mode
+                : ParticleSystemGradientMode.Gradient;
+            gpu.colorOverLifetimeLUT = color.enabled
+                ? GradientLUTBuilder.Build(
+                    color.color, saveAsAsset: true)
+                : GradientLUTBuilder.GetDefaultWhiteLUT();
+
+            var size = particleSystem.sizeOverLifetime;
+            ParticleSystem.MinMaxCurve sizeCurve = size.separateAxes
+                ? size.x
+                : size.size;
+            if (size.enabled && size.separateAxes)
+            {
+                Debug.LogWarning(
+                    "Size over Lifetime Separate Axes is reduced to X and applied uniformly " +
+                    "to GPU billboards; Y/Z are not supported yet.",
+                    context);
+            }
+
+            gpu.sizeOverLifetimeLUT = size.enabled
+                ? CurveLUTBuilder.Build(sizeCurve, saveAsAsset: true)
+                : CurveLUTBuilder.GetDefaultUnitLUT();
         }
 
         static void ApplyVelocityOverLifetime(
