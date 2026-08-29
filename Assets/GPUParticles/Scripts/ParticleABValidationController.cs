@@ -23,6 +23,7 @@ namespace GPUParticles
         EmissionRateCurvePoint,
         EmissionRateDistancePoint,
         VelocityOverLifetimePoint,
+        RotationOverLifetimeCurvePoint,
         ColorSizeOverLifetimeRandomizedPoint,
         ColorSizeBySpeedRandomizedPoint
     }
@@ -73,17 +74,21 @@ namespace GPUParticles
         float maximumGPUColorBoundsError;
         float maximumShurikenSizeBoundsError;
         float maximumGPUSizeBoundsError;
+        float maximumShurikenRotationError;
+        float maximumGPURotationError;
         int maximumShurikenParticleCount;
         int maximumGPUParticleCount;
         Texture2D profileForceLUT;
         Texture2D profileVelocityLUT;
         Texture2D profileColorLUT;
         Texture2D profileSizeLUT;
+        Texture2D profileRotationLUT;
         Gradient profileColorMinimumGradient;
         Gradient profileColorMaximumGradient;
         AnimationCurve profileSizeMinimumCurve;
         AnimationCurve profileSizeMaximumCurve;
         static readonly Vector3 ValidationForce = new Vector3(2f, -1f, 0.5f);
+        const float RotationProfileStartRotation = 0.25f;
         Vector3 shurikenBasePositionWS;
         Vector3 gpuBasePositionWS;
         ObservedRange shurikenLifetimeRange;
@@ -172,6 +177,7 @@ namespace GPUParticles
             if (profileVelocityLUT != null) Destroy(profileVelocityLUT);
             if (profileColorLUT != null) Destroy(profileColorLUT);
             if (profileSizeLUT != null) Destroy(profileSizeLUT);
+            if (profileRotationLUT != null) Destroy(profileRotationLUT);
             ReleaseCameraCaptureTarget();
         }
 
@@ -263,6 +269,12 @@ namespace GPUParticles
                 return;
             }
 
+            if (validationProfile == ParticleABValidationProfile.RotationOverLifetimeCurvePoint)
+            {
+                ConfigureRotationOverLifetimeProfile();
+                return;
+            }
+
             if (validationProfile ==
                 ParticleABValidationProfile.ColorSizeOverLifetimeRandomizedPoint)
             {
@@ -330,6 +342,8 @@ namespace GPUParticles
             gpuParticles.startColor = Color.white;
             gpuParticles.startRotation = 0f;
             gpuParticles.rotationOverLifetime = 0f;
+            gpuParticles.rotationOverLifetimeIntegralLUT =
+                CurveLUTBuilder.GetDefaultZeroLUT();
             gpuParticles.gravityModifier = 0f;
             gpuParticles.simulationSpeed = 1f;
             gpuParticles.simulationSpace = SimulationSpace.Local;
@@ -408,6 +422,9 @@ namespace GPUParticles
             gpuParticles.SetGravityModifierRange(0f, 0f);
             gpuParticles.SetStartRotationRange(-Mathf.PI, Mathf.PI);
             gpuParticles.SetRotationOverLifetimeRange(-1f, 1f);
+            if (profileRotationLUT != null) Destroy(profileRotationLUT);
+            profileRotationLUT = CurveLUTBuilder.BuildIntegral(rotationOverLifetime.z);
+            gpuParticles.rotationOverLifetimeIntegralLUT = profileRotationLUT;
             gpuParticles.simulationSpeed = 1f;
             gpuParticles.simulationSpace = SimulationSpace.Local;
             gpuParticles.colorOverLifetimeMode = ParticleSystemGradientMode.Gradient;
@@ -521,6 +538,47 @@ namespace GPUParticles
             gpuParticles.velocityOverLifetimeEnabled = true;
             gpuParticles.velocityOverLifetimeSpace = SimulationSpace.World;
             gpuParticles.velocityOverLifetimeLUT = profileVelocityLUT;
+        }
+
+        void ConfigureRotationOverLifetimeProfile()
+        {
+            ConfigureEmissionPointBase(5f, true);
+
+            var main = shuriken.main;
+            main.startLifetime = 4f;
+            main.startSize = 1.25f;
+            main.startRotation = RotationProfileStartRotation;
+            gpuParticles.SetStartLifetimeRange(4f, 4f);
+            gpuParticles.SetStartSizeRange(1.25f, 1.25f);
+            gpuParticles.SetStartRotationRange(
+                RotationProfileStartRotation,
+                RotationProfileStartRotation);
+
+            var emission = shuriken.emission;
+            emission.rateOverTime = 18f;
+            emission.rateOverDistance = 0f;
+            emission.SetBursts(Array.Empty<ParticleSystem.Burst>());
+            gpuParticles.SetEmissionRateOverTime(emission.rateOverTime);
+            gpuParticles.SetEmissionRateOverDistance(emission.rateOverDistance);
+            gpuParticles.SetEmissionBursts(Array.Empty<ParticleSystem.Burst>());
+
+            var rotation = shuriken.rotationOverLifetime;
+            rotation.enabled = true;
+            rotation.separateAxes = false;
+            rotation.z = new ParticleSystem.MinMaxCurve(
+                1f,
+                AnimationCurve.Linear(0f, 0f, 1f, 2f));
+
+            gpuParticles.SetRotationOverLifetimeRange(0f, 0f);
+            if (profileRotationLUT != null) Destroy(profileRotationLUT);
+            profileRotationLUT = CurveLUTBuilder.BuildIntegral(rotation.z);
+            gpuParticles.rotationOverLifetimeIntegralLUT = profileRotationLUT;
+
+            if (shurikenRenderer != null)
+            {
+                shurikenRenderer.pivot = new Vector3(0.35f, 0.15f, 0f);
+            }
+            gpuParticles.pivot = new Vector2(0.35f, 0.15f);
         }
 
         void ConfigureColorSizeOverLifetimeProfile()
@@ -729,6 +787,8 @@ namespace GPUParticles
             gpuParticles.SetGravityModifierRange(0f, 0f);
             gpuParticles.SetStartRotationRange(0f, 0f);
             gpuParticles.SetRotationOverLifetimeRange(0f, 0f);
+            gpuParticles.rotationOverLifetimeIntegralLUT =
+                CurveLUTBuilder.GetDefaultZeroLUT();
             gpuParticles.simulationSpeed = 1f;
             gpuParticles.simulationSpace = SimulationSpace.Local;
             gpuParticles.colorOverLifetimeMode = ParticleSystemGradientMode.Gradient;
@@ -833,6 +893,8 @@ namespace GPUParticles
             maximumGPUColorBoundsError = 0f;
             maximumShurikenSizeBoundsError = 0f;
             maximumGPUSizeBoundsError = 0f;
+            maximumShurikenRotationError = 0f;
+            maximumGPURotationError = 0f;
             maximumShurikenParticleCount = 0;
             maximumGPUParticleCount = 0;
             shurikenLifetimeRange.Reset();
@@ -1007,6 +1069,17 @@ namespace GPUParticles
                             (shurikenVelocity - ValidationForce * age).magnitude);
                     }
                     else if (validationProfile ==
+                             ParticleABValidationProfile.RotationOverLifetimeCurvePoint)
+                    {
+                        float expectedRotation = RotationProfileExpectedRadians(
+                            particle.startLifetime, age);
+                        float rotationError = Mathf.Abs(Mathf.DeltaAngle(
+                            expectedRotation * Mathf.Rad2Deg,
+                            particle.rotation)) * Mathf.Deg2Rad;
+                        maximumShurikenRotationError = Mathf.Max(
+                            maximumShurikenRotationError, rotationError);
+                    }
+                    else if (validationProfile ==
                              ParticleABValidationProfile.EmissionRateDistancePoint)
                     {
                         shurikenDistancePositionRange.Observe(
@@ -1118,6 +1191,19 @@ namespace GPUParticles
                 {
                     maximumForceKinematicsError = Mathf.Max(maximumForceKinematicsError,
                         (gpuVelocity - ValidationForce * age).magnitude);
+                }
+                else if (validationProfile ==
+                         ParticleABValidationProfile.RotationOverLifetimeCurvePoint)
+                {
+                    float expectedRotation = RotationProfileExpectedRadians(
+                        particleStartLifetime, age);
+                    float actualRotation = gpuParticles.ResolveParticleRotationRadians(
+                        i, positionLife.a);
+                    float rotationError = Mathf.Abs(Mathf.DeltaAngle(
+                        expectedRotation * Mathf.Rad2Deg,
+                        actualRotation * Mathf.Rad2Deg)) * Mathf.Deg2Rad;
+                    maximumGPURotationError = Mathf.Max(
+                        maximumGPURotationError, rotationError);
                 }
                 else if (validationProfile ==
                          ParticleABValidationProfile.EmissionRateDistancePoint)
@@ -1268,6 +1354,16 @@ namespace GPUParticles
             return 0f;
         }
 
+        static float RotationProfileExpectedRadians(float startLifetime, float age)
+        {
+            float normalizedAge = startLifetime > 1e-6f
+                ? Mathf.Clamp01(age / startLifetime)
+                : 0f;
+            // The validation angular velocity curve is omega(u) = 2u radians/second.
+            return RotationProfileStartRotation +
+                   startLifetime * normalizedAge * normalizedAge;
+        }
+
         static void ObserveBlendFactor(
             float value,
             float minimum,
@@ -1408,6 +1504,14 @@ namespace GPUParticles
                                             maximumGPUParticleCount > 0;
                     break;
 
+                case ParticleABValidationProfile.RotationOverLifetimeCurvePoint:
+                    profileSpecificPassed = maximumMeanSpeedError <= 0.001f &&
+                                            maximumShurikenParticleCount > 0 &&
+                                            maximumGPUParticleCount > 0 &&
+                                            maximumShurikenRotationError <= 0.05f &&
+                                            maximumGPURotationError <= 0.01f;
+                    break;
+
                 case ParticleABValidationProfile.ColorSizeOverLifetimeRandomizedPoint:
                     profileSpecificPassed = maximumMeanSpeedError <= 0.001f &&
                                             maximumShurikenParticleCount > 0 &&
@@ -1462,6 +1566,8 @@ namespace GPUParticles
                 $"maxGPUColorBoundsError={maximumGPUColorBoundsError:R}; " +
                 $"maxShurikenSizeBoundsError={maximumShurikenSizeBoundsError:R}; " +
                 $"maxGPUSizeBoundsError={maximumGPUSizeBoundsError:R}; " +
+                $"maxShurikenRotationError={maximumShurikenRotationError:R}; " +
+                $"maxGPURotationError={maximumGPURotationError:R}; " +
                 $"maxShurikenCount={maximumShurikenParticleCount}; " +
                 $"maxGPUCount={maximumGPUParticleCount}; " +
                 $"shurikenLifetimeRange={FormatRange(shurikenLifetimeRange)}; " +

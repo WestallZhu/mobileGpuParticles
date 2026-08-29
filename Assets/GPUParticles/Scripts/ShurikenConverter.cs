@@ -524,6 +524,8 @@ namespace GPUParticles
             if (!rotationOverLifetime.enabled)
             {
                 gpu.SetRotationOverLifetimeRange(0f, 0f);
+                gpu.rotationOverLifetimeIntegralLUT =
+                    CurveLUTBuilder.GetDefaultZeroLUT();
             }
             else
             {
@@ -533,9 +535,14 @@ namespace GPUParticles
                         "Rotation over Lifetime X/Y axes are ignored for GPU billboards; mapping Z roll.",
                         context);
                 }
-                GetCurveRange(rotationOverLifetime.z, "Rotation over Lifetime", context,
-                    out minimum, out maximum);
-                gpu.SetRotationOverLifetimeRange(minimum, maximum);
+                ParticleSystem.MinMaxCurve rotationCurve = rotationOverLifetime.z;
+                gpu.SetRotationOverLifetimeRange(
+                    rotationCurve.Evaluate(0f, 0f),
+                    rotationCurve.Evaluate(0f, 1f));
+                gpu.rotationOverLifetimeIntegralLUT = CurveLUTBuilder.BuildIntegral(
+                    rotationCurve,
+                    saveAsAsset: true,
+                    assetName: "RotationOverLife_IntegralLUT");
             }
         }
 

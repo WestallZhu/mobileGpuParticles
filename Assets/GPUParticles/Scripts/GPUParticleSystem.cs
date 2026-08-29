@@ -71,6 +71,7 @@ namespace GPUParticles
         public float rotationOverLifetimeMin;
 
         [Header("Over Lifetime (LUTs)")]
+        public Texture2D rotationOverLifetimeIntegralLUT;
         public Texture2D colorOverLifetimeLUT;
         public ParticleSystemGradientMode colorOverLifetimeMode = ParticleSystemGradientMode.Gradient;
         public Texture2D sizeOverLifetimeLUT;
@@ -215,6 +216,12 @@ namespace GPUParticles
         static readonly int _RotationOverLifetime = Shader.PropertyToID("_RotationOverLifetime");
         static readonly int _RotationOverLifetimeMin = Shader.PropertyToID("_RotationOverLifetimeMin");
         static readonly int _RandomizeRotationOverLifetime = Shader.PropertyToID("_RandomizeRotationOverLifetime");
+        static readonly int _RotationOverLifetimeIntegralLUT =
+            Shader.PropertyToID("_RotationOverLifetimeIntegralLUT");
+        static readonly int _RotationOverLifetimeIntegralLUTInvWidth =
+            Shader.PropertyToID("_RotationOverLifetimeIntegralLUTInvWidth");
+        static readonly int _UseRotationOverLifetimeIntegralLUT =
+            Shader.PropertyToID("_UseRotationOverLifetimeIntegralLUT");
         static readonly int _GravityWS  = Shader.PropertyToID("_GravityWS");
         static readonly int _GravityWSMin = Shader.PropertyToID("_GravityWSMin");
         static readonly int _RandomizeGravityModifier = Shader.PropertyToID("_RandomizeGravityModifier");
@@ -621,6 +628,56 @@ namespace GPUParticles
         {
             return ResolveRandomRange(randomizeStartLifetime, startLifetimeMin, startLifetime,
                 (uint)particleId, 0x68E31DA4u);
+        }
+
+        internal float ResolveParticleRotationRadians(int particleId, float remainingLifetime)
+        {
+            uint id = (uint)particleId;
+            float particleStartLifetime = ResolveStartLifetime(particleId);
+            float age = Mathf.Max(0f, particleStartLifetime - remainingLifetime);
+            float particleStartRotation = ResolveRandomRange(
+                randomizeStartRotation,
+                startRotationMin,
+                startRotation,
+                id,
+                0x165667B1u);
+
+            if (rotationOverLifetimeIntegralLUT == null)
+            {
+                float angularVelocity = ResolveRandomRange(
+                    randomizeRotationOverLifetime,
+                    rotationOverLifetimeMin,
+                    rotationOverLifetime,
+                    id,
+                    0xD3A2646Cu);
+                return particleStartRotation + angularVelocity * age;
+            }
+
+            float normalizedAge = particleStartLifetime > 1e-6f
+                ? Mathf.Clamp01(age / particleStartLifetime)
+                : 0f;
+            float minimumIntegral = SampleLUTRow(
+                rotationOverLifetimeIntegralLUT, normalizedAge, 0);
+            float maximumIntegral = SampleLUTRow(
+                rotationOverLifetimeIntegralLUT, normalizedAge, 1);
+            float blend = Hash01(id ^ 0xD3A2646Cu);
+            float integral = Mathf.LerpUnclamped(minimumIntegral, maximumIntegral, blend);
+            return particleStartRotation + integral * particleStartLifetime;
+        }
+
+        static float SampleLUTRow(Texture2D texture, float normalizedPosition, int row)
+        {
+            if (texture == null || texture.width <= 0 || texture.height <= 0) return 0f;
+
+            float samplePosition = Mathf.Clamp01(normalizedPosition) * (texture.width - 1);
+            int lower = Mathf.Clamp(Mathf.FloorToInt(samplePosition), 0, texture.width - 1);
+            int upper = Mathf.Min(lower + 1, texture.width - 1);
+            float blend = samplePosition - lower;
+            int y = Mathf.Clamp(row, 0, texture.height - 1);
+            return Mathf.LerpUnclamped(
+                texture.GetPixel(lower, y).r,
+                texture.GetPixel(upper, y).r,
+                blend);
         }
 
         static float ResolveRandomRange(
@@ -1328,6 +1385,17 @@ namespace GPUParticles
             renderMaterial.SetFloat(_RotationOverLifetimeMin, rotationOverLifetimeMin);
             renderMaterial.SetInt(_RandomizeRotationOverLifetime,
                 randomizeRotationOverLifetime ? 1 : 0);
+            bool useRotationIntegralLUT = rotationOverLifetimeIntegralLUT != null;
+            Texture2D selectedRotationIntegralLUT = useRotationIntegralLUT
+                ? rotationOverLifetimeIntegralLUT
+                : CurveLUTBuilder.GetDefaultZeroLUT();
+            renderMaterial.SetTexture(
+                _RotationOverLifetimeIntegralLUT, selectedRotationIntegralLUT);
+            renderMaterial.SetFloat(
+                _RotationOverLifetimeIntegralLUTInvWidth,
+                InverseTextureWidth(selectedRotationIntegralLUT));
+            renderMaterial.SetInt(
+                _UseRotationOverLifetimeIntegralLUT, useRotationIntegralLUT ? 1 : 0);
             renderMaterial.SetMatrix(_EmitterLocalToWorld_Render, transform.localToWorldMatrix);
             renderMaterial.SetVector(_CameraRightWS, camera.transform.right);
             renderMaterial.SetVector(_CameraUpWS, camera.transform.up);

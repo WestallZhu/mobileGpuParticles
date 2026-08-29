@@ -49,6 +49,7 @@ namespace GPUParticles
         private float lastVelocityLUTUpdate = 0f;
         private float lastColorBySpeedLUTUpdate = 0f;
         private float lastSizeBySpeedLUTUpdate = 0f;
+        private float lastRotationLUTUpdate = 0f;
         private float lastEmissionTimelineUpdate = 0f;
         private Texture2D generatedForceLUT;
         private Texture2D generatedVelocityLUT;
@@ -56,6 +57,7 @@ namespace GPUParticles
         private Texture2D generatedSizeLUT;
         private Texture2D generatedColorBySpeedLUT;
         private Texture2D generatedSizeBySpeedLUT;
+        private Texture2D generatedRotationLUT;
         private const float LUT_UPDATE_INTERVAL = 0.1f; // 每0.1秒更新一次LUT
 
         private bool isInitialized = false;
@@ -503,6 +505,7 @@ namespace GPUParticles
             DestroyGeneratedSizeLUT();
             DestroyGeneratedColorBySpeedLUT();
             DestroyGeneratedSizeBySpeedLUT();
+            DestroyGeneratedRotationLUT();
         }
 
         void DestroyGeneratedForceLUT()
@@ -557,6 +560,15 @@ namespace GPUParticles
             if (Application.isPlaying) Destroy(generatedSizeBySpeedLUT);
             else DestroyImmediate(generatedSizeBySpeedLUT);
             generatedSizeBySpeedLUT = null;
+        }
+
+        void DestroyGeneratedRotationLUT()
+        {
+            if (generatedRotationLUT == null) return;
+
+            if (Application.isPlaying) Destroy(generatedRotationLUT);
+            else DestroyImmediate(generatedRotationLUT);
+            generatedRotationLUT = null;
         }
 
         void SyncRendererParameters(bool force = false)
@@ -628,15 +640,28 @@ namespace GPUParticles
         void SyncRotationParameters(bool force = false)
         {
             var rotationOverLifetime = sourceParticleSystem.rotationOverLifetime;
+            bool timeToUpdate =
+                Time.realtimeSinceStartup - lastRotationLUTUpdate > LUT_UPDATE_INTERVAL;
+            if (!force && !timeToUpdate) return;
+
+            DestroyGeneratedRotationLUT();
             if (!rotationOverLifetime.enabled)
             {
                 targetGPUParticleSystem.SetRotationOverLifetimeRange(0f, 0f);
+                targetGPUParticleSystem.rotationOverLifetimeIntegralLUT =
+                    CurveLUTBuilder.GetDefaultZeroLUT();
+                lastRotationLUTUpdate = Time.realtimeSinceStartup;
                 return;
             }
 
-            ShurikenMinMaxUtility.TryGetConstantRange(
-                rotationOverLifetime.z, out float minimum, out float maximum);
-            targetGPUParticleSystem.SetRotationOverLifetimeRange(minimum, maximum);
+            ParticleSystem.MinMaxCurve curve = rotationOverLifetime.z;
+            targetGPUParticleSystem.SetRotationOverLifetimeRange(
+                curve.Evaluate(0f, 0f),
+                curve.Evaluate(0f, 1f));
+            generatedRotationLUT = CurveLUTBuilder.BuildIntegral(curve);
+            targetGPUParticleSystem.rotationOverLifetimeIntegralLUT =
+                generatedRotationLUT;
+            lastRotationLUTUpdate = Time.realtimeSinceStartup;
         }
 
         void SyncMaterialParameters(bool force = false)

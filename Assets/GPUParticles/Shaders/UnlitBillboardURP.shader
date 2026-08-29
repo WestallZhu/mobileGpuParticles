@@ -25,6 +25,8 @@ Shader "GPUParticles/UnlitBillboardURP"
             TEXTURE2D(_CurVelSize); SAMPLER(sampler_CurVelSize);
             TEXTURE2D(_CurColor);   SAMPLER(sampler_CurColor);
             TEXTURE2D(_BaseMap);    SAMPLER(sampler_BaseMap);
+            TEXTURE2D(_RotationOverLifetimeIntegralLUT);
+            SAMPLER(sampler_RotationOverLifetimeIntegralLUT);
 
             CBUFFER_START(UnityPerMaterial)
                 int   _GridSize;
@@ -39,6 +41,8 @@ Shader "GPUParticles/UnlitBillboardURP"
                 float _RotationOverLifetime;
                 float _RotationOverLifetimeMin;
                 int   _RandomizeRotationOverLifetime;
+                float _RotationOverLifetimeIntegralLUTInvWidth;
+                int   _UseRotationOverLifetimeIntegralLUT;
 
                 // emitter transforms (for LS->WS)
                 float4x4 _EmitterLocalToWorld;
@@ -85,6 +89,27 @@ Shader "GPUParticles/UnlitBillboardURP"
             float RandomRange(uint id, uint salt, int randomized, float minimum, float maximum)
             {
                 return randomized != 0 ? lerp(minimum, maximum, Hash01(id ^ salt)) : maximum;
+            }
+
+            float LUTCoordinate(float normalizedPosition, float inverseWidth)
+            {
+                return saturate(normalizedPosition) * (1.0 - inverseWidth) +
+                       0.5 * inverseWidth;
+            }
+
+            float SampleRotationIntegral(uint id, float normalizedAge)
+            {
+                float x = LUTCoordinate(
+                    normalizedAge, _RotationOverLifetimeIntegralLUTInvWidth);
+                float minimum = SAMPLE_TEXTURE2D_LOD(
+                    _RotationOverLifetimeIntegralLUT,
+                    sampler_RotationOverLifetimeIntegralLUT,
+                    float2(x, 0.25), 0).r;
+                float maximum = SAMPLE_TEXTURE2D_LOD(
+                    _RotationOverLifetimeIntegralLUT,
+                    sampler_RotationOverLifetimeIntegralLUT,
+                    float2(x, 0.75), 0).r;
+                return lerp(minimum, maximum, Hash01(id ^ 0xD3A2646Cu));
             }
 
             float3 Ortho(float3 v){ return normalize( any(abs(v) > 0.0) ? (abs(v.z)<0.999?cross(v,float3(0,0,1)):cross(v,float3(0,1,0))) : float3(1,0,0) ); }
@@ -278,7 +303,20 @@ Shader "GPUParticles/UnlitBillboardURP"
                         quadId, 0xD3A2646Cu, _RandomizeRotationOverLifetime,
                         _RotationOverLifetimeMin, _RotationOverLifetime);
                     float age = max(0.0, particleStartLifetime - posLife.w);
-                    float angle = particleStartRotation + (particleRotationOverLifetime * age);
+                    float angle;
+                    if (_UseRotationOverLifetimeIntegralLUT != 0)
+                    {
+                        float normalizedAge = saturate(
+                            age / max(1e-6, particleStartLifetime));
+                        angle = particleStartRotation +
+                                SampleRotationIntegral(quadId, normalizedAge) *
+                                particleStartLifetime;
+                    }
+                    else
+                    {
+                        angle = particleStartRotation +
+                                particleRotationOverLifetime * age;
+                    }
                     float s = sin(angle);
                     float c = cos(angle);
                     local = float2(local.x * c - local.y * s, local.x * s + local.y * c);
