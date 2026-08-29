@@ -60,6 +60,12 @@ Shader "Hidden/GPUParticles/SimulateMRT"
                 uint    _EmitCount;
                 float   _EmitCarryPrev;
                 float   _EmissionRate;
+                uint    _ContinuousEmitCount;
+                float   _ContinuousEmissionWindowStart;
+                float4  _BurstCounts0;
+                float4  _BurstCounts1;
+                float4  _BurstAges0;
+                float4  _BurstAges1;
                 uint    _SimulationTick;
                 int     _ForceOverLifetimeEnabled;
                 int     _ForceOverLifetimeSpace;       // 0 Local, 1 World
@@ -161,15 +167,48 @@ Shader "Hidden/GPUParticles/SimulateMRT"
                 return (id + cap - start) % cap;
             }
 
+            float BurstComponent(float4 first, float4 second, int index)
+            {
+                if (index == 0) return first.x;
+                if (index == 1) return first.y;
+                if (index == 2) return first.z;
+                if (index == 3) return first.w;
+                if (index == 4) return second.x;
+                if (index == 5) return second.y;
+                if (index == 6) return second.z;
+                return second.w;
+            }
+
             float SpawnAgeThisFrame(uint emitOrdinal)
             {
-                if (_EmissionRate <= 1e-6)
+                if (emitOrdinal < _ContinuousEmitCount)
                 {
-                    return 0.0;
+                    if (_EmissionRate <= 1e-6)
+                    {
+                        return 0.0;
+                    }
+
+                    float spawnTime = _ContinuousEmissionWindowStart +
+                        ((float)emitOrdinal + 1.0 - _EmitCarryPrev) / _EmissionRate;
+                    return clamp(_DeltaTime - spawnTime, 0.0, _DeltaTime);
                 }
 
-                float spawnTime = ((float)emitOrdinal + 1.0 - _EmitCarryPrev) / _EmissionRate;
-                return clamp(_DeltaTime - spawnTime, 0.0, _DeltaTime);
+                uint burstOrdinal = emitOrdinal - _ContinuousEmitCount;
+                uint cumulativeCount = 0u;
+                [unroll]
+                for (int burstIndex = 0; burstIndex < 8; burstIndex++)
+                {
+                    uint burstCount = (uint)round(BurstComponent(
+                        _BurstCounts0, _BurstCounts1, burstIndex));
+                    if (burstOrdinal < cumulativeCount + burstCount)
+                    {
+                        return clamp(BurstComponent(
+                            _BurstAges0, _BurstAges1, burstIndex), 0.0, _DeltaTime);
+                    }
+                    cumulativeCount += burstCount;
+                }
+
+                return 0.0;
             }
 
             // --- Helpers ---

@@ -5317,6 +5317,16 @@ MonoBehaviour:
   maxParticles: 1000
   emissionEnabled: 1
   emissionRateOverTime: 10
+  emissionRateOverTimeMode: 0
+  emissionRateOverTimeMin: 10
+  emissionRateOverTimeCurveMultiplier: 1
+  emissionDuration: 5
+  emissionLooping: 1
+  randomizeEmissionStartDelay: 0
+  emissionStartDelayMin: 0
+  emissionStartDelay: 0
+  emissionRandomSeed: 1
+  emissionBursts: []
   startLifetime: 5
   startSpeed: 5
   startSize: 1

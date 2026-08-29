@@ -23,6 +23,18 @@ namespace GPUParticles
         [Header("Emission")]
         public bool emissionEnabled = true;
         [Min(0)] public float emissionRateOverTime = 2000f;
+        public ParticleSystemCurveMode emissionRateOverTimeMode = ParticleSystemCurveMode.Constant;
+        [Min(0)] public float emissionRateOverTimeMin = 2000f;
+        [Min(0)] public float emissionRateOverTimeCurveMultiplier = 1f;
+        public AnimationCurve emissionRateOverTimeCurveMin = AnimationCurve.Constant(0f, 1f, 2000f);
+        public AnimationCurve emissionRateOverTimeCurveMax = AnimationCurve.Constant(0f, 1f, 2000f);
+        [Min(0.05f)] public float emissionDuration = 5f;
+        public bool emissionLooping = true;
+        public bool randomizeEmissionStartDelay;
+        [Min(0)] public float emissionStartDelayMin;
+        [Min(0)] public float emissionStartDelay;
+        public uint emissionRandomSeed = 1u;
+        public GPUEmissionBurst[] emissionBursts = System.Array.Empty<GPUEmissionBurst>();
 
         // --------- Main ---------
         [Header("Main (Shuriken Mapping)")]
@@ -141,8 +153,14 @@ namespace GPUParticles
         // emission cursor
         int emitCursor = 0;
         float emitCarry = 0f;
+        float emissionTime;
         uint simulationTick;
         int lastSimulatedFrame = -1;
+        const int MaxBurstGroupsPerStep = 8;
+        const int MaxBurstCyclesPerLoop = 4096;
+        readonly int[] stepBurstCounts = new int[MaxBurstGroupsPerStep];
+        readonly float[] stepBurstAges = new float[MaxBurstGroupsPerStep];
+        int stepBurstGroupCount;
 
         // camera velocity cache
         Vector3 prevCamPos;
@@ -181,6 +199,13 @@ namespace GPUParticles
         static readonly int _EmitCount  = Shader.PropertyToID("_EmitCount");
         static readonly int _EmitCarryPrev = Shader.PropertyToID("_EmitCarryPrev");
         static readonly int _EmissionRate = Shader.PropertyToID("_EmissionRate");
+        static readonly int _ContinuousEmitCount = Shader.PropertyToID("_ContinuousEmitCount");
+        static readonly int _ContinuousEmissionWindowStart =
+            Shader.PropertyToID("_ContinuousEmissionWindowStart");
+        static readonly int _BurstCounts0 = Shader.PropertyToID("_BurstCounts0");
+        static readonly int _BurstCounts1 = Shader.PropertyToID("_BurstCounts1");
+        static readonly int _BurstAges0 = Shader.PropertyToID("_BurstAges0");
+        static readonly int _BurstAges1 = Shader.PropertyToID("_BurstAges1");
         static readonly int _InitialDir = Shader.PropertyToID("_InitialDir");
         static readonly int _SimulationTick = Shader.PropertyToID("_SimulationTick");
         static readonly int _ForceOverLifetimeLUT = Shader.PropertyToID("_ForceOverLifetimeLUT");
@@ -256,6 +281,13 @@ namespace GPUParticles
             startLifetimeMin = Mathf.Max(1e-3f, startLifetimeMin);
             startSize = Mathf.Max(0f, startSize);
             startSizeMin = Mathf.Max(0f, startSizeMin);
+            emissionRateOverTime = Mathf.Max(0f, emissionRateOverTime);
+            emissionRateOverTimeMin = Mathf.Max(0f, emissionRateOverTimeMin);
+            emissionRateOverTimeCurveMultiplier = Mathf.Max(0f, emissionRateOverTimeCurveMultiplier);
+            emissionDuration = Mathf.Max(0.05f, emissionDuration);
+            emissionStartDelayMin = Mathf.Max(0f, emissionStartDelayMin);
+            emissionStartDelay = Mathf.Max(0f, emissionStartDelay);
+            if (emissionBursts == null) emissionBursts = System.Array.Empty<GPUEmissionBurst>();
             EnsureMaterials();
             RecreateTargetsIfNeeded(false);
         }
@@ -299,6 +331,10 @@ namespace GPUParticles
             ping = 0;
             emitCursor = 0;
             emitCarry = 0f;
+            emissionTime = 0f;
+            stepBurstGroupCount = 0;
+            System.Array.Clear(stepBurstCounts, 0, stepBurstCounts.Length);
+            System.Array.Clear(stepBurstAges, 0, stepBurstAges.Length);
             simulationTick = 0;
             lastSimulatedFrame = -1;
         }
@@ -388,6 +424,75 @@ namespace GPUParticles
                 !Mathf.Approximately(rotationOverLifetimeMin, rotationOverLifetime);
         }
 
+        public void SetEmissionRateOverTime(ParticleSystem.MinMaxCurve curve)
+        {
+            emissionRateOverTimeMode = curve.mode;
+            emissionRateOverTimeCurveMultiplier = Mathf.Max(0f, curve.curveMultiplier);
+            emissionRateOverTimeCurveMin = curve.curveMin ?? curve.curve;
+            emissionRateOverTimeCurveMax = curve.curveMax ?? curve.curve;
+
+            switch (curve.mode)
+            {
+                case ParticleSystemCurveMode.Constant:
+                    emissionRateOverTimeMin = Mathf.Max(0f, curve.constant);
+                    emissionRateOverTime = emissionRateOverTimeMin;
+                    break;
+
+                case ParticleSystemCurveMode.TwoConstants:
+                    emissionRateOverTimeMin = Mathf.Max(0f,
+                        Mathf.Min(curve.constantMin, curve.constantMax));
+                    emissionRateOverTime = Mathf.Max(0f,
+                        Mathf.Max(curve.constantMin, curve.constantMax));
+                    break;
+
+                case ParticleSystemCurveMode.Curve:
+                    float curveValue = emissionRateOverTimeCurveMax != null
+                        ? emissionRateOverTimeCurveMax.Evaluate(0f)
+                        : 0f;
+                    emissionRateOverTime = Mathf.Max(0f,
+                        curveValue * emissionRateOverTimeCurveMultiplier);
+                    emissionRateOverTimeMin = emissionRateOverTime;
+                    break;
+
+                case ParticleSystemCurveMode.TwoCurves:
+                    float minimumCurveValue = emissionRateOverTimeCurveMin != null
+                        ? emissionRateOverTimeCurveMin.Evaluate(0f)
+                        : 0f;
+                    float maximumCurveValue = emissionRateOverTimeCurveMax != null
+                        ? emissionRateOverTimeCurveMax.Evaluate(0f)
+                        : 0f;
+                    emissionRateOverTimeMin = Mathf.Max(0f,
+                        minimumCurveValue * emissionRateOverTimeCurveMultiplier);
+                    emissionRateOverTime = Mathf.Max(0f,
+                        maximumCurveValue * emissionRateOverTimeCurveMultiplier);
+                    break;
+            }
+        }
+
+        public void SetEmissionStartDelayRange(float minimum, float maximum)
+        {
+            emissionStartDelayMin = Mathf.Max(0f, Mathf.Min(minimum, maximum));
+            emissionStartDelay = Mathf.Max(0f, Mathf.Max(minimum, maximum));
+            randomizeEmissionStartDelay =
+                !Mathf.Approximately(emissionStartDelayMin, emissionStartDelay);
+        }
+
+        public void SetEmissionBursts(ParticleSystem.Burst[] bursts)
+        {
+            if (bursts == null || bursts.Length == 0)
+            {
+                emissionBursts = System.Array.Empty<GPUEmissionBurst>();
+                return;
+            }
+
+            var mapped = new GPUEmissionBurst[bursts.Length];
+            for (int i = 0; i < bursts.Length; i++)
+            {
+                mapped[i] = GPUEmissionBurst.FromShuriken(bursts[i]);
+            }
+            emissionBursts = mapped;
+        }
+
         internal float ResolveStartLifetime(int particleId)
         {
             return ResolveRandomRange(randomizeStartLifetime, startLifetimeMin, startLifetime,
@@ -418,6 +523,267 @@ namespace GPUParticles
             return (value & 0x00FFFFFFu) / 16777216f;
         }
 
+        float ResolveEmissionStartDelay()
+        {
+            return ResolveRandomRange(
+                randomizeEmissionStartDelay,
+                emissionStartDelayMin,
+                emissionStartDelay,
+                emissionRandomSeed,
+                0xA24BAED4u);
+        }
+
+        void CalculateContinuousEmission(
+            float stepStart,
+            float stepEnd,
+            float startDelay,
+            out float emissionAmount,
+            out float effectiveRate,
+            out float windowStart)
+        {
+            emissionAmount = 0f;
+            effectiveRate = 0f;
+            windowStart = 0f;
+
+            float duration = Mathf.Max(0.05f, emissionDuration);
+            float activeStart = Mathf.Max(stepStart, startDelay);
+            float activeEnd = stepEnd;
+            if (!emissionLooping)
+            {
+                float timelineEnd = startDelay + duration;
+                // Shuriken does not integrate a partial Rate-over-Time step when a
+                // simulation update crosses the non-looping duration boundary.
+                activeEnd = stepStart < timelineEnd && stepEnd > timelineEnd + 1e-6f
+                    ? stepStart
+                    : Mathf.Min(activeEnd, timelineEnd);
+            }
+
+            if (activeEnd <= activeStart) return;
+
+            windowStart = activeStart - stepStart;
+            float activeDuration = activeEnd - activeStart;
+            float localStart = activeStart - startDelay;
+            float localEnd = activeEnd - startDelay;
+
+            if (!emissionLooping)
+            {
+                emissionAmount = IntegrateEmissionRate(
+                    localEnd / duration,
+                    0,
+                    activeDuration);
+            }
+            else
+            {
+                float cursor = localStart;
+                while (cursor < localEnd - 1e-6f)
+                {
+                    int loopIndex = Mathf.Max(0, Mathf.FloorToInt(cursor / duration));
+                    float loopStart = loopIndex * duration;
+                    float segmentEnd = Mathf.Min(localEnd, loopStart + duration);
+                    float segmentDuration = segmentEnd - cursor;
+                    emissionAmount += IntegrateEmissionRate(
+                        (segmentEnd - loopStart) / duration,
+                        loopIndex,
+                        segmentDuration);
+                    cursor = segmentEnd;
+                }
+            }
+
+            emissionAmount = Mathf.Max(0f, emissionAmount);
+            effectiveRate = activeDuration > 1e-6f
+                ? emissionAmount / activeDuration
+                : 0f;
+        }
+
+        float IntegrateEmissionRate(
+            float normalizedEnd,
+            int loopIndex,
+            float duration)
+        {
+            // Shuriken samples the system-time emission curve at the end of each
+            // simulation step, then applies that rate across the step. Mirroring the
+            // discrete sample keeps threshold-crossing frames aligned with Shuriken.
+            return EvaluateEmissionRate(normalizedEnd, loopIndex) * duration;
+        }
+
+        float EvaluateEmissionRate(float normalizedTime, int loopIndex)
+        {
+            normalizedTime = Mathf.Clamp01(normalizedTime);
+            uint seed;
+            unchecked
+            {
+                seed = emissionRandomSeed ^ ((uint)loopIndex * 0x9E3779B9u) ^ 0xD1B54A35u;
+            }
+            float randomValue = Hash01(seed);
+
+            switch (emissionRateOverTimeMode)
+            {
+                case ParticleSystemCurveMode.TwoConstants:
+                    return Mathf.Max(0f, Mathf.LerpUnclamped(
+                        emissionRateOverTimeMin, emissionRateOverTime, randomValue));
+
+                case ParticleSystemCurveMode.Curve:
+                    return emissionRateOverTimeCurveMax != null
+                        ? Mathf.Max(0f,
+                            emissionRateOverTimeCurveMax.Evaluate(normalizedTime) *
+                            emissionRateOverTimeCurveMultiplier)
+                        : Mathf.Max(0f, emissionRateOverTime);
+
+                case ParticleSystemCurveMode.TwoCurves:
+                    float minimum = emissionRateOverTimeCurveMin != null
+                        ? emissionRateOverTimeCurveMin.Evaluate(normalizedTime) *
+                          emissionRateOverTimeCurveMultiplier
+                        : emissionRateOverTimeMin;
+                    float maximum = emissionRateOverTimeCurveMax != null
+                        ? emissionRateOverTimeCurveMax.Evaluate(normalizedTime) *
+                          emissionRateOverTimeCurveMultiplier
+                        : emissionRateOverTime;
+                    return Mathf.Max(0f, Mathf.LerpUnclamped(minimum, maximum, randomValue));
+
+                default:
+                    return Mathf.Max(0f, emissionRateOverTime);
+            }
+        }
+
+        void ScheduleBurstEmission(
+            float stepStart,
+            float stepEnd,
+            float startDelay)
+        {
+            stepBurstGroupCount = 0;
+            System.Array.Clear(stepBurstCounts, 0, stepBurstCounts.Length);
+            System.Array.Clear(stepBurstAges, 0, stepBurstAges.Length);
+
+            if (emissionBursts == null || emissionBursts.Length == 0 || stepEnd < startDelay)
+            {
+                return;
+            }
+
+            float duration = Mathf.Max(0.05f, emissionDuration);
+            float activeEnd = stepEnd - startDelay;
+            if (!emissionLooping) activeEnd = Mathf.Min(activeEnd, duration);
+            if (activeEnd < 0f) return;
+
+            int firstLoop = emissionLooping
+                ? Mathf.Max(0, Mathf.FloorToInt(Mathf.Max(0f, stepStart - startDelay) / duration))
+                : 0;
+            int lastLoop = emissionLooping
+                ? Mathf.Max(0, Mathf.FloorToInt(activeEnd / duration))
+                : 0;
+
+            for (int loopIndex = firstLoop; loopIndex <= lastLoop; loopIndex++)
+            {
+                float loopOffset = loopIndex * duration;
+                for (int burstIndex = 0; burstIndex < emissionBursts.Length; burstIndex++)
+                {
+                    GPUEmissionBurst burst = emissionBursts[burstIndex];
+                    if (burst == null || burst.time > duration + 1e-5f) continue;
+
+                    float interval = Mathf.Max(0f, burst.repeatInterval);
+                    int availableCycles = interval > 1e-6f
+                        ? Mathf.FloorToInt((duration - burst.time + 1e-5f) / interval) + 1
+                        : 1;
+                    int cycles = burst.cycleCount == 0
+                        ? availableCycles
+                        : Mathf.Min(Mathf.Max(1, burst.cycleCount), availableCycles);
+                    cycles = Mathf.Min(cycles, MaxBurstCyclesPerLoop);
+
+                    for (int cycleIndex = 0; cycleIndex < cycles; cycleIndex++)
+                    {
+                        float eventLocalTime = burst.time + cycleIndex * interval;
+                        float eventTime = startDelay + loopOffset + eventLocalTime;
+                        bool occursThisStep = eventTime > stepStart + 1e-6f &&
+                                              eventTime <= stepEnd + 1e-6f;
+                        if (simulationTick == 0 && Mathf.Abs(eventTime - stepStart) <= 1e-6f)
+                        {
+                            occursThisStep = true;
+                        }
+                        if (!occursThisStep) continue;
+
+                        uint eventSeed;
+                        unchecked
+                        {
+                            eventSeed = emissionRandomSeed ^
+                                        ((uint)(burstIndex + 1) * 0x85EBCA6Bu) ^
+                                        ((uint)loopIndex * 0xC2B2AE35u) ^
+                                        ((uint)cycleIndex * 0x27D4EB2Fu);
+                        }
+                        float probability = Mathf.Clamp01(burst.probability);
+                        if (probability <= 0f ||
+                            (probability < 1f &&
+                             Hash01(eventSeed ^ 0x165667B1u) >= probability))
+                        {
+                            continue;
+                        }
+
+                        float normalizedTime = Mathf.Clamp01(eventLocalTime / duration);
+                        int count = Mathf.Max(0, Mathf.RoundToInt(burst.EvaluateCount(
+                            normalizedTime, Hash01(eventSeed ^ 0xD3A2646Cu))));
+                        if (count == 0) continue;
+
+                        count = Mathf.Min(count, maxParticles);
+                        // Shuriken gives repeated Burst cycles, and the first Burst at a
+                        // loop boundary, one full simulation step of age. First-cycle
+                        // Bursts inside the loop retain their sub-frame event age.
+                        float age = cycleIndex > 0 ||
+                                    (loopIndex > 0 && eventLocalTime <= 1e-6f)
+                            ? stepEnd - stepStart
+                            : stepEnd - eventTime;
+                        age = Mathf.Clamp(age, 0f, stepEnd - stepStart);
+                        AddBurstStepGroup(count, age);
+                    }
+                }
+            }
+        }
+
+        void AddBurstStepGroup(int count, float age)
+        {
+            if (count <= 0) return;
+
+            if (stepBurstGroupCount > 0 &&
+                Mathf.Abs(stepBurstAges[stepBurstGroupCount - 1] - age) <= 1e-6f)
+            {
+                int index = stepBurstGroupCount - 1;
+                stepBurstCounts[index] = Mathf.Min(maxParticles, stepBurstCounts[index] + count);
+                return;
+            }
+
+            if (stepBurstGroupCount < MaxBurstGroupsPerStep)
+            {
+                stepBurstCounts[stepBurstGroupCount] = count;
+                stepBurstAges[stepBurstGroupCount] = age;
+                stepBurstGroupCount++;
+                return;
+            }
+
+            int last = MaxBurstGroupsPerStep - 1;
+            int previousCount = stepBurstCounts[last];
+            int combinedCount = Mathf.Min(maxParticles, previousCount + count);
+            if (combinedCount > 0)
+            {
+                stepBurstAges[last] =
+                    ((stepBurstAges[last] * previousCount) + (age * count)) /
+                    (previousCount + count);
+            }
+            stepBurstCounts[last] = combinedCount;
+        }
+
+        int TrimBurstStepGroups(int maximumCount)
+        {
+            int emittedCount = 0;
+            for (int i = 0; i < MaxBurstGroupsPerStep; i++)
+            {
+                int available = Mathf.Max(0, maximumCount - emittedCount);
+                int count = i < stepBurstGroupCount
+                    ? Mathf.Min(stepBurstCounts[i], available)
+                    : 0;
+                stepBurstCounts[i] = count;
+                if (count == 0) stepBurstAges[i] = 0f;
+                emittedCount += count;
+            }
+            return emittedCount;
+        }
+
         internal void Simulate(CommandBuffer cmd, Camera camera)
         {
             if (simulateMaterial == null) return;
@@ -439,15 +805,53 @@ namespace GPUParticles
 
         internal void SimulateStep(CommandBuffer cmd, float dt)
         {
-            float emissionRate = emissionEnabled ? emissionRateOverTime : 0f;
-            if (!emissionEnabled) emitCarry = 0f;
-
+            dt = Mathf.Max(0f, dt);
+            float stepStart = emissionTime;
+            float stepEnd = stepStart + dt;
+            float startDelay = ResolveEmissionStartDelay();
             float emitCarryPrev = emitCarry;
-            float toEmit = (emissionRate * dt) + emitCarryPrev;
-            int emitCount = Mathf.Clamp(Mathf.FloorToInt(toEmit), 0, maxParticles);
-            emitCarry = toEmit - emitCount;
+            float emissionAmount = 0f;
+            float emissionRate = 0f;
+            float emissionWindowStart = 0f;
+            int continuousEmitCount = 0;
+
+            if (emissionEnabled)
+            {
+                CalculateContinuousEmission(
+                    stepStart,
+                    stepEnd,
+                    startDelay,
+                    out emissionAmount,
+                    out emissionRate,
+                    out emissionWindowStart);
+                float continuousTotal = Mathf.Max(0f, emissionAmount + emitCarryPrev);
+                continuousEmitCount = continuousTotal >= int.MaxValue
+                    ? int.MaxValue
+                    : Mathf.FloorToInt(continuousTotal);
+                emitCarry = continuousTotal - Mathf.Floor(continuousTotal);
+
+                if (!emissionLooping &&
+                    stepEnd >= startDelay + Mathf.Max(0.05f, emissionDuration) - 1e-6f)
+                {
+                    emitCarry = 0f;
+                }
+
+                ScheduleBurstEmission(stepStart, stepEnd, startDelay);
+            }
+            else
+            {
+                emitCarry = 0f;
+                stepBurstGroupCount = 0;
+                System.Array.Clear(stepBurstCounts, 0, stepBurstCounts.Length);
+                System.Array.Clear(stepBurstAges, 0, stepBurstAges.Length);
+            }
+
+            continuousEmitCount = Mathf.Min(continuousEmitCount, maxParticles);
+            int burstEmitCount = TrimBurstStepGroups(maxParticles - continuousEmitCount);
+            int emitCount = continuousEmitCount + burstEmitCount;
             int emitStart = emitCursor;
             emitCursor = (emitCursor + emitCount) % maxParticles;
+            emissionTime = stepEnd;
 
             int src = ping, dst = 1 - ping;
 
@@ -491,6 +895,16 @@ namespace GPUParticles
             simulateMaterial.SetInt(_EmitCount, emitCount);
             simulateMaterial.SetFloat(_EmitCarryPrev, emitCarryPrev);
             simulateMaterial.SetFloat(_EmissionRate, emissionRate);
+            simulateMaterial.SetInt(_ContinuousEmitCount, continuousEmitCount);
+            simulateMaterial.SetFloat(_ContinuousEmissionWindowStart, emissionWindowStart);
+            simulateMaterial.SetVector(_BurstCounts0, new Vector4(
+                stepBurstCounts[0], stepBurstCounts[1], stepBurstCounts[2], stepBurstCounts[3]));
+            simulateMaterial.SetVector(_BurstCounts1, new Vector4(
+                stepBurstCounts[4], stepBurstCounts[5], stepBurstCounts[6], stepBurstCounts[7]));
+            simulateMaterial.SetVector(_BurstAges0, new Vector4(
+                stepBurstAges[0], stepBurstAges[1], stepBurstAges[2], stepBurstAges[3]));
+            simulateMaterial.SetVector(_BurstAges1, new Vector4(
+                stepBurstAges[4], stepBurstAges[5], stepBurstAges[6], stepBurstAges[7]));
             simulateMaterial.SetInt(_SimulationTick, unchecked((int)simulationTick));
             simulateMaterial.SetInt(_ForceOverLifetimeEnabled, forceOverLifetimeEnabled ? 1 : 0);
             simulateMaterial.SetInt(_ForceOverLifetimeSpace, (int)forceOverLifetimeSpace);

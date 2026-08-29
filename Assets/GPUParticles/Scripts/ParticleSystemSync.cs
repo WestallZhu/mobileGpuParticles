@@ -21,7 +21,6 @@ namespace GPUParticles
         private float cachedSimulationSpeed;
         private float cachedStartRotation;
         private float cachedRotationOverLifetime;
-        private float cachedEmissionRate;
         private bool cachedEmissionEnabled;
         private int cachedMaxParticles;
         private ParticleSystemSimulationSpace cachedSimulationSpace;
@@ -49,6 +48,7 @@ namespace GPUParticles
         private float lastColorLUTUpdate = 0f;
         private float lastSizeLUTUpdate = 0f;
         private float lastForceLUTUpdate = 0f;
+        private float lastEmissionTimelineUpdate = 0f;
         private Texture2D generatedForceLUT;
         private const float LUT_UPDATE_INTERVAL = 0.1f; // 每0.1秒更新一次LUT
 
@@ -112,7 +112,6 @@ namespace GPUParticles
             cachedGravityModifier = main.gravityModifier.mode == ParticleSystemCurveMode.Constant ? main.gravityModifier.constant : cachedGravityModifier;
             cachedSimulationSpeed = main.simulationSpeed;
             cachedStartRotation = main.startRotation.mode == ParticleSystemCurveMode.Constant ? main.startRotation.constant : cachedStartRotation;
-            cachedEmissionRate = emission.rateOverTime.mode == ParticleSystemCurveMode.Constant ? emission.rateOverTime.constant : cachedEmissionRate;
             cachedEmissionEnabled = emission.enabled;
             cachedMaxParticles = main.maxParticles;
             cachedSimulationSpace = main.simulationSpace;
@@ -224,15 +223,26 @@ namespace GPUParticles
                 cachedEmissionEnabled = emission.enabled;
             }
 
-            if (emission.rateOverTime.mode == ParticleSystemCurveMode.Constant)
-            {
-                float newRate = emission.rateOverTime.constant;
-                if (force || Mathf.Abs(newRate - cachedEmissionRate) > 0.001f)
-                {
-                    targetGPUParticleSystem.emissionRateOverTime = newRate;
-                    cachedEmissionRate = newRate;
-                }
-            }
+            bool timeToUpdate = Time.realtimeSinceStartup - lastEmissionTimelineUpdate >
+                                LUT_UPDATE_INTERVAL;
+            if (!force && !timeToUpdate) return;
+
+            var main = sourceParticleSystem.main;
+            targetGPUParticleSystem.emissionDuration = Mathf.Max(0.05f, main.duration);
+            targetGPUParticleSystem.emissionLooping = main.loop;
+            targetGPUParticleSystem.emissionRandomSeed = sourceParticleSystem.randomSeed == 0u
+                ? 1u
+                : sourceParticleSystem.randomSeed;
+            targetGPUParticleSystem.SetEmissionRateOverTime(emission.rateOverTime);
+
+            ShurikenMinMaxUtility.TryGetConstantRange(
+                main.startDelay, out float minimumDelay, out float maximumDelay);
+            targetGPUParticleSystem.SetEmissionStartDelayRange(minimumDelay, maximumDelay);
+
+            var bursts = new ParticleSystem.Burst[emission.burstCount];
+            emission.GetBursts(bursts);
+            targetGPUParticleSystem.SetEmissionBursts(bursts);
+            lastEmissionTimelineUpdate = Time.realtimeSinceStartup;
         }
 
         void SyncShapeParameters(bool force = false)

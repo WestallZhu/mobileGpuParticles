@@ -18,7 +18,9 @@ namespace GPUParticles
     {
         BaselineCone,
         ForceOverLifetimePoint,
-        RandomizedMainPoint
+        RandomizedMainPoint,
+        EmissionBurstPoint,
+        EmissionRateCurvePoint
     }
 
     [DisallowMultipleComponent]
@@ -62,6 +64,8 @@ namespace GPUParticles
         float maximumShurikenConeError;
         float maximumGPUConeError;
         float maximumForceKinematicsError;
+        int maximumShurikenParticleCount;
+        int maximumGPUParticleCount;
         Texture2D profileForceLUT;
         static readonly Vector3 ValidationForce = new Vector3(2f, -1f, 0.5f);
         ObservedRange shurikenLifetimeRange;
@@ -188,6 +192,18 @@ namespace GPUParticles
                 return;
             }
 
+            if (validationProfile == ParticleABValidationProfile.EmissionBurstPoint)
+            {
+                ConfigureEmissionBurstProfile();
+                return;
+            }
+
+            if (validationProfile == ParticleABValidationProfile.EmissionRateCurvePoint)
+            {
+                ConfigureEmissionRateCurveProfile();
+                return;
+            }
+
             var main = shuriken.main;
             main.maxParticles = 1000;
             main.startLifetime = 5f;
@@ -227,7 +243,11 @@ namespace GPUParticles
 
             gpuParticles.maxParticles = main.maxParticles;
             gpuParticles.emissionEnabled = true;
-            gpuParticles.emissionRateOverTime = 10f;
+            gpuParticles.SetEmissionRateOverTime(emission.rateOverTime);
+            gpuParticles.emissionDuration = main.duration;
+            gpuParticles.emissionLooping = main.loop;
+            gpuParticles.SetEmissionStartDelayRange(0f, 0f);
+            gpuParticles.SetEmissionBursts(System.Array.Empty<ParticleSystem.Burst>());
             gpuParticles.startLifetime = 5f;
             gpuParticles.startSpeed = 0f;
             gpuParticles.startSize = 1f;
@@ -293,7 +313,11 @@ namespace GPUParticles
 
             gpuParticles.maxParticles = main.maxParticles;
             gpuParticles.emissionEnabled = true;
-            gpuParticles.emissionRateOverTime = 30f;
+            gpuParticles.SetEmissionRateOverTime(emission.rateOverTime);
+            gpuParticles.emissionDuration = main.duration;
+            gpuParticles.emissionLooping = main.loop;
+            gpuParticles.SetEmissionStartDelayRange(0f, 0f);
+            gpuParticles.SetEmissionBursts(System.Array.Empty<ParticleSystem.Burst>());
             gpuParticles.SetStartLifetimeRange(3f, 5f);
             gpuParticles.SetStartSpeedRange(1f, 3f);
             gpuParticles.SetStartSizeRange(0.5f, 1.5f);
@@ -301,6 +325,105 @@ namespace GPUParticles
             gpuParticles.SetGravityModifierRange(0f, 0f);
             gpuParticles.SetStartRotationRange(-Mathf.PI, Mathf.PI);
             gpuParticles.SetRotationOverLifetimeRange(-1f, 1f);
+            gpuParticles.simulationSpeed = 1f;
+            gpuParticles.simulationSpace = SimulationSpace.Local;
+            gpuParticles.colorOverLifetimeLUT = GradientLUTBuilder.GetDefaultWhiteLUT();
+            gpuParticles.sizeOverLifetimeLUT = CurveLUTBuilder.GetDefaultUnitLUT();
+            gpuParticles.shapeType = ShapeTypeGPU.Point;
+            gpuParticles.shapeEmitFrom = ShapeEmitFromGPU.Base;
+            gpuParticles.alignToDirection = false;
+            gpuParticles.shapeLocalPosition = Vector3.zero;
+            gpuParticles.shapeLocalRotationEuler = Vector3.zero;
+            gpuParticles.shapeLocalScale = Vector3.one;
+            gpuParticles.forceOverLifetimeEnabled = false;
+            gpuParticles.forceOverLifetimeLUT = MinMaxCurveVector3LUTBuilder.GetDefaultZeroLUT();
+        }
+
+        void ConfigureEmissionBurstProfile()
+        {
+            ConfigureEmissionPointBase(2f, true);
+
+            var main = shuriken.main;
+            main.startDelay = 0.1f;
+            gpuParticles.SetEmissionStartDelayRange(0.1f, 0.1f);
+
+            var emission = shuriken.emission;
+            emission.rateOverTime = 0f;
+            emission.SetBursts(new[]
+            {
+                new ParticleSystem.Burst(0f, 5),
+                new ParticleSystem.Burst(0.25f, 7, 7, 3, 0.5f),
+                new ParticleSystem.Burst(1.75f, 4)
+            });
+
+            var bursts = new ParticleSystem.Burst[emission.burstCount];
+            emission.GetBursts(bursts);
+            gpuParticles.SetEmissionRateOverTime(emission.rateOverTime);
+            gpuParticles.SetEmissionBursts(bursts);
+        }
+
+        void ConfigureEmissionRateCurveProfile()
+        {
+            ConfigureEmissionPointBase(2f, false);
+
+            var emission = shuriken.emission;
+            AnimationCurve rateCurve = AnimationCurve.Linear(0f, 10f, 1f, 30f);
+            emission.rateOverTime = new ParticleSystem.MinMaxCurve(
+                1f, rateCurve, rateCurve);
+            emission.SetBursts(System.Array.Empty<ParticleSystem.Burst>());
+
+            gpuParticles.SetEmissionRateOverTime(emission.rateOverTime);
+            gpuParticles.SetEmissionBursts(System.Array.Empty<ParticleSystem.Burst>());
+        }
+
+        void ConfigureEmissionPointBase(float duration, bool looping)
+        {
+            shuriken.Stop(true, ParticleSystemStopBehavior.StopEmittingAndClear);
+
+            var main = shuriken.main;
+            main.maxParticles = 1000;
+            main.duration = duration;
+            main.loop = looping;
+            main.startDelay = 0f;
+            main.startLifetime = 5f;
+            main.startSpeed = 0f;
+            main.startSize3D = false;
+            main.startSize = 1f;
+            main.startColor = Color.white;
+            main.startRotation3D = false;
+            main.startRotation = 0f;
+            main.gravityModifier = 0f;
+            main.simulationSpeed = 1f;
+            main.simulationSpace = ParticleSystemSimulationSpace.Local;
+
+            var emission = shuriken.emission;
+            emission.enabled = true;
+            emission.rateOverDistance = 0f;
+
+            var shape = shuriken.shape;
+            shape.enabled = false;
+            var colorOverLifetime = shuriken.colorOverLifetime;
+            colorOverLifetime.enabled = false;
+            var sizeOverLifetime = shuriken.sizeOverLifetime;
+            sizeOverLifetime.enabled = false;
+            var rotationOverLifetime = shuriken.rotationOverLifetime;
+            rotationOverLifetime.enabled = false;
+            var force = shuriken.forceOverLifetime;
+            force.enabled = false;
+
+            gpuParticles.maxParticles = main.maxParticles;
+            gpuParticles.emissionEnabled = true;
+            gpuParticles.emissionDuration = main.duration;
+            gpuParticles.emissionLooping = main.loop;
+            gpuParticles.emissionRandomSeed = randomSeed == 0 ? 1u : randomSeed;
+            gpuParticles.SetEmissionStartDelayRange(0f, 0f);
+            gpuParticles.SetStartLifetimeRange(5f, 5f);
+            gpuParticles.SetStartSpeedRange(0f, 0f);
+            gpuParticles.SetStartSizeRange(1f, 1f);
+            gpuParticles.SetStartColorRange(Color.white, Color.white, false);
+            gpuParticles.SetGravityModifierRange(0f, 0f);
+            gpuParticles.SetStartRotationRange(0f, 0f);
+            gpuParticles.SetRotationOverLifetimeRange(0f, 0f);
             gpuParticles.simulationSpeed = 1f;
             gpuParticles.simulationSpace = SimulationSpace.Local;
             gpuParticles.colorOverLifetimeLUT = GradientLUTBuilder.GetDefaultWhiteLUT();
@@ -382,6 +505,8 @@ namespace GPUParticles
             maximumShurikenConeError = 0f;
             maximumGPUConeError = 0f;
             maximumForceKinematicsError = 0f;
+            maximumShurikenParticleCount = 0;
+            maximumGPUParticleCount = 0;
             shurikenLifetimeRange.Reset();
             gpuLifetimeRange.Reset();
             shurikenSpeedRange.Reset();
@@ -600,6 +725,8 @@ namespace GPUParticles
             float gpuMeanAge = gpuCount > 0 ? gpuAgeSum / gpuCount : 0f;
 
             maximumCountDelta = Mathf.Max(maximumCountDelta, Mathf.Abs(gpuCount - shurikenCount));
+            maximumShurikenParticleCount = Mathf.Max(maximumShurikenParticleCount, shurikenCount);
+            maximumGPUParticleCount = Mathf.Max(maximumGPUParticleCount, gpuCount);
             maximumMeanAgeError = Mathf.Max(maximumMeanAgeError, Mathf.Abs(gpuMeanAge - shurikenMeanAge));
             maximumMeanSpeedError = Mathf.Max(maximumMeanSpeedError,
                 Mathf.Abs(gpuMeanSpeed - shurikenMeanSpeed));
@@ -732,6 +859,18 @@ namespace GPUParticles
                         gpuColorRedRange.Covers(0f, 1f);
                     break;
 
+                case ParticleABValidationProfile.EmissionBurstPoint:
+                    profileSpecificPassed = maximumMeanSpeedError <= 0.001f &&
+                                            maximumShurikenParticleCount == 42 &&
+                                            maximumGPUParticleCount == 42;
+                    break;
+
+                case ParticleABValidationProfile.EmissionRateCurvePoint:
+                    profileSpecificPassed = maximumMeanSpeedError <= 0.001f &&
+                                            maximumShurikenParticleCount == 39 &&
+                                            maximumGPUParticleCount == 39;
+                    break;
+
                 default:
                     profileSpecificPassed = false;
                     break;
@@ -751,6 +890,8 @@ namespace GPUParticles
                 $"maxShurikenConeError={maximumShurikenConeError:R}; " +
                 $"maxGPUConeError={maximumGPUConeError:R}; " +
                 $"maxForceKinematicsError={maximumForceKinematicsError:R}; " +
+                $"maxShurikenCount={maximumShurikenParticleCount}; " +
+                $"maxGPUCount={maximumGPUParticleCount}; " +
                 $"shurikenLifetimeRange={FormatRange(shurikenLifetimeRange)}; " +
                 $"gpuLifetimeRange={FormatRange(gpuLifetimeRange)}; " +
                 $"shurikenSpeedRange={FormatRange(shurikenSpeedRange)}; " +

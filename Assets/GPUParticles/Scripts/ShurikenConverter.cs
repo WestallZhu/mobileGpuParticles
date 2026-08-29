@@ -23,7 +23,6 @@ namespace GPUParticles
             if (gpu == null) gpu = owner.AddComponent<GPUParticleSystem>();
 
             var main = ps.main;
-            var emission = ps.emission;
             var colOver = ps.colorOverLifetime;
             var sizeOver = ps.sizeOverLifetime;
             var shape = ps.shape;
@@ -37,9 +36,7 @@ namespace GPUParticles
 
             ApplyForceOverLifetime(ps, gpu, owner);
 
-            gpu.emissionEnabled = emission.enabled;
-            if (emission.rateOverTime.mode == ParticleSystemCurveMode.Constant) gpu.emissionRateOverTime = emission.rateOverTime.constant;
-            else Debug.LogWarning("Emission.rateOverTime not constant; using constant value.", owner);
+            ApplyEmission(ps, gpu, owner);
 
             // ---- Shape TRS ----
             gpu.shapeLocalPosition = shape.position;
@@ -284,7 +281,6 @@ namespace GPUParticles
 
             // 使用现有的Convert逻辑来初始化GPU粒子系统
             var main = particleSystem.main;
-            var emission = particleSystem.emission;
             var colOver = particleSystem.colorOverLifetime;
             var sizeOver = particleSystem.sizeOverLifetime;
             var shape = particleSystem.shape;
@@ -298,9 +294,7 @@ namespace GPUParticles
 
             ApplyForceOverLifetime(particleSystem, gpu, gpuChild);
 
-            gpu.emissionEnabled = emission.enabled;
-            if (emission.rateOverTime.mode == ParticleSystemCurveMode.Constant) gpu.emissionRateOverTime = emission.rateOverTime.constant;
-            else Debug.LogWarning("Emission.rateOverTime not constant; using constant value.", gpuChild);
+            ApplyEmission(particleSystem, gpu, gpuChild);
 
             // ---- Shape TRS ----
             gpu.shapeLocalPosition = shape.position;
@@ -631,6 +625,58 @@ namespace GPUParticles
                 ? MinMaxCurveVector3LUTBuilder.Build(
                     force.x, force.y, force.z, saveAsAsset: true)
                 : MinMaxCurveVector3LUTBuilder.GetDefaultZeroLUT();
+        }
+
+        static void ApplyEmission(
+            ParticleSystem particleSystem,
+            GPUParticleSystem gpu,
+            Object context)
+        {
+            var main = particleSystem.main;
+            var emission = particleSystem.emission;
+
+            gpu.emissionEnabled = emission.enabled;
+            gpu.emissionDuration = Mathf.Max(0.05f, main.duration);
+            gpu.emissionLooping = main.loop;
+            gpu.emissionRandomSeed = particleSystem.randomSeed == 0u
+                ? 1u
+                : particleSystem.randomSeed;
+            gpu.SetEmissionRateOverTime(emission.rateOverTime);
+
+            bool supportedStartDelay = ShurikenMinMaxUtility.TryGetConstantRange(
+                main.startDelay, out float minimumDelay, out float maximumDelay);
+            gpu.SetEmissionStartDelayRange(minimumDelay, maximumDelay);
+            if (!supportedStartDelay)
+            {
+                Debug.LogWarning(
+                    "Start Delay Curve modes currently use the value at t=0.",
+                    context);
+            }
+
+            var bursts = new ParticleSystem.Burst[emission.burstCount];
+            emission.GetBursts(bursts);
+            gpu.SetEmissionBursts(bursts);
+
+            if (HasNonZeroRate(emission.rateOverDistance))
+            {
+                Debug.LogWarning(
+                    "Emission Rate over Distance is not supported yet; only Rate over Time and Bursts are mapped.",
+                    context);
+            }
+        }
+
+        static bool HasNonZeroRate(ParticleSystem.MinMaxCurve curve)
+        {
+            for (int i = 0; i <= 4; i++)
+            {
+                float time = i * 0.25f;
+                if (Mathf.Abs(curve.Evaluate(time, 0f)) > 1e-5f ||
+                    Mathf.Abs(curve.Evaluate(time, 1f)) > 1e-5f)
+                {
+                    return true;
+                }
+            }
+            return false;
         }
     }
 }

@@ -66,6 +66,32 @@ namespace GPUParticles.Editor
             StartCapture(false, ParticleABValidationProfile.RandomizedMainPoint);
         }
 
+        [MenuItem("Tools/GPU Particles/Run Emission Burst A-B RT Capture")]
+        public static void RunEmissionBurstCaptureMenu()
+        {
+            if (EditorApplication.isPlaying)
+            {
+                Debug.LogWarning("Stop Play Mode before starting a deterministic A/B capture.");
+                return;
+            }
+
+            if (!EditorSceneManager.SaveCurrentModifiedScenesIfUserWantsTo()) return;
+            StartCapture(false, ParticleABValidationProfile.EmissionBurstPoint);
+        }
+
+        [MenuItem("Tools/GPU Particles/Run Emission Rate Curve A-B RT Capture")]
+        public static void RunEmissionRateCurveCaptureMenu()
+        {
+            if (EditorApplication.isPlaying)
+            {
+                Debug.LogWarning("Stop Play Mode before starting a deterministic A/B capture.");
+                return;
+            }
+
+            if (!EditorSceneManager.SaveCurrentModifiedScenesIfUserWantsTo()) return;
+            StartCapture(false, ParticleABValidationProfile.EmissionRateCurvePoint);
+        }
+
         [MenuItem("Tools/GPU Particles/Validate Common Feature Mapping")]
         public static void ValidateCommonFeatureMappingMenu()
         {
@@ -91,6 +117,18 @@ namespace GPUParticles.Editor
         {
             ValidateCommonFeatureMapping();
             StartCapture(true, ParticleABValidationProfile.RandomizedMainPoint);
+        }
+
+        public static void RunBatchEmissionBurstCapture()
+        {
+            ValidateCommonFeatureMapping();
+            StartCapture(true, ParticleABValidationProfile.EmissionBurstPoint);
+        }
+
+        public static void RunBatchEmissionRateCurveCapture()
+        {
+            ValidateCommonFeatureMapping();
+            StartCapture(true, ParticleABValidationProfile.EmissionRateCurvePoint);
         }
 
         static void StartCapture(bool exitWhenComplete, ParticleABValidationProfile profile)
@@ -169,7 +207,7 @@ namespace GPUParticles.Editor
             controller.randomSeed = 12345;
             controller.fixedFrameRate = 60;
             controller.captureOnPlay = true;
-            controller.captureFrequency = 5f;
+            controller.captureFrequency = CaptureFrequency(profile);
             controller.captureDuration = CaptureDuration(profile);
             controller.captureWidth = 1280;
             controller.captureHeight = 720;
@@ -191,8 +229,18 @@ namespace GPUParticles.Editor
                 case ParticleABValidationProfile.BaselineCone: return 10f;
                 case ParticleABValidationProfile.ForceOverLifetimePoint: return 3f;
                 case ParticleABValidationProfile.RandomizedMainPoint: return 2f;
+                case ParticleABValidationProfile.EmissionBurstPoint: return 2.7f;
+                case ParticleABValidationProfile.EmissionRateCurvePoint: return 2.2f;
                 default: return 3f;
             }
+        }
+
+        static float CaptureFrequency(ParticleABValidationProfile profile)
+        {
+            return profile == ParticleABValidationProfile.EmissionBurstPoint ||
+                   profile == ParticleABValidationProfile.EmissionRateCurvePoint
+                ? 20f
+                : 5f;
         }
 
         static string CaptureOutputFolder(ParticleABValidationProfile profile)
@@ -205,6 +253,10 @@ namespace GPUParticles.Editor
                     return "TestResults/ParticleCommonFeatures";
                 case ParticleABValidationProfile.RandomizedMainPoint:
                     return "TestResults/ParticleRandomizedMain";
+                case ParticleABValidationProfile.EmissionBurstPoint:
+                    return "TestResults/ParticleEmissionBurst";
+                case ParticleABValidationProfile.EmissionRateCurvePoint:
+                    return "TestResults/ParticleEmissionRateCurve";
                 default:
                     return "TestResults/ParticleAB";
             }
@@ -215,6 +267,8 @@ namespace GPUParticles.Editor
             var owner = new GameObject("ParticleCommonFeatureMappingValidation");
             owner.SetActive(false);
             Texture2D firstForceLUT = null;
+            string firstForceAssetPath = null;
+            string secondForceAssetPath = null;
 
             try
             {
@@ -226,6 +280,9 @@ namespace GPUParticles.Editor
                 main.startColor = new ParticleSystem.MinMaxGradient(Color.red, Color.blue);
                 main.gravityModifier = new ParticleSystem.MinMaxCurve(0.25f, 0.75f);
                 main.startRotation = new ParticleSystem.MinMaxCurve(-0.5f, 0.5f);
+                main.duration = 2f;
+                main.loop = true;
+                main.startDelay = new ParticleSystem.MinMaxCurve(0.1f, 0.2f);
 
                 var rotationOverLifetime = shuriken.rotationOverLifetime;
                 rotationOverLifetime.enabled = true;
@@ -234,7 +291,14 @@ namespace GPUParticles.Editor
 
                 var emission = shuriken.emission;
                 emission.enabled = false;
-                emission.rateOverTime = 12f;
+                emission.rateOverTime = new ParticleSystem.MinMaxCurve(
+                    12f, AnimationCurve.Linear(0f, 0.25f, 1f, 1f));
+                var validationBurst = new ParticleSystem.Burst(
+                    0.25f, new ParticleSystem.MinMaxCurve(5f, 9f), 3, 0.5f)
+                {
+                    probability = 0.75f
+                };
+                emission.SetBursts(new[] { validationBurst });
 
                 var shape = shuriken.shape;
                 shape.enabled = false;
@@ -271,6 +335,29 @@ namespace GPUParticles.Editor
                 Require(gpu.randomizeRotationOverLifetime,
                     "Rotation over Lifetime Two Constants was not mapped.");
                 Require(!gpu.emissionEnabled, "Emission.enabled was not mapped.");
+                Require(gpu.emissionRateOverTimeMode == ParticleSystemCurveMode.Curve,
+                    "Emission Rate over Time Curve mode was not mapped.");
+                RequireApproximately(gpu.emissionRateOverTimeCurveMultiplier, 12f,
+                    "Emission Rate over Time curve multiplier");
+                RequireApproximately(gpu.emissionDuration, 2f, "Emission duration");
+                Require(gpu.emissionLooping, "Emission looping state was not mapped.");
+                Require(gpu.randomizeEmissionStartDelay,
+                    "Emission Start Delay Two Constants was not mapped.");
+                RequireApproximately(gpu.emissionStartDelayMin, 0.1f,
+                    "Emission Start Delay minimum");
+                RequireApproximately(gpu.emissionStartDelay, 0.2f,
+                    "Emission Start Delay maximum");
+                Require(gpu.emissionBursts != null && gpu.emissionBursts.Length == 1,
+                    "Emission Burst array was not mapped.");
+                GPUEmissionBurst mappedBurst = gpu.emissionBursts[0];
+                RequireApproximately(mappedBurst.time, 0.25f, "Burst time");
+                Require(mappedBurst.countMode == ParticleSystemCurveMode.TwoConstants,
+                    "Burst count mode was not mapped.");
+                RequireApproximately(mappedBurst.countMin, 5f, "Burst count minimum");
+                RequireApproximately(mappedBurst.countMax, 9f, "Burst count maximum");
+                Require(mappedBurst.cycleCount == 3, "Burst cycle count was not mapped.");
+                RequireApproximately(mappedBurst.repeatInterval, 0.5f, "Burst interval");
+                RequireApproximately(mappedBurst.probability, 0.75f, "Burst probability");
                 Require(gpu.shapeType == ShapeTypeGPU.Point, "Disabled Shape was not mapped to Point.");
                 Require(gpu.forceOverLifetimeEnabled, "Force over Lifetime enabled state was not mapped.");
                 Require(gpu.forceOverLifetimeSpace == SimulationSpace.World,
@@ -281,6 +368,7 @@ namespace GPUParticles.Editor
                     "Force over Lifetime MinMaxCurve LUT was not generated.");
 
                 firstForceLUT = gpu.forceOverLifetimeLUT;
+                firstForceAssetPath = AssetDatabase.GetAssetPath(firstForceLUT);
                 Color minimum = firstForceLUT.GetPixel(0, 0);
                 Color maximum = firstForceLUT.GetPixel(0, 1);
                 RequireApproximately(minimum.r, -2f, "Force minimum X");
@@ -290,10 +378,14 @@ namespace GPUParticles.Editor
                 RequireApproximately(maximum.g, 3f, "Force maximum Y");
                 RequireApproximately(maximum.b, 4f, "Force maximum Z");
 
-                Object.DestroyImmediate(firstForceLUT);
+                if (string.IsNullOrEmpty(firstForceAssetPath))
+                {
+                    Object.DestroyImmediate(firstForceLUT);
+                }
                 firstForceLUT = null;
                 gpu.forceOverLifetimeLUT = null;
 
+                emission.rateOverTime = new ParticleSystem.MinMaxCurve(4f, 8f);
                 shape.enabled = true;
                 shape.shapeType = ParticleSystemShapeType.Circle;
                 shape.radius = 3f;
@@ -306,10 +398,20 @@ namespace GPUParticles.Editor
                     "Circle radius must remain unscaled before GPU Shape TRS");
                 Require(gpu.shapeLocalScale == shape.scale, "Shape scale was not preserved.");
                 RequireApproximately(gpu.shapeConeArcDeg, 90f, "Shape Arc");
+                Require(gpu.emissionRateOverTimeMode == ParticleSystemCurveMode.TwoConstants,
+                    "Emission Rate over Time Two Constants mode was not mapped.");
+                RequireApproximately(gpu.emissionRateOverTimeMin, 4f,
+                    "Emission Rate over Time minimum");
+                RequireApproximately(gpu.emissionRateOverTime, 8f,
+                    "Emission Rate over Time maximum");
 
                 if (gpu.forceOverLifetimeLUT != null)
                 {
-                    Object.DestroyImmediate(gpu.forceOverLifetimeLUT);
+                    secondForceAssetPath = AssetDatabase.GetAssetPath(gpu.forceOverLifetimeLUT);
+                    if (string.IsNullOrEmpty(secondForceAssetPath))
+                    {
+                        Object.DestroyImmediate(gpu.forceOverLifetimeLUT);
+                    }
                     gpu.forceOverLifetimeLUT = null;
                 }
 
@@ -317,8 +419,20 @@ namespace GPUParticles.Editor
             }
             finally
             {
-                if (firstForceLUT != null) Object.DestroyImmediate(firstForceLUT);
+                if (firstForceLUT != null && string.IsNullOrEmpty(firstForceAssetPath))
+                {
+                    Object.DestroyImmediate(firstForceLUT);
+                }
                 Object.DestroyImmediate(owner);
+                if (!string.IsNullOrEmpty(firstForceAssetPath))
+                {
+                    AssetDatabase.DeleteAsset(firstForceAssetPath);
+                }
+                if (!string.IsNullOrEmpty(secondForceAssetPath) &&
+                    secondForceAssetPath != firstForceAssetPath)
+                {
+                    AssetDatabase.DeleteAsset(secondForceAssetPath);
+                }
             }
         }
 
