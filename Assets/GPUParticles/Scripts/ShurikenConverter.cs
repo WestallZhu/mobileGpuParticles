@@ -49,6 +49,14 @@ namespace GPUParticles
             else Debug.LogWarning("GravityModifier is not constant; using main.gravityModifier.constant.", owner);
 
             gpu.simulationSpeed = main.simulationSpeed;
+            if (main.startRotation.mode == ParticleSystemCurveMode.Constant) gpu.startRotation = main.startRotation.constant;
+            else Debug.LogWarning("StartRotation is not constant; using main.startRotation.constant.", owner);
+
+            var rotOverLifetime = ps.rotationOverLifetime;
+            if (rotOverLifetime.enabled && !rotOverLifetime.separateAxes && rotOverLifetime.z.mode == ParticleSystemCurveMode.Constant)
+                gpu.rotationOverLifetime = rotOverLifetime.z.constant;
+            else if (rotOverLifetime.enabled)
+                Debug.LogWarning("RotationOverLifetime is not a single constant Z curve; GPU path currently uses 0.", owner);
 
             if (emission.rateOverTime.mode == ParticleSystemCurveMode.Constant) gpu.emissionRateOverTime = emission.rateOverTime.constant;
             else Debug.LogWarning("Emission.rateOverTime not constant; using constant value.", owner);
@@ -226,7 +234,7 @@ namespace GPUParticles
                 var lut = GradientLUTBuilder.Build(g, 256);
                 gpu.colorOverLifetimeLUT = lut;
             }
-            else gpu.colorOverLifetimeLUT = Texture2D.whiteTexture;
+            else gpu.colorOverLifetimeLUT = GradientLUTBuilder.GetDefaultWhiteLUT();
 
             if (sizeOver.enabled)
             {
@@ -242,7 +250,7 @@ namespace GPUParticles
                 var lut = CurveLUTBuilder.Build(curveToBake, 256);
                 gpu.sizeOverLifetimeLUT = lut;
             }
-            else gpu.sizeOverLifetimeLUT = Texture2D.whiteTexture;
+            else gpu.sizeOverLifetimeLUT = CurveLUTBuilder.GetDefaultUnitLUT();
 
             Debug.Log("Shuriken → GPU conversion complete (Shapes + Renderer mapping).", owner);
 
@@ -329,6 +337,14 @@ namespace GPUParticles
             else Debug.LogWarning("GravityModifier is not constant; using main.gravityModifier.constant.", gpuChild);
 
             gpu.simulationSpeed = main.simulationSpeed;
+            if (main.startRotation.mode == ParticleSystemCurveMode.Constant) gpu.startRotation = main.startRotation.constant;
+            else Debug.LogWarning("StartRotation is not constant; using main.startRotation.constant.", gpuChild);
+
+            var rotOverLifetime = particleSystem.rotationOverLifetime;
+            if (rotOverLifetime.enabled && !rotOverLifetime.separateAxes && rotOverLifetime.z.mode == ParticleSystemCurveMode.Constant)
+                gpu.rotationOverLifetime = rotOverLifetime.z.constant;
+            else if (rotOverLifetime.enabled)
+                Debug.LogWarning("RotationOverLifetime is not a single constant Z curve; GPU path currently uses 0.", gpuChild);
 
             if (emission.rateOverTime.mode == ParticleSystemCurveMode.Constant) gpu.emissionRateOverTime = emission.rateOverTime.constant;
             else Debug.LogWarning("Emission.rateOverTime not constant; using constant value.", gpuChild);
@@ -504,7 +520,7 @@ namespace GPUParticles
                 var lut = GradientLUTBuilder.Build(g, 256);
                 gpu.colorOverLifetimeLUT = lut;
             }
-            else gpu.colorOverLifetimeLUT = Texture2D.whiteTexture;
+            else gpu.colorOverLifetimeLUT = GradientLUTBuilder.GetDefaultWhiteLUT();
 
             if (sizeOver.enabled)
             {
@@ -520,7 +536,7 @@ namespace GPUParticles
                 var lut = CurveLUTBuilder.Build(curveToBake, 256);
                 gpu.sizeOverLifetimeLUT = lut;
             }
-            else gpu.sizeOverLifetimeLUT = Texture2D.whiteTexture;
+            else gpu.sizeOverLifetimeLUT = CurveLUTBuilder.GetDefaultUnitLUT();
 
             // Base map (texture) from ParticleSystemRenderer material
             if (psr != null)

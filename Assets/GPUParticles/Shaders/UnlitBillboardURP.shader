@@ -30,6 +30,10 @@ Shader "GPUParticles/UnlitBillboardURP"
                 int   _GridSize;
                 int   _MaxParticles;
                 int   _SimulationSpace;
+                float _StartLifetime;
+                float _StartRotation;
+                float _RotationOverLifetime;
+                float _padLifetime;
 
                 // emitter transforms (for LS->WS)
                 float4x4 _EmitterLocalToWorld;
@@ -238,6 +242,15 @@ Shader "GPUParticles/UnlitBillboardURP"
                 
                 float2 pivotOff = float2(_Pivot.x*W, (_RenderMode==3)?(_Pivot.y*L):(_Pivot.y*W));
                 local -= pivotOff;
+
+                if (_RenderMode != 3)
+                {
+                    float age = max(0.0, _StartLifetime - posLife.w);
+                    float angle = _StartRotation + (_RotationOverLifetime * age);
+                    float s = sin(angle);
+                    float c = cos(angle);
+                    local = float2(local.x * c - local.y * s, local.x * s + local.y * c);
+                }
 
                 float3 wpos = posWS + Right*local.x + Up*local.y;
 

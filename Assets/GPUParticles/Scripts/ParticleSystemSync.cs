@@ -10,6 +10,7 @@ namespace GPUParticles
         private ParticleSystem sourceParticleSystem;
         private GPUParticleSystem targetGPUParticleSystem;
         private ParticleSystemRenderer sourceRenderer;
+        private Texture2D cachedBaseMap;
 
         // 缓存上次的值以检测变化
         private float cachedStartLifetime;
@@ -18,6 +19,8 @@ namespace GPUParticles
         private Color cachedStartColor;
         private float cachedGravityModifier;
         private float cachedSimulationSpeed;
+        private float cachedStartRotation;
+        private float cachedRotationOverLifetime;
         private float cachedEmissionRate;
         private int cachedMaxParticles;
         private ParticleSystemSimulationSpace cachedSimulationSpace;
@@ -29,6 +32,10 @@ namespace GPUParticles
         private Vector3 cachedShapeScale;
         private float cachedShapeRadius;
         private float cachedShapeAngle;
+        private float cachedShapeLength;
+        private float cachedShapeRadiusThickness;
+        private float cachedShapeArc;
+        private float cachedShapeDonutRadius;
 
         // Renderer缓存
         private ParticleSystemRenderMode cachedRenderMode;
@@ -78,6 +85,8 @@ namespace GPUParticles
             SyncEmissionParameters(true);
             SyncShapeParameters(true);
             SyncRendererParameters(true);
+            SyncRotationParameters(true);
+            SyncMaterialParameters(true);
             SyncColorOverLifetime(true);
             SyncSizeOverLifetime(true);
             isInitialized = true;
@@ -97,9 +106,17 @@ namespace GPUParticles
             cachedStartColor = main.startColor.mode == ParticleSystemGradientMode.Color ? main.startColor.color : cachedStartColor;
             cachedGravityModifier = main.gravityModifier.mode == ParticleSystemCurveMode.Constant ? main.gravityModifier.constant : cachedGravityModifier;
             cachedSimulationSpeed = main.simulationSpeed;
+            cachedStartRotation = main.startRotation.mode == ParticleSystemCurveMode.Constant ? main.startRotation.constant : cachedStartRotation;
             cachedEmissionRate = emission.rateOverTime.mode == ParticleSystemCurveMode.Constant ? emission.rateOverTime.constant : cachedEmissionRate;
             cachedMaxParticles = main.maxParticles;
             cachedSimulationSpace = main.simulationSpace;
+            var rotationOverLifetime = sourceParticleSystem.rotationOverLifetime;
+            cachedRotationOverLifetime =
+                rotationOverLifetime.enabled &&
+                !rotationOverLifetime.separateAxes &&
+                rotationOverLifetime.z.mode == ParticleSystemCurveMode.Constant
+                    ? rotationOverLifetime.z.constant
+                    : cachedRotationOverLifetime;
 
             cachedShapeType = shape.shapeType;
             cachedShapePosition = shape.position;
@@ -107,6 +124,10 @@ namespace GPUParticles
             cachedShapeScale = shape.scale;
             cachedShapeRadius = shape.radius;
             cachedShapeAngle = shape.angle;
+            cachedShapeLength = shape.length;
+            cachedShapeRadiusThickness = shape.radiusThickness;
+            cachedShapeArc = shape.arc;
+            cachedShapeDonutRadius = shape.donutRadius;
 
             if (sourceRenderer != null)
             {
@@ -124,6 +145,8 @@ namespace GPUParticles
             SyncEmissionParameters();
             SyncShapeParameters();
             SyncRendererParameters();
+            SyncRotationParameters();
+            SyncMaterialParameters();
             SyncColorOverLifetime();
             SyncSizeOverLifetime();
         }
@@ -210,6 +233,16 @@ namespace GPUParticles
                 targetGPUParticleSystem.simulationSpeed = newSimulationSpeed;
                 cachedSimulationSpeed = newSimulationSpeed;
             }
+
+            if (main.startRotation.mode == ParticleSystemCurveMode.Constant)
+            {
+                float newStartRotation = main.startRotation.constant;
+                if (force || Mathf.Abs(newStartRotation - cachedStartRotation) > 0.001f)
+                {
+                    targetGPUParticleSystem.startRotation = newStartRotation;
+                    cachedStartRotation = newStartRotation;
+                }
+            }
         }
 
         void SyncEmissionParameters(bool force = false)
@@ -275,15 +308,117 @@ namespace GPUParticles
             // Shape Angle
             if (force || Mathf.Abs(shape.angle - cachedShapeAngle) > 0.001f)
             {
-                targetGPUParticleSystem.shapeConeAngle = shape.angle;
                 cachedShapeAngle = shape.angle;
+                shapeChanged = true;
+            }
+
+            // Shape Length
+            if (force || Mathf.Abs(shape.length - cachedShapeLength) > 0.001f)
+            {
+                cachedShapeLength = shape.length;
+                shapeChanged = true;
+            }
+
+            // Shape Radius Thickness
+            if (force || Mathf.Abs(shape.radiusThickness - cachedShapeRadiusThickness) > 0.001f)
+            {
+                cachedShapeRadiusThickness = shape.radiusThickness;
+                shapeChanged = true;
+            }
+
+            // Shape Arc
+            if (force || Mathf.Abs(shape.arc - cachedShapeArc) > 0.001f)
+            {
+                cachedShapeArc = shape.arc;
+                shapeChanged = true;
+            }
+
+            // Donut Thickness
+            if (force || Mathf.Abs(shape.donutRadius - cachedShapeDonutRadius) > 0.001f)
+            {
+                cachedShapeDonutRadius = shape.donutRadius;
                 shapeChanged = true;
             }
 
             // 其他shape参数根据类型更新
             if (force || shapeChanged)
             {
+                ApplyShapeMapping(shape);
                 targetGPUParticleSystem.alignToDirection = shape.alignToDirection;
+            }
+        }
+
+        void ApplyShapeMapping(ParticleSystem.ShapeModule shape)
+        {
+            switch (shape.shapeType)
+            {
+                case ParticleSystemShapeType.Sphere:
+                case ParticleSystemShapeType.SphereShell:
+                    targetGPUParticleSystem.shapeType = ShapeTypeGPU.Sphere;
+                    targetGPUParticleSystem.shapeEmitFrom =
+                        shape.shapeType == ParticleSystemShapeType.SphereShell ? ShapeEmitFromGPU.Surface : ShapeEmitFromGPU.Volume;
+                    targetGPUParticleSystem.shapeSphereRadius = shape.radius;
+                    targetGPUParticleSystem.shapeRadiusThickness = shape.radiusThickness;
+                    break;
+
+                case ParticleSystemShapeType.Hemisphere:
+                case ParticleSystemShapeType.HemisphereShell:
+                    targetGPUParticleSystem.shapeType = ShapeTypeGPU.Hemisphere;
+                    targetGPUParticleSystem.shapeEmitFrom =
+                        shape.shapeType == ParticleSystemShapeType.HemisphereShell ? ShapeEmitFromGPU.Surface : ShapeEmitFromGPU.Volume;
+                    targetGPUParticleSystem.shapeSphereRadius = shape.radius;
+                    targetGPUParticleSystem.shapeRadiusThickness = shape.radiusThickness;
+                    break;
+
+                case ParticleSystemShapeType.Cone:
+                case ParticleSystemShapeType.ConeShell:
+                    targetGPUParticleSystem.shapeType = ShapeTypeGPU.Cone;
+                    targetGPUParticleSystem.shapeEmitFrom = ShapeEmitFromGPU.Base;
+                    targetGPUParticleSystem.shapeConeRadius = shape.radius;
+                    targetGPUParticleSystem.shapeConeLength = shape.length > 0f ? shape.length : 1f;
+                    targetGPUParticleSystem.shapeConeAngle = shape.angle;
+                    targetGPUParticleSystem.shapeRadiusThickness = shape.radiusThickness;
+                    targetGPUParticleSystem.shapeConeArcDeg = shape.arc;
+                    break;
+
+                case ParticleSystemShapeType.ConeVolume:
+                case ParticleSystemShapeType.ConeVolumeShell:
+                    targetGPUParticleSystem.shapeType = ShapeTypeGPU.Cone;
+                    targetGPUParticleSystem.shapeEmitFrom = ShapeEmitFromGPU.Volume;
+                    targetGPUParticleSystem.shapeConeRadius = shape.radius;
+                    targetGPUParticleSystem.shapeConeLength = shape.length > 0f ? shape.length : 1f;
+                    targetGPUParticleSystem.shapeConeAngle = shape.angle;
+                    targetGPUParticleSystem.shapeRadiusThickness = shape.radiusThickness;
+                    targetGPUParticleSystem.shapeConeArcDeg = shape.arc;
+                    break;
+
+                case ParticleSystemShapeType.Donut:
+                    targetGPUParticleSystem.shapeType = ShapeTypeGPU.Donut;
+                    targetGPUParticleSystem.shapeEmitFrom = ShapeEmitFromGPU.Volume;
+                    targetGPUParticleSystem.shapeDonutRadius = Mathf.Max(0f, shape.radius);
+                    targetGPUParticleSystem.shapeDonutThickness = Mathf.Max(0f, shape.donutRadius);
+                    break;
+
+                case ParticleSystemShapeType.Box:
+                case ParticleSystemShapeType.BoxShell:
+                case ParticleSystemShapeType.BoxEdge:
+                    targetGPUParticleSystem.shapeType = ShapeTypeGPU.Box;
+                    targetGPUParticleSystem.shapeEmitFrom =
+                        shape.shapeType == ParticleSystemShapeType.Box ? ShapeEmitFromGPU.Volume : ShapeEmitFromGPU.Surface;
+                    targetGPUParticleSystem.shapeBoxSize = Vector3.one;
+                    break;
+
+                case ParticleSystemShapeType.Circle:
+                    targetGPUParticleSystem.shapeType = ShapeTypeGPU.Circle;
+                    targetGPUParticleSystem.shapeEmitFrom = ShapeEmitFromGPU.Volume;
+                    targetGPUParticleSystem.shapeCircleRadius = Mathf.Max(0f, shape.radius);
+                    break;
+
+                case ParticleSystemShapeType.CircleEdge:
+                    targetGPUParticleSystem.shapeType = ShapeTypeGPU.Circle;
+                    targetGPUParticleSystem.shapeEmitFrom = ShapeEmitFromGPU.Surface;
+                    targetGPUParticleSystem.shapeCircleRadius = Mathf.Max(0f, shape.radius);
+                    break;
             }
         }
 
@@ -353,6 +488,75 @@ namespace GPUParticles
             }
         }
 
+        void SyncRotationParameters(bool force = false)
+        {
+            var rotationOverLifetime = sourceParticleSystem.rotationOverLifetime;
+            float newRotationOverLifetime = 0f;
+
+            if (rotationOverLifetime.enabled &&
+                !rotationOverLifetime.separateAxes &&
+                rotationOverLifetime.z.mode == ParticleSystemCurveMode.Constant)
+            {
+                newRotationOverLifetime = rotationOverLifetime.z.constant;
+            }
+
+            if (force || Mathf.Abs(newRotationOverLifetime - cachedRotationOverLifetime) > 0.001f)
+            {
+                targetGPUParticleSystem.rotationOverLifetime = newRotationOverLifetime;
+                cachedRotationOverLifetime = newRotationOverLifetime;
+            }
+        }
+
+        void SyncMaterialParameters(bool force = false)
+        {
+            if (sourceRenderer == null) return;
+
+            Texture2D baseMap = TryGetBaseMap(sourceRenderer);
+            if (force || baseMap != cachedBaseMap)
+            {
+                targetGPUParticleSystem.baseMap = baseMap != null ? baseMap : Texture2D.whiteTexture;
+                cachedBaseMap = baseMap;
+            }
+        }
+
+        static Texture2D TryGetBaseMap(ParticleSystemRenderer renderer)
+        {
+            if (renderer == null) return null;
+
+            Texture2D baseMap = TryGetBaseMap(renderer.sharedMaterial);
+            if (baseMap != null) return baseMap;
+
+            var materials = renderer.sharedMaterials;
+            if (materials == null) return null;
+
+            foreach (var material in materials)
+            {
+                baseMap = TryGetBaseMap(material);
+                if (baseMap != null) return baseMap;
+            }
+
+            return null;
+        }
+
+        static Texture2D TryGetBaseMap(Material material)
+        {
+            if (material == null) return null;
+
+            if (material.HasProperty("_BaseMap"))
+            {
+                var texture = material.GetTexture("_BaseMap") as Texture2D;
+                if (texture != null) return texture;
+            }
+
+            if (material.HasProperty("_MainTex"))
+            {
+                var texture = material.GetTexture("_MainTex") as Texture2D;
+                if (texture != null) return texture;
+            }
+
+            return material.mainTexture as Texture2D;
+        }
+
         void SyncColorOverLifetime(bool force = false)
         {
             var colOver = sourceParticleSystem.colorOverLifetime;
@@ -380,9 +584,10 @@ namespace GPUParticles
             }
             else
             {
-                if (force || targetGPUParticleSystem.colorOverLifetimeLUT != Texture2D.whiteTexture)
+                Texture2D defaultLut = GradientLUTBuilder.GetDefaultWhiteLUT();
+                if (force || targetGPUParticleSystem.colorOverLifetimeLUT != defaultLut)
                 {
-                    targetGPUParticleSystem.colorOverLifetimeLUT = Texture2D.whiteTexture;
+                    targetGPUParticleSystem.colorOverLifetimeLUT = defaultLut;
                 }
             }
         }
@@ -427,9 +632,10 @@ namespace GPUParticles
             }
             else
             {
-                if (force || targetGPUParticleSystem.sizeOverLifetimeLUT != Texture2D.whiteTexture)
+                Texture2D defaultLut = CurveLUTBuilder.GetDefaultUnitLUT();
+                if (force || targetGPUParticleSystem.sizeOverLifetimeLUT != defaultLut)
                 {
-                    targetGPUParticleSystem.sizeOverLifetimeLUT = Texture2D.whiteTexture;
+                    targetGPUParticleSystem.sizeOverLifetimeLUT = defaultLut;
                 }
             }
         }

@@ -134,6 +134,7 @@ GameObject:
   - component: {fileID: 330585545}
   - component: {fileID: 330585544}
   - component: {fileID: 330585547}
+  - component: {fileID: 330585548}
   m_Layer: 0
   m_Name: Main Camera
   m_TagString: MainCamera
@@ -225,8 +226,8 @@ MonoBehaviour:
   m_Enabled: 1
   m_EditorHideFlags: 0
   m_Script: {fileID: 11500000, guid: a79441f348de89743a2939f4d699eac1, type: 3}
-  m_Name: 
-  m_EditorClassIdentifier: 
+  m_Name:
+  m_EditorClassIdentifier:
   m_RenderShadows: 1
   m_RequiresDepthTextureOption: 2
   m_RequiresOpaqueTextureOption: 2
@@ -259,6 +260,30 @@ MonoBehaviour:
     m_MipBias: 0
     m_VarianceClampScale: 0.9
     m_ContrastAdaptiveSharpening: 0
+--- !u!114 &330585548
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 330585543}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 86d5d4ec53d74cd0a3931c95747c2c32, type: 3}
+  m_Name:
+  m_EditorClassIdentifier:
+  shuriken: {fileID: 1032664885}
+  gpuParticles: {fileID: 1751561603}
+  displayMode: 0
+  randomSeed: 12345
+  fixedFrameRate: 60
+  captureOnPlay: 1
+  captureFrequency: 5
+  captureDuration: 10
+  captureWidth: 1280
+  captureHeight: 720
+  outputFolder: TestResults/ParticleAB
+  exitEditorWhenCaptureCompletes: 0
 --- !u!1 &410087039
 GameObject:
   m_ObjectHideFlags: 0
@@ -364,8 +389,8 @@ MonoBehaviour:
   m_Enabled: 1
   m_EditorHideFlags: 0
   m_Script: {fileID: 11500000, guid: 474bcb49853aa07438625e644c072ee6, type: 3}
-  m_Name: 
-  m_EditorClassIdentifier: 
+  m_Name:
+  m_EditorClassIdentifier:
   m_Version: 3
   m_UsePipelineSettings: 1
   m_AdditionalLightsShadowResolutionTier: 2
@@ -404,8 +429,8 @@ MonoBehaviour:
   m_Enabled: 1
   m_EditorHideFlags: 0
   m_Script: {fileID: 11500000, guid: 172515602e62fb746b5d573b38a5fe58, type: 3}
-  m_Name: 
-  m_EditorClassIdentifier: 
+  m_Name:
+  m_EditorClassIdentifier:
   m_IsGlobal: 1
   priority: 0
   blendDistance: 0
@@ -529,7 +554,7 @@ ParticleSystem:
   lengthInSec: 5
   simulationSpeed: 1
   stopAction: 0
-  cullingMode: 0
+  cullingMode: 3
   ringBufferMode: 0
   ringBufferLoopRange: {x: 0, y: 1}
   emitterVelocityMode: 1
@@ -537,7 +562,7 @@ ParticleSystem:
   prewarm: 0
   playOnAwake: 1
   useUnscaledTime: 0
-  autoRandomSeed: 1
+  autoRandomSeed: 0
   startDelay:
     serializedVersion: 2
     minMaxState: 0
@@ -594,7 +619,7 @@ ParticleSystem:
   moveWithTransform: 0
   moveWithCustomTransform: {fileID: 0}
   scalingMode: 1
-  randomSeed: 0
+  randomSeed: 12345
   InitialModule:
     serializedVersion: 3
     enabled: 1
@@ -5300,8 +5325,8 @@ MonoBehaviour:
   m_Enabled: 1
   m_EditorHideFlags: 0
   m_Script: {fileID: 11500000, guid: 4f83123929403f74d823b2e3e3be79de, type: 3}
-  m_Name: 
-  m_EditorClassIdentifier: 
+  m_Name:
+  m_EditorClassIdentifier:
 --- !u!114 &1751561603
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -5312,8 +5337,8 @@ MonoBehaviour:
   m_Enabled: 1
   m_EditorHideFlags: 0
   m_Script: {fileID: 11500000, guid: f0dfdc2d020fe8c4a9a1bb46f0a66f24, type: 3}
-  m_Name: 
-  m_EditorClassIdentifier: 
+  m_Name:
+  m_EditorClassIdentifier:
   maxParticles: 1000
   emissionRateOverTime: 10
   startLifetime: 5
@@ -5322,11 +5347,14 @@ MonoBehaviour:
   startColor: {r: 1, g: 1, b: 1, a: 1}
   gravityModifier: 0
   simulationSpeed: 1
+  startRotation: 0
+  rotationOverLifetime: 0
   simulationSpace: 0
   colorOverLifetimeLUT: {fileID: 0}
   sizeOverLifetimeLUT: {fileID: 0}
   baseMap: {fileID: 10300, guid: 0000000000000000f000000000000000, type: 0}
   minAlphaCull: 0.001
+  renderEnabled: 1
   initialDirectionWS: {x: 0, y: 0, z: 1}
   shapeType: 2
   shapeEmitFrom: 2

@@ -31,6 +31,8 @@ namespace GPUParticles
         public Color startColor = Color.white;
         public float gravityModifier = 0.0f;
         [Min(0.0f)] public float simulationSpeed = 1.0f;
+        public float startRotation = 0.0f;
+        public float rotationOverLifetime = 0.0f;
         public SimulationSpace simulationSpace = SimulationSpace.Local;
 
         [Header("Over Lifetime (LUTs)")]
@@ -40,6 +42,7 @@ namespace GPUParticles
         [Header("Rendering")]
         public Texture2D baseMap;
         [Range(0,1)] public float minAlphaCull = 0.001f;
+        public bool renderEnabled = true;
 
         [Header("Emitter Direction (fallback)")]
         public Vector3 initialDirectionWS = Vector3.forward;
@@ -115,6 +118,7 @@ namespace GPUParticles
         // emission cursor
         int emitCursor = 0;
         float emitCarry = 0f;
+        int lastSimulatedFrame = -1;
 
         // camera velocity cache
         Vector3 prevCamPos;
@@ -131,10 +135,14 @@ namespace GPUParticles
         static readonly int _StartSpeed = Shader.PropertyToID("_StartSpeed");
         static readonly int _StartSize  = Shader.PropertyToID("_StartSize");
         static readonly int _StartColor = Shader.PropertyToID("_StartColor");
+        static readonly int _StartRotation = Shader.PropertyToID("_StartRotation");
+        static readonly int _RotationOverLifetime = Shader.PropertyToID("_RotationOverLifetime");
         static readonly int _GravityWS  = Shader.PropertyToID("_GravityWS");
         static readonly int _SimulationSpace = Shader.PropertyToID("_SimulationSpace");
         static readonly int _EmitStart  = Shader.PropertyToID("_EmitStart");
         static readonly int _EmitCount  = Shader.PropertyToID("_EmitCount");
+        static readonly int _EmitCarryPrev = Shader.PropertyToID("_EmitCarryPrev");
+        static readonly int _EmissionRate = Shader.PropertyToID("_EmissionRate");
         static readonly int _InitialDir = Shader.PropertyToID("_InitialDir");
 
         // shape params
@@ -180,6 +188,10 @@ namespace GPUParticles
         static readonly int _Freeform = Shader.PropertyToID("_Freeform");
         static readonly int _RotateWithStretch = Shader.PropertyToID("_RotateWithStretch");
 
+        internal RenderTexture CurrentPositionLifetimeTexture => posLife[ping];
+        internal RenderTexture CurrentVelocitySizeTexture => velSize[ping];
+        internal RenderTexture CurrentColorTexture => colorRT[ping];
+
         void OnEnable()
         {
             if (!Active.Contains(this)) Active.Add(this);
@@ -191,6 +203,7 @@ namespace GPUParticles
         {
             Active.Remove(this);
             ReleaseTargets();
+            lastSimulatedFrame = -1;
         }
 
         void OnValidate()
@@ -241,6 +254,7 @@ namespace GPUParticles
             ping = 0;
             emitCursor = 0;
             emitCarry = 0f;
+            lastSimulatedFrame = -1;
         }
 
         void CreateRT(ref RenderTexture rt, RenderTextureFormat fmt)
@@ -272,13 +286,35 @@ namespace GPUParticles
             }
         }
 
+        internal void ResetSimulation()
+        {
+            EnsureMaterials();
+            RecreateTargetsIfNeeded(true);
+        }
+
         internal void Simulate(CommandBuffer cmd, Camera camera)
         {
             if (simulateMaterial == null) return;
 
+            // A renderer feature executes once per camera. Shuriken advances once per
+            // player-loop frame, so advancing here for Scene/Game/overlay cameras would
+            // make the GPU system run faster whenever more than one camera renders.
+            if (Application.isPlaying)
+            {
+                int frame = Time.frameCount;
+                if (lastSimulatedFrame == frame) return;
+                lastSimulatedFrame = frame;
+            }
+
             float dt = Application.isPlaying ? Time.deltaTime : (1f / 60f);
             dt *= simulationSpeed;
-            float toEmit = (emissionRateOverTime * dt) + emitCarry;
+            SimulateStep(cmd, dt);
+        }
+
+        internal void SimulateStep(CommandBuffer cmd, float dt)
+        {
+            float emitCarryPrev = emitCarry;
+            float toEmit = (emissionRateOverTime * dt) + emitCarryPrev;
             int emitCount = Mathf.Clamp(Mathf.FloorToInt(toEmit), 0, maxParticles);
             emitCarry = toEmit - emitCount;
             int emitStart = emitCursor;
@@ -289,8 +325,8 @@ namespace GPUParticles
             simulateMaterial.SetTexture(_CurPosLife, posLife[src]);
             simulateMaterial.SetTexture(_CurVelSize, velSize[src]);
             simulateMaterial.SetTexture(_CurColor,   colorRT[src]);
-            simulateMaterial.SetTexture("_GradLUT", colorOverLifetimeLUT != null ? colorOverLifetimeLUT : Texture2D.whiteTexture);
-            simulateMaterial.SetTexture("_SizeLUT", sizeOverLifetimeLUT != null ? sizeOverLifetimeLUT : Texture2D.whiteTexture);
+            simulateMaterial.SetTexture("_GradLUT", colorOverLifetimeLUT != null ? colorOverLifetimeLUT : GradientLUTBuilder.GetDefaultWhiteLUT());
+            simulateMaterial.SetTexture("_SizeLUT", sizeOverLifetimeLUT != null ? sizeOverLifetimeLUT : CurveLUTBuilder.GetDefaultUnitLUT());
 
             simulateMaterial.SetInt(_GridSize, gridSize);
             simulateMaterial.SetInt(_MaxParticles, maxParticles);
@@ -307,6 +343,8 @@ namespace GPUParticles
             simulateMaterial.SetInt(_SimulationSpace, (int)simulationSpace);
             simulateMaterial.SetInt(_EmitStart, emitStart);
             simulateMaterial.SetInt(_EmitCount, emitCount);
+            simulateMaterial.SetFloat(_EmitCarryPrev, emitCarryPrev);
+            simulateMaterial.SetFloat(_EmissionRate, emissionRateOverTime);
 
             Vector3 dirInitW = initialDirectionWS.sqrMagnitude > 1e-6f ? initialDirectionWS.normalized : transform.forward;
             Vector3 dirInitSim = (simulationSpace == SimulationSpace.World) ? dirInitW : transform.InverseTransformDirection(dirInitW);
@@ -390,7 +428,7 @@ namespace GPUParticles
 
         internal void Render(CommandBuffer cmd, Camera camera)
         {
-            if (renderMaterial == null) return;
+            if (!renderEnabled || renderMaterial == null) return;
 
             renderMaterial.SetTexture(_CurPosLife, posLife[ping]);
             renderMaterial.SetTexture(_CurVelSize, velSize[ping]);
@@ -400,6 +438,9 @@ namespace GPUParticles
             renderMaterial.SetInt(_GridSize, gridSize);
             renderMaterial.SetInt(_MaxParticles, maxParticles);
             renderMaterial.SetInt(_SimulationSpace, (int)simulationSpace);
+            renderMaterial.SetFloat(_StartLifetime, startLifetime);
+            renderMaterial.SetFloat(_StartRotation, startRotation);
+            renderMaterial.SetFloat(_RotationOverLifetime, rotationOverLifetime);
             renderMaterial.SetMatrix(_EmitterLocalToWorld_Render, transform.localToWorldMatrix);
             renderMaterial.SetVector(_CameraRightWS, camera.transform.right);
             renderMaterial.SetVector(_CameraUpWS, camera.transform.up);
