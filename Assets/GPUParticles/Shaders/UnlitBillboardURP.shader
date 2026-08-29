@@ -31,9 +31,14 @@ Shader "GPUParticles/UnlitBillboardURP"
                 int   _MaxParticles;
                 int   _SimulationSpace;
                 float _StartLifetime;
+                float _StartLifetimeMin;
+                int   _RandomizeStartLifetime;
                 float _StartRotation;
+                float _StartRotationMin;
+                int   _RandomizeStartRotation;
                 float _RotationOverLifetime;
-                float _padLifetime;
+                float _RotationOverLifetimeMin;
+                int   _RandomizeRotationOverLifetime;
 
                 // emitter transforms (for LS->WS)
                 float4x4 _EmitterLocalToWorld;
@@ -63,6 +68,24 @@ Shader "GPUParticles/UnlitBillboardURP"
 
             // handy
             struct VOut{ float4 posHCS:SV_POSITION; float2 uv:TEXCOORD0; float4 col:COLOR; };
+
+            uint HashU32(uint x)
+            {
+                x += (x << 10u); x ^= (x >> 6u);
+                x += (x << 3u);  x ^= (x >> 11u);
+                x += (x << 15u);
+                return x;
+            }
+
+            float Hash01(uint x)
+            {
+                return (HashU32(x) & 0x00FFFFFFu) / 16777216.0;
+            }
+
+            float RandomRange(uint id, uint salt, int randomized, float minimum, float maximum)
+            {
+                return randomized != 0 ? lerp(minimum, maximum, Hash01(id ^ salt)) : maximum;
+            }
 
             float3 Ortho(float3 v){ return normalize( any(abs(v) > 0.0) ? (abs(v.z)<0.999?cross(v,float3(0,0,1)):cross(v,float3(0,1,0))) : float3(1,0,0) ); }
 
@@ -245,8 +268,17 @@ Shader "GPUParticles/UnlitBillboardURP"
 
                 if (_RenderMode != 3)
                 {
-                    float age = max(0.0, _StartLifetime - posLife.w);
-                    float angle = _StartRotation + (_RotationOverLifetime * age);
+                    float particleStartLifetime = RandomRange(
+                        quadId, 0x68E31DA4u, _RandomizeStartLifetime,
+                        _StartLifetimeMin, _StartLifetime);
+                    float particleStartRotation = RandomRange(
+                        quadId, 0x165667B1u, _RandomizeStartRotation,
+                        _StartRotationMin, _StartRotation);
+                    float particleRotationOverLifetime = RandomRange(
+                        quadId, 0xD3A2646Cu, _RandomizeRotationOverLifetime,
+                        _RotationOverLifetimeMin, _RotationOverLifetime);
+                    float age = max(0.0, particleStartLifetime - posLife.w);
+                    float angle = particleStartRotation + (particleRotationOverLifetime * age);
                     float s = sin(angle);
                     float c = cos(angle);
                     local = float2(local.x * c - local.y * s, local.x * s + local.y * c);

@@ -32,32 +32,12 @@ namespace GPUParticles
             // ---- Main ----
             gpu.maxParticles = main.maxParticles;
             gpu.simulationSpace = main.simulationSpace == ParticleSystemSimulationSpace.World ? SimulationSpace.World : SimulationSpace.Local;
-
-            if (main.startLifetime.mode == ParticleSystemCurveMode.Constant) gpu.startLifetime = main.startLifetime.constant;
-            else Debug.LogWarning("StartLifetime is not constant; using main.startLifetime.constant.", owner);
-
-            if (main.startSpeed.mode == ParticleSystemCurveMode.Constant) gpu.startSpeed = main.startSpeed.constant;
-            else Debug.LogWarning("StartSpeed is not constant; using main.startSpeed.constant.", owner);
-
-            if (main.startSize.mode == ParticleSystemCurveMode.Constant) gpu.startSize = main.startSize.constant;
-            else Debug.LogWarning("StartSize is not constant; using main.startSize.constant.", owner);
-
-            if (main.startColor.mode == ParticleSystemGradientMode.Color) gpu.startColor = main.startColor.color;
-            else Debug.LogWarning("StartColor is not a single color; using main.startColor.color.", owner);
-
-            if (main.gravityModifier.mode == ParticleSystemCurveMode.Constant) gpu.gravityModifier = main.gravityModifier.constant;
-            else Debug.LogWarning("GravityModifier is not constant; using main.gravityModifier.constant.", owner);
-
+            ApplyMainRanges(ps, gpu, owner);
             gpu.simulationSpeed = main.simulationSpeed;
-            if (main.startRotation.mode == ParticleSystemCurveMode.Constant) gpu.startRotation = main.startRotation.constant;
-            else Debug.LogWarning("StartRotation is not constant; using main.startRotation.constant.", owner);
 
-            var rotOverLifetime = ps.rotationOverLifetime;
-            if (rotOverLifetime.enabled && !rotOverLifetime.separateAxes && rotOverLifetime.z.mode == ParticleSystemCurveMode.Constant)
-                gpu.rotationOverLifetime = rotOverLifetime.z.constant;
-            else if (rotOverLifetime.enabled)
-                Debug.LogWarning("RotationOverLifetime is not a single constant Z curve; GPU path currently uses 0.", owner);
+            ApplyForceOverLifetime(ps, gpu, owner);
 
+            gpu.emissionEnabled = emission.enabled;
             if (emission.rateOverTime.mode == ParticleSystemCurveMode.Constant) gpu.emissionRateOverTime = emission.rateOverTime.constant;
             else Debug.LogWarning("Emission.rateOverTime not constant; using constant value.", owner);
 
@@ -71,35 +51,40 @@ namespace GPUParticles
             gpu.shapeEmitFrom = ShapeEmitFromGPU.Volume;
             gpu.alignToDirection = shape.alignToDirection; // default false in Unity
 
+            if (!shape.enabled)
+            {
+                gpu.shapeType = ShapeTypeGPU.Point;
+                gpu.shapeEmitFrom = ShapeEmitFromGPU.Base;
+                gpu.alignToDirection = false;
+                gpu.shapeLocalPosition = Vector3.zero;
+                gpu.shapeLocalRotationEuler = Vector3.zero;
+                gpu.shapeLocalScale = Vector3.one;
+            }
+            else
             switch (shape.shapeType)
             {
                 // 1. Sphere
                 case ParticleSystemShapeType.Sphere:
-                case ParticleSystemShapeType.SphereShell:
                     gpu.shapeType = ShapeTypeGPU.Sphere;
-                    {
-                        float avg = (shape.scale.x + shape.scale.y + shape.scale.z) / 3f;
-                        gpu.shapeSphereRadius = Mathf.Max(0f, shape.radius * avg);
-                    }
-                    gpu.shapeEmitFrom = (shape.shapeType == ParticleSystemShapeType.SphereShell) ? ShapeEmitFromGPU.Surface : ShapeEmitFromGPU.Volume;
+                    gpu.shapeSphereRadius = Mathf.Max(0f, shape.radius);
+                    gpu.shapeEmitFrom = shape.radiusThickness <= 0.001f
+                        ? ShapeEmitFromGPU.Surface
+                        : ShapeEmitFromGPU.Volume;
                     gpu.shapeRadiusThickness = shape.radiusThickness;
                     break;
 
                 // 2. Hemisphere
                 case ParticleSystemShapeType.Hemisphere:
-                case ParticleSystemShapeType.HemisphereShell:
                     gpu.shapeType = ShapeTypeGPU.Hemisphere;
-                    {
-                        float avg = (shape.scale.x + shape.scale.y + shape.scale.z) / 3f;
-                        gpu.shapeSphereRadius = Mathf.Max(0f, shape.radius * avg);
-                    }
-                    gpu.shapeEmitFrom = (shape.shapeType == ParticleSystemShapeType.HemisphereShell) ? ShapeEmitFromGPU.Surface : ShapeEmitFromGPU.Volume;
+                    gpu.shapeSphereRadius = Mathf.Max(0f, shape.radius);
+                    gpu.shapeEmitFrom = shape.radiusThickness <= 0.001f
+                        ? ShapeEmitFromGPU.Surface
+                        : ShapeEmitFromGPU.Volume;
                     gpu.shapeRadiusThickness = shape.radiusThickness;
                     break;
 
                 // 3. Cone
                 case ParticleSystemShapeType.Cone:
-                case ParticleSystemShapeType.ConeShell:
                     gpu.shapeType = ShapeTypeGPU.Cone;
                     gpu.shapeEmitFrom = ShapeEmitFromGPU.Base;
                     gpu.shapeConeRadius = shape.radius;
@@ -110,7 +95,6 @@ namespace GPUParticles
                     break;
 
                 case ParticleSystemShapeType.ConeVolume:
-                case ParticleSystemShapeType.ConeVolumeShell:
                     gpu.shapeType = ShapeTypeGPU.Cone;
                     gpu.shapeEmitFrom = ShapeEmitFromGPU.Volume;
                     gpu.shapeConeRadius = shape.radius;
@@ -123,12 +107,9 @@ namespace GPUParticles
                 // 4. Donut
                 case ParticleSystemShapeType.Donut:
                     gpu.shapeType = ShapeTypeGPU.Donut;
-                    {
-                        float avg = (shape.scale.x + shape.scale.y + shape.scale.z) / 3f;
-                        gpu.shapeDonutRadius = Mathf.Max(0f, shape.radius * avg);
-                        // Unity的Donut使用donutRadius作为环的厚度
-                        gpu.shapeDonutThickness = Mathf.Max(0f, shape.donutRadius * avg);
-                    }
+                    gpu.shapeDonutRadius = Mathf.Max(0f, shape.radius);
+                    gpu.shapeDonutThickness = Mathf.Max(0f, shape.donutRadius);
+                    gpu.shapeConeArcDeg = shape.arc;
                     gpu.shapeEmitFrom = ShapeEmitFromGPU.Volume; // Donut默认从体积发射
                     break;
 
@@ -138,26 +119,18 @@ namespace GPUParticles
                 case ParticleSystemShapeType.BoxEdge:
                     gpu.shapeType = ShapeTypeGPU.Box;
                     gpu.shapeEmitFrom = (shape.shapeType == ParticleSystemShapeType.Box) ? ShapeEmitFromGPU.Volume : ShapeEmitFromGPU.Surface;
-                    gpu.shapeBoxSize = shape.scale;
+                    gpu.shapeBoxSize = Vector3.one;
                     break;
 
                 // 6. Circle
                 case ParticleSystemShapeType.Circle:
                     gpu.shapeType = ShapeTypeGPU.Circle;
-                    {
-                        float avg = (shape.scale.x + shape.scale.y + shape.scale.z) / 3f;
-                        gpu.shapeCircleRadius = Mathf.Max(0f, shape.radius * avg);
-                    }
-                    gpu.shapeEmitFrom = ShapeEmitFromGPU.Volume; // Circle默认从体积发射
-                    break;
-
-                case ParticleSystemShapeType.CircleEdge:
-                    gpu.shapeType = ShapeTypeGPU.Circle;
-                    {
-                        float avg = (shape.scale.x + shape.scale.y + shape.scale.z) / 3f;
-                        gpu.shapeCircleRadius = Mathf.Max(0f, shape.radius * avg);
-                    }
-                    gpu.shapeEmitFrom = ShapeEmitFromGPU.Surface; // CircleEdge从边缘发射
+                    gpu.shapeCircleRadius = Mathf.Max(0f, shape.radius);
+                    gpu.shapeConeArcDeg = shape.arc;
+                    gpu.shapeRadiusThickness = shape.radiusThickness;
+                    gpu.shapeEmitFrom = shape.radiusThickness <= 0.001f
+                        ? ShapeEmitFromGPU.Surface
+                        : ShapeEmitFromGPU.Volume;
                     break;
 
                 // 7. Edge (Unity中可能不存在，但我们可以支持)
@@ -320,32 +293,12 @@ namespace GPUParticles
             // ---- Main ----
             gpu.maxParticles = main.maxParticles;
             gpu.simulationSpace = main.simulationSpace == ParticleSystemSimulationSpace.World ? SimulationSpace.World : SimulationSpace.Local;
-
-            if (main.startLifetime.mode == ParticleSystemCurveMode.Constant) gpu.startLifetime = main.startLifetime.constant;
-            else Debug.LogWarning("StartLifetime is not constant; using main.startLifetime.constant.", gpuChild);
-
-            if (main.startSpeed.mode == ParticleSystemCurveMode.Constant) gpu.startSpeed = main.startSpeed.constant;
-            else Debug.LogWarning("StartSpeed is not constant; using main.startSpeed.constant.", gpuChild);
-
-            if (main.startSize.mode == ParticleSystemCurveMode.Constant) gpu.startSize = main.startSize.constant;
-            else Debug.LogWarning("StartSize is not constant; using main.startSize.constant.", gpuChild);
-
-            if (main.startColor.mode == ParticleSystemGradientMode.Color) gpu.startColor = main.startColor.color;
-            else Debug.LogWarning("StartColor is not a single color; using main.startColor.color.", gpuChild);
-
-            if (main.gravityModifier.mode == ParticleSystemCurveMode.Constant) gpu.gravityModifier = main.gravityModifier.constant;
-            else Debug.LogWarning("GravityModifier is not constant; using main.gravityModifier.constant.", gpuChild);
-
+            ApplyMainRanges(particleSystem, gpu, gpuChild);
             gpu.simulationSpeed = main.simulationSpeed;
-            if (main.startRotation.mode == ParticleSystemCurveMode.Constant) gpu.startRotation = main.startRotation.constant;
-            else Debug.LogWarning("StartRotation is not constant; using main.startRotation.constant.", gpuChild);
 
-            var rotOverLifetime = particleSystem.rotationOverLifetime;
-            if (rotOverLifetime.enabled && !rotOverLifetime.separateAxes && rotOverLifetime.z.mode == ParticleSystemCurveMode.Constant)
-                gpu.rotationOverLifetime = rotOverLifetime.z.constant;
-            else if (rotOverLifetime.enabled)
-                Debug.LogWarning("RotationOverLifetime is not a single constant Z curve; GPU path currently uses 0.", gpuChild);
+            ApplyForceOverLifetime(particleSystem, gpu, gpuChild);
 
+            gpu.emissionEnabled = emission.enabled;
             if (emission.rateOverTime.mode == ParticleSystemCurveMode.Constant) gpu.emissionRateOverTime = emission.rateOverTime.constant;
             else Debug.LogWarning("Emission.rateOverTime not constant; using constant value.", gpuChild);
 
@@ -359,35 +312,40 @@ namespace GPUParticles
             gpu.shapeEmitFrom = ShapeEmitFromGPU.Volume;
             gpu.alignToDirection = shape.alignToDirection;
 
+            if (!shape.enabled)
+            {
+                gpu.shapeType = ShapeTypeGPU.Point;
+                gpu.shapeEmitFrom = ShapeEmitFromGPU.Base;
+                gpu.alignToDirection = false;
+                gpu.shapeLocalPosition = Vector3.zero;
+                gpu.shapeLocalRotationEuler = Vector3.zero;
+                gpu.shapeLocalScale = Vector3.one;
+            }
+            else
             switch (shape.shapeType)
             {
                 // 1. Sphere
                 case ParticleSystemShapeType.Sphere:
-                case ParticleSystemShapeType.SphereShell:
                     gpu.shapeType = ShapeTypeGPU.Sphere;
-                    {
-                        float avg = (shape.scale.x + shape.scale.y + shape.scale.z) / 3f;
-                        gpu.shapeSphereRadius = Mathf.Max(0f, shape.radius * avg);
-                    }
-                    gpu.shapeEmitFrom = (shape.shapeType == ParticleSystemShapeType.SphereShell) ? ShapeEmitFromGPU.Surface : ShapeEmitFromGPU.Volume;
+                    gpu.shapeSphereRadius = Mathf.Max(0f, shape.radius);
+                    gpu.shapeEmitFrom = shape.radiusThickness <= 0.001f
+                        ? ShapeEmitFromGPU.Surface
+                        : ShapeEmitFromGPU.Volume;
                     gpu.shapeRadiusThickness = shape.radiusThickness;
                     break;
 
                 // 2. Hemisphere
                 case ParticleSystemShapeType.Hemisphere:
-                case ParticleSystemShapeType.HemisphereShell:
                     gpu.shapeType = ShapeTypeGPU.Hemisphere;
-                    {
-                        float avg = (shape.scale.x + shape.scale.y + shape.scale.z) / 3f;
-                        gpu.shapeSphereRadius = Mathf.Max(0f, shape.radius * avg);
-                    }
-                    gpu.shapeEmitFrom = (shape.shapeType == ParticleSystemShapeType.HemisphereShell) ? ShapeEmitFromGPU.Surface : ShapeEmitFromGPU.Volume;
+                    gpu.shapeSphereRadius = Mathf.Max(0f, shape.radius);
+                    gpu.shapeEmitFrom = shape.radiusThickness <= 0.001f
+                        ? ShapeEmitFromGPU.Surface
+                        : ShapeEmitFromGPU.Volume;
                     gpu.shapeRadiusThickness = shape.radiusThickness;
                     break;
 
                 // 3. Cone
                 case ParticleSystemShapeType.Cone:
-                case ParticleSystemShapeType.ConeShell:
                     gpu.shapeType = ShapeTypeGPU.Cone;
                     gpu.shapeEmitFrom = ShapeEmitFromGPU.Base;
                     gpu.shapeConeRadius = shape.radius;
@@ -398,7 +356,6 @@ namespace GPUParticles
                     break;
 
                 case ParticleSystemShapeType.ConeVolume:
-                case ParticleSystemShapeType.ConeVolumeShell:
                     gpu.shapeType = ShapeTypeGPU.Cone;
                     gpu.shapeEmitFrom = ShapeEmitFromGPU.Volume;
                     gpu.shapeConeRadius = shape.radius;
@@ -411,12 +368,9 @@ namespace GPUParticles
                 // 4. Donut
                 case ParticleSystemShapeType.Donut:
                     gpu.shapeType = ShapeTypeGPU.Donut;
-                    {
-                        float avg = (shape.scale.x + shape.scale.y + shape.scale.z) / 3f;
-                        gpu.shapeDonutRadius = Mathf.Max(0f, shape.radius * avg);
-                        // Unity的Donut使用donutRadius作为环的厚度
-                        gpu.shapeDonutThickness = Mathf.Max(0f, shape.donutRadius * avg);
-                    }
+                    gpu.shapeDonutRadius = Mathf.Max(0f, shape.radius);
+                    gpu.shapeDonutThickness = Mathf.Max(0f, shape.donutRadius);
+                    gpu.shapeConeArcDeg = shape.arc;
                     gpu.shapeEmitFrom = ShapeEmitFromGPU.Volume; // Donut默认从体积发射
                     break;
 
@@ -426,26 +380,18 @@ namespace GPUParticles
                 case ParticleSystemShapeType.BoxEdge:
                     gpu.shapeType = ShapeTypeGPU.Box;
                     gpu.shapeEmitFrom = (shape.shapeType == ParticleSystemShapeType.Box) ? ShapeEmitFromGPU.Volume : ShapeEmitFromGPU.Surface;
-                    gpu.shapeBoxSize = shape.scale;
+                    gpu.shapeBoxSize = Vector3.one;
                     break;
 
                 // 6. Circle
                 case ParticleSystemShapeType.Circle:
                     gpu.shapeType = ShapeTypeGPU.Circle;
-                    {
-                        float avg = (shape.scale.x + shape.scale.y + shape.scale.z) / 3f;
-                        gpu.shapeCircleRadius = Mathf.Max(0f, shape.radius * avg);
-                    }
-                    gpu.shapeEmitFrom = ShapeEmitFromGPU.Volume; // Circle默认从体积发射
-                    break;
-
-                case ParticleSystemShapeType.CircleEdge:
-                    gpu.shapeType = ShapeTypeGPU.Circle;
-                    {
-                        float avg = (shape.scale.x + shape.scale.y + shape.scale.z) / 3f;
-                        gpu.shapeCircleRadius = Mathf.Max(0f, shape.radius * avg);
-                    }
-                    gpu.shapeEmitFrom = ShapeEmitFromGPU.Surface; // CircleEdge从边缘发射
+                    gpu.shapeCircleRadius = Mathf.Max(0f, shape.radius);
+                    gpu.shapeConeArcDeg = shape.arc;
+                    gpu.shapeRadiusThickness = shape.radiusThickness;
+                    gpu.shapeEmitFrom = shape.radiusThickness <= 0.001f
+                        ? ShapeEmitFromGPU.Surface
+                        : ShapeEmitFromGPU.Volume;
                     break;
 
                 // 7. Edge (Unity中可能不存在，但我们可以支持)
@@ -577,6 +523,114 @@ namespace GPUParticles
                 if (t != null) return t;
             }
             return m.mainTexture as Texture2D;
+        }
+
+        static void ApplyMainRanges(
+            ParticleSystem particleSystem,
+            GPUParticleSystem gpu,
+            Object context)
+        {
+            var main = particleSystem.main;
+
+            GetCurveRange(main.startLifetime, "Start Lifetime", context, out float minimum, out float maximum);
+            gpu.SetStartLifetimeRange(minimum, maximum);
+
+            GetCurveRange(main.startSpeed, "Start Speed", context, out minimum, out maximum);
+            gpu.SetStartSpeedRange(minimum, maximum);
+
+            ParticleSystem.MinMaxCurve startSize = main.startSize3D ? main.startSizeX : main.startSize;
+            if (main.startSize3D)
+            {
+                Debug.LogWarning(
+                    "Start Size 3D is reduced to the X size for GPU billboards.",
+                    context);
+            }
+            GetCurveRange(startSize, "Start Size", context, out minimum, out maximum);
+            gpu.SetStartSizeRange(minimum, maximum);
+
+            bool supportedColor = ShurikenMinMaxUtility.TryGetColorRange(
+                main.startColor, out Color minimumColor, out Color maximumColor);
+            gpu.SetStartColorRange(minimumColor, maximumColor,
+                main.startColor.mode == ParticleSystemGradientMode.TwoColors);
+            if (!supportedColor)
+            {
+                Debug.LogWarning(
+                    "Start Color Gradient modes require system-time sampling and currently use the first color.",
+                    context);
+            }
+
+            GetCurveRange(main.gravityModifier, "Gravity Modifier", context, out minimum, out maximum);
+            gpu.SetGravityModifierRange(minimum, maximum);
+
+            ParticleSystem.MinMaxCurve startRotation = main.startRotation3D
+                ? main.startRotationZ
+                : main.startRotation;
+            if (main.startRotation3D)
+            {
+                Debug.LogWarning(
+                    "Start Rotation 3D X/Y axes are ignored for GPU billboards; mapping Z roll.",
+                    context);
+            }
+            GetCurveRange(startRotation, "Start Rotation", context, out minimum, out maximum);
+            gpu.SetStartRotationRange(minimum, maximum);
+
+            var rotationOverLifetime = particleSystem.rotationOverLifetime;
+            if (!rotationOverLifetime.enabled)
+            {
+                gpu.SetRotationOverLifetimeRange(0f, 0f);
+            }
+            else
+            {
+                if (rotationOverLifetime.separateAxes)
+                {
+                    Debug.LogWarning(
+                        "Rotation over Lifetime X/Y axes are ignored for GPU billboards; mapping Z roll.",
+                        context);
+                }
+                GetCurveRange(rotationOverLifetime.z, "Rotation over Lifetime", context,
+                    out minimum, out maximum);
+                gpu.SetRotationOverLifetimeRange(minimum, maximum);
+            }
+        }
+
+        static void GetCurveRange(
+            ParticleSystem.MinMaxCurve curve,
+            string label,
+            Object context,
+            out float minimum,
+            out float maximum)
+        {
+            if (!ShurikenMinMaxUtility.TryGetConstantRange(curve, out minimum, out maximum))
+            {
+                Debug.LogWarning(
+                    $"{label} Curve modes require system-time sampling and currently use the value at t=0.",
+                    context);
+            }
+        }
+
+        static void ApplyForceOverLifetime(
+            ParticleSystem particleSystem,
+            GPUParticleSystem gpu,
+            Object context)
+        {
+            var force = particleSystem.forceOverLifetime;
+            gpu.forceOverLifetimeEnabled = force.enabled;
+            gpu.forceOverLifetimeSpace = force.space == ParticleSystemSimulationSpace.World
+                ? SimulationSpace.World
+                : SimulationSpace.Local;
+            gpu.forceOverLifetimeRandomized = force.randomized;
+
+            if (force.space == ParticleSystemSimulationSpace.Custom)
+            {
+                Debug.LogWarning(
+                    "Force over Lifetime Custom space is not supported; using emitter Local space.",
+                    context);
+            }
+
+            gpu.forceOverLifetimeLUT = force.enabled
+                ? MinMaxCurveVector3LUTBuilder.Build(
+                    force.x, force.y, force.z, saveAsAsset: true)
+                : MinMaxCurveVector3LUTBuilder.GetDefaultZeroLUT();
         }
     }
 }

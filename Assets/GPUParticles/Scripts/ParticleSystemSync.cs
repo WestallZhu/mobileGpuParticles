@@ -22,6 +22,7 @@ namespace GPUParticles
         private float cachedStartRotation;
         private float cachedRotationOverLifetime;
         private float cachedEmissionRate;
+        private bool cachedEmissionEnabled;
         private int cachedMaxParticles;
         private ParticleSystemSimulationSpace cachedSimulationSpace;
 
@@ -36,6 +37,7 @@ namespace GPUParticles
         private float cachedShapeRadiusThickness;
         private float cachedShapeArc;
         private float cachedShapeDonutRadius;
+        private bool cachedShapeEnabled;
 
         // Renderer缓存
         private ParticleSystemRenderMode cachedRenderMode;
@@ -46,6 +48,8 @@ namespace GPUParticles
         private AnimationCurve cachedSizeCurve;
         private float lastColorLUTUpdate = 0f;
         private float lastSizeLUTUpdate = 0f;
+        private float lastForceLUTUpdate = 0f;
+        private Texture2D generatedForceLUT;
         private const float LUT_UPDATE_INTERVAL = 0.1f; // 每0.1秒更新一次LUT
 
         private bool isInitialized = false;
@@ -84,6 +88,7 @@ namespace GPUParticles
             SyncMainParameters(true);
             SyncEmissionParameters(true);
             SyncShapeParameters(true);
+            SyncForceOverLifetime(true);
             SyncRendererParameters(true);
             SyncRotationParameters(true);
             SyncMaterialParameters(true);
@@ -108,6 +113,7 @@ namespace GPUParticles
             cachedSimulationSpeed = main.simulationSpeed;
             cachedStartRotation = main.startRotation.mode == ParticleSystemCurveMode.Constant ? main.startRotation.constant : cachedStartRotation;
             cachedEmissionRate = emission.rateOverTime.mode == ParticleSystemCurveMode.Constant ? emission.rateOverTime.constant : cachedEmissionRate;
+            cachedEmissionEnabled = emission.enabled;
             cachedMaxParticles = main.maxParticles;
             cachedSimulationSpace = main.simulationSpace;
             var rotationOverLifetime = sourceParticleSystem.rotationOverLifetime;
@@ -128,6 +134,7 @@ namespace GPUParticles
             cachedShapeRadiusThickness = shape.radiusThickness;
             cachedShapeArc = shape.arc;
             cachedShapeDonutRadius = shape.donutRadius;
+            cachedShapeEnabled = shape.enabled;
 
             if (sourceRenderer != null)
             {
@@ -144,6 +151,7 @@ namespace GPUParticles
             SyncMainParameters();
             SyncEmissionParameters();
             SyncShapeParameters();
+            SyncForceOverLifetime();
             SyncRendererParameters();
             SyncRotationParameters();
             SyncMaterialParameters();
@@ -171,60 +179,26 @@ namespace GPUParticles
                 cachedSimulationSpace = main.simulationSpace;
             }
 
-            // Start Lifetime
-            if (main.startLifetime.mode == ParticleSystemCurveMode.Constant)
-            {
-                float newLifetime = main.startLifetime.constant;
-                if (force || Mathf.Abs(newLifetime - cachedStartLifetime) > 0.001f)
-                {
-                    targetGPUParticleSystem.startLifetime = newLifetime;
-                    cachedStartLifetime = newLifetime;
-                }
-            }
+            ShurikenMinMaxUtility.TryGetConstantRange(
+                main.startLifetime, out float minimum, out float maximum);
+            targetGPUParticleSystem.SetStartLifetimeRange(minimum, maximum);
 
-            // Start Speed
-            if (main.startSpeed.mode == ParticleSystemCurveMode.Constant)
-            {
-                float newSpeed = main.startSpeed.constant;
-                if (force || Mathf.Abs(newSpeed - cachedStartSpeed) > 0.001f)
-                {
-                    targetGPUParticleSystem.startSpeed = newSpeed;
-                    cachedStartSpeed = newSpeed;
-                }
-            }
+            ShurikenMinMaxUtility.TryGetConstantRange(
+                main.startSpeed, out minimum, out maximum);
+            targetGPUParticleSystem.SetStartSpeedRange(minimum, maximum);
 
-            // Start Size
-            if (main.startSize.mode == ParticleSystemCurveMode.Constant)
-            {
-                float newSize = main.startSize.constant;
-                if (force || Mathf.Abs(newSize - cachedStartSize) > 0.001f)
-                {
-                    targetGPUParticleSystem.startSize = newSize;
-                    cachedStartSize = newSize;
-                }
-            }
+            ParticleSystem.MinMaxCurve startSize = main.startSize3D ? main.startSizeX : main.startSize;
+            ShurikenMinMaxUtility.TryGetConstantRange(startSize, out minimum, out maximum);
+            targetGPUParticleSystem.SetStartSizeRange(minimum, maximum);
 
-            // Start Color
-            if (main.startColor.mode == ParticleSystemGradientMode.Color)
-            {
-                Color newColor = main.startColor.color;
-                if (force || newColor != cachedStartColor)
-                {
-                    targetGPUParticleSystem.startColor = newColor;
-                    cachedStartColor = newColor;
-                }
-            }
+            ShurikenMinMaxUtility.TryGetColorRange(
+                main.startColor, out Color minimumColor, out Color maximumColor);
+            targetGPUParticleSystem.SetStartColorRange(minimumColor, maximumColor,
+                main.startColor.mode == ParticleSystemGradientMode.TwoColors);
 
-            // Gravity Modifier
-            if (main.gravityModifier.mode == ParticleSystemCurveMode.Constant)
-            {
-                float newGravity = main.gravityModifier.constant;
-                if (force || Mathf.Abs(newGravity - cachedGravityModifier) > 0.001f)
-                {
-                    targetGPUParticleSystem.gravityModifier = newGravity;
-                    cachedGravityModifier = newGravity;
-                }
-            }
+            ShurikenMinMaxUtility.TryGetConstantRange(
+                main.gravityModifier, out minimum, out maximum);
+            targetGPUParticleSystem.SetGravityModifierRange(minimum, maximum);
 
             // Simulation Speed
             float newSimulationSpeed = main.simulationSpeed;
@@ -234,20 +208,22 @@ namespace GPUParticles
                 cachedSimulationSpeed = newSimulationSpeed;
             }
 
-            if (main.startRotation.mode == ParticleSystemCurveMode.Constant)
-            {
-                float newStartRotation = main.startRotation.constant;
-                if (force || Mathf.Abs(newStartRotation - cachedStartRotation) > 0.001f)
-                {
-                    targetGPUParticleSystem.startRotation = newStartRotation;
-                    cachedStartRotation = newStartRotation;
-                }
-            }
+            ParticleSystem.MinMaxCurve startRotation = main.startRotation3D
+                ? main.startRotationZ
+                : main.startRotation;
+            ShurikenMinMaxUtility.TryGetConstantRange(startRotation, out minimum, out maximum);
+            targetGPUParticleSystem.SetStartRotationRange(minimum, maximum);
         }
 
         void SyncEmissionParameters(bool force = false)
         {
             var emission = sourceParticleSystem.emission;
+            if (force || emission.enabled != cachedEmissionEnabled)
+            {
+                targetGPUParticleSystem.emissionEnabled = emission.enabled;
+                cachedEmissionEnabled = emission.enabled;
+            }
+
             if (emission.rateOverTime.mode == ParticleSystemCurveMode.Constant)
             {
                 float newRate = emission.rateOverTime.constant;
@@ -263,6 +239,12 @@ namespace GPUParticles
         {
             var shape = sourceParticleSystem.shape;
             bool shapeChanged = false;
+
+            if (force || shape.enabled != cachedShapeEnabled)
+            {
+                cachedShapeEnabled = shape.enabled;
+                shapeChanged = true;
+            }
 
             // Shape Type
             if (force || shape.shapeType != cachedShapeType)
@@ -344,34 +326,47 @@ namespace GPUParticles
             if (force || shapeChanged)
             {
                 ApplyShapeMapping(shape);
-                targetGPUParticleSystem.alignToDirection = shape.alignToDirection;
+                targetGPUParticleSystem.alignToDirection = shape.enabled && shape.alignToDirection;
             }
         }
 
         void ApplyShapeMapping(ParticleSystem.ShapeModule shape)
         {
+            if (!shape.enabled)
+            {
+                targetGPUParticleSystem.shapeType = ShapeTypeGPU.Point;
+                targetGPUParticleSystem.shapeEmitFrom = ShapeEmitFromGPU.Base;
+                targetGPUParticleSystem.shapeLocalPosition = Vector3.zero;
+                targetGPUParticleSystem.shapeLocalRotationEuler = Vector3.zero;
+                targetGPUParticleSystem.shapeLocalScale = Vector3.one;
+                return;
+            }
+
+            targetGPUParticleSystem.shapeLocalPosition = shape.position;
+            targetGPUParticleSystem.shapeLocalRotationEuler = shape.rotation;
+            targetGPUParticleSystem.shapeLocalScale = shape.scale;
+
             switch (shape.shapeType)
             {
                 case ParticleSystemShapeType.Sphere:
-                case ParticleSystemShapeType.SphereShell:
                     targetGPUParticleSystem.shapeType = ShapeTypeGPU.Sphere;
-                    targetGPUParticleSystem.shapeEmitFrom =
-                        shape.shapeType == ParticleSystemShapeType.SphereShell ? ShapeEmitFromGPU.Surface : ShapeEmitFromGPU.Volume;
+                    targetGPUParticleSystem.shapeEmitFrom = shape.radiusThickness <= 0.001f
+                        ? ShapeEmitFromGPU.Surface
+                        : ShapeEmitFromGPU.Volume;
                     targetGPUParticleSystem.shapeSphereRadius = shape.radius;
                     targetGPUParticleSystem.shapeRadiusThickness = shape.radiusThickness;
                     break;
 
                 case ParticleSystemShapeType.Hemisphere:
-                case ParticleSystemShapeType.HemisphereShell:
                     targetGPUParticleSystem.shapeType = ShapeTypeGPU.Hemisphere;
-                    targetGPUParticleSystem.shapeEmitFrom =
-                        shape.shapeType == ParticleSystemShapeType.HemisphereShell ? ShapeEmitFromGPU.Surface : ShapeEmitFromGPU.Volume;
+                    targetGPUParticleSystem.shapeEmitFrom = shape.radiusThickness <= 0.001f
+                        ? ShapeEmitFromGPU.Surface
+                        : ShapeEmitFromGPU.Volume;
                     targetGPUParticleSystem.shapeSphereRadius = shape.radius;
                     targetGPUParticleSystem.shapeRadiusThickness = shape.radiusThickness;
                     break;
 
                 case ParticleSystemShapeType.Cone:
-                case ParticleSystemShapeType.ConeShell:
                     targetGPUParticleSystem.shapeType = ShapeTypeGPU.Cone;
                     targetGPUParticleSystem.shapeEmitFrom = ShapeEmitFromGPU.Base;
                     targetGPUParticleSystem.shapeConeRadius = shape.radius;
@@ -382,7 +377,6 @@ namespace GPUParticles
                     break;
 
                 case ParticleSystemShapeType.ConeVolume:
-                case ParticleSystemShapeType.ConeVolumeShell:
                     targetGPUParticleSystem.shapeType = ShapeTypeGPU.Cone;
                     targetGPUParticleSystem.shapeEmitFrom = ShapeEmitFromGPU.Volume;
                     targetGPUParticleSystem.shapeConeRadius = shape.radius;
@@ -397,6 +391,7 @@ namespace GPUParticles
                     targetGPUParticleSystem.shapeEmitFrom = ShapeEmitFromGPU.Volume;
                     targetGPUParticleSystem.shapeDonutRadius = Mathf.Max(0f, shape.radius);
                     targetGPUParticleSystem.shapeDonutThickness = Mathf.Max(0f, shape.donutRadius);
+                    targetGPUParticleSystem.shapeConeArcDeg = shape.arc;
                     break;
 
                 case ParticleSystemShapeType.Box:
@@ -410,16 +405,56 @@ namespace GPUParticles
 
                 case ParticleSystemShapeType.Circle:
                     targetGPUParticleSystem.shapeType = ShapeTypeGPU.Circle;
-                    targetGPUParticleSystem.shapeEmitFrom = ShapeEmitFromGPU.Volume;
+                    targetGPUParticleSystem.shapeEmitFrom = shape.radiusThickness <= 0.001f
+                        ? ShapeEmitFromGPU.Surface
+                        : ShapeEmitFromGPU.Volume;
                     targetGPUParticleSystem.shapeCircleRadius = Mathf.Max(0f, shape.radius);
-                    break;
-
-                case ParticleSystemShapeType.CircleEdge:
-                    targetGPUParticleSystem.shapeType = ShapeTypeGPU.Circle;
-                    targetGPUParticleSystem.shapeEmitFrom = ShapeEmitFromGPU.Surface;
-                    targetGPUParticleSystem.shapeCircleRadius = Mathf.Max(0f, shape.radius);
+                    targetGPUParticleSystem.shapeConeArcDeg = shape.arc;
+                    targetGPUParticleSystem.shapeRadiusThickness = shape.radiusThickness;
                     break;
             }
+        }
+
+        void SyncForceOverLifetime(bool forceUpdate = false)
+        {
+            var force = sourceParticleSystem.forceOverLifetime;
+            bool timeToUpdate = Time.realtimeSinceStartup - lastForceLUTUpdate > LUT_UPDATE_INTERVAL;
+            if (!forceUpdate && !timeToUpdate) return;
+
+            targetGPUParticleSystem.forceOverLifetimeEnabled = force.enabled;
+            targetGPUParticleSystem.forceOverLifetimeSpace =
+                force.space == ParticleSystemSimulationSpace.World
+                    ? SimulationSpace.World
+                    : SimulationSpace.Local;
+            targetGPUParticleSystem.forceOverLifetimeRandomized = force.randomized;
+
+            DestroyGeneratedForceLUT();
+            if (force.enabled)
+            {
+                generatedForceLUT = MinMaxCurveVector3LUTBuilder.Build(force.x, force.y, force.z);
+                targetGPUParticleSystem.forceOverLifetimeLUT = generatedForceLUT;
+            }
+            else
+            {
+                targetGPUParticleSystem.forceOverLifetimeLUT =
+                    MinMaxCurveVector3LUTBuilder.GetDefaultZeroLUT();
+            }
+
+            lastForceLUTUpdate = Time.realtimeSinceStartup;
+        }
+
+        void OnDestroy()
+        {
+            DestroyGeneratedForceLUT();
+        }
+
+        void DestroyGeneratedForceLUT()
+        {
+            if (generatedForceLUT == null) return;
+
+            if (Application.isPlaying) Destroy(generatedForceLUT);
+            else DestroyImmediate(generatedForceLUT);
+            generatedForceLUT = null;
         }
 
         void SyncRendererParameters(bool force = false)
@@ -491,20 +526,15 @@ namespace GPUParticles
         void SyncRotationParameters(bool force = false)
         {
             var rotationOverLifetime = sourceParticleSystem.rotationOverLifetime;
-            float newRotationOverLifetime = 0f;
-
-            if (rotationOverLifetime.enabled &&
-                !rotationOverLifetime.separateAxes &&
-                rotationOverLifetime.z.mode == ParticleSystemCurveMode.Constant)
+            if (!rotationOverLifetime.enabled)
             {
-                newRotationOverLifetime = rotationOverLifetime.z.constant;
+                targetGPUParticleSystem.SetRotationOverLifetimeRange(0f, 0f);
+                return;
             }
 
-            if (force || Mathf.Abs(newRotationOverLifetime - cachedRotationOverLifetime) > 0.001f)
-            {
-                targetGPUParticleSystem.rotationOverLifetime = newRotationOverLifetime;
-                cachedRotationOverLifetime = newRotationOverLifetime;
-            }
+            ShurikenMinMaxUtility.TryGetConstantRange(
+                rotationOverLifetime.z, out float minimum, out float maximum);
+            targetGPUParticleSystem.SetRotationOverLifetimeRange(minimum, maximum);
         }
 
         void SyncMaterialParameters(bool force = false)

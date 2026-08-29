@@ -5315,6 +5315,7 @@ MonoBehaviour:
   m_Name: 
   m_EditorClassIdentifier: 
   maxParticles: 1000
+  emissionEnabled: 1
   emissionRateOverTime: 10
   startLifetime: 5
   startSpeed: 5
@@ -5323,8 +5324,26 @@ MonoBehaviour:
   gravityModifier: 0
   simulationSpeed: 1
   simulationSpace: 0
+  randomizeStartLifetime: 0
+  startLifetimeMin: 5
+  randomizeStartSpeed: 0
+  startSpeedMin: 5
+  randomizeStartSize: 0
+  startSizeMin: 1
+  randomizeStartColor: 0
+  startColorMin: {r: 1, g: 1, b: 1, a: 1}
+  randomizeGravityModifier: 0
+  gravityModifierMin: 0
+  randomizeStartRotation: 0
+  startRotationMin: 0
+  randomizeRotationOverLifetime: 0
+  rotationOverLifetimeMin: 0
   colorOverLifetimeLUT: {fileID: 0}
   sizeOverLifetimeLUT: {fileID: 0}
+  forceOverLifetimeEnabled: 0
+  forceOverLifetimeLUT: {fileID: 0}
+  forceOverLifetimeSpace: 0
+  forceOverLifetimeRandomized: 0
   baseMap: {fileID: 10300, guid: 0000000000000000f000000000000000, type: 0}
   minAlphaCull: 0.001
   initialDirectionWS: {x: 0, y: 0, z: 1}

@@ -7,7 +7,7 @@ namespace GPUParticles
 {
     public enum SimulationSpace { Local = 0, World = 1 }
 
-    public enum ShapeTypeGPU { Sphere = 0, Hemisphere = 1, Cone = 2, Donut = 3, Box = 4, Circle = 5, Edge = 6, Rectangle = 7 }
+    public enum ShapeTypeGPU { Sphere = 0, Hemisphere = 1, Cone = 2, Donut = 3, Box = 4, Circle = 5, Edge = 6, Rectangle = 7, Point = 8 }
     public enum ShapeEmitFromGPU { Volume = 0, Surface = 1, Base = 2 } // Base for Cone
 
     public enum GPURenderMode { Billboard = 0, HorizontalBillboard = 1, VerticalBillboard = 2, StretchedBillboard = 3 }
@@ -21,6 +21,7 @@ namespace GPUParticles
         [Min(1)] public int maxParticles = 65536;
 
         [Header("Emission")]
+        public bool emissionEnabled = true;
         [Min(0)] public float emissionRateOverTime = 2000f;
 
         // --------- Main ---------
@@ -35,9 +36,31 @@ namespace GPUParticles
         public float rotationOverLifetime = 0.0f;
         public SimulationSpace simulationSpace = SimulationSpace.Local;
 
+        [Header("Main Random Between Two Constants")]
+        public bool randomizeStartLifetime;
+        [Min(0.001f)] public float startLifetimeMin = 2.0f;
+        public bool randomizeStartSpeed;
+        public float startSpeedMin = 5.0f;
+        public bool randomizeStartSize;
+        [Min(0.0f)] public float startSizeMin = 0.1f;
+        public bool randomizeStartColor;
+        public Color startColorMin = Color.white;
+        public bool randomizeGravityModifier;
+        public float gravityModifierMin;
+        public bool randomizeStartRotation;
+        public float startRotationMin;
+        public bool randomizeRotationOverLifetime;
+        public float rotationOverLifetimeMin;
+
         [Header("Over Lifetime (LUTs)")]
         public Texture2D colorOverLifetimeLUT;
         public Texture2D sizeOverLifetimeLUT;
+
+        [Header("Force Over Lifetime")]
+        public bool forceOverLifetimeEnabled;
+        public Texture2D forceOverLifetimeLUT;
+        public SimulationSpace forceOverLifetimeSpace = SimulationSpace.Local;
+        public bool forceOverLifetimeRandomized;
 
         [Header("Rendering")]
         public Texture2D baseMap;
@@ -48,7 +71,7 @@ namespace GPUParticles
         public Vector3 initialDirectionWS = Vector3.forward;
 
         // --------- Shape ---------
-        [Header("Shape (Sphere/Hemisphere/Cone/Donut/Box/Circle/Edge/Rectangle)")]
+        [Header("Shape (Point/Sphere/Hemisphere/Cone/Donut/Box/Circle/Edge/Rectangle)")]
         public ShapeTypeGPU shapeType = ShapeTypeGPU.Cone;
         public ShapeEmitFromGPU shapeEmitFrom = ShapeEmitFromGPU.Volume;
         public bool alignToDirection = false; // default false (match Shuriken)
@@ -118,6 +141,7 @@ namespace GPUParticles
         // emission cursor
         int emitCursor = 0;
         float emitCarry = 0f;
+        uint simulationTick;
         int lastSimulatedFrame = -1;
 
         // camera velocity cache
@@ -132,18 +156,37 @@ namespace GPUParticles
         static readonly int _MaxParticles = Shader.PropertyToID("_MaxParticles");
         static readonly int _DeltaTime  = Shader.PropertyToID("_DeltaTime");
         static readonly int _StartLifetime = Shader.PropertyToID("_StartLifetime");
+        static readonly int _StartLifetimeMin = Shader.PropertyToID("_StartLifetimeMin");
+        static readonly int _RandomizeStartLifetime = Shader.PropertyToID("_RandomizeStartLifetime");
         static readonly int _StartSpeed = Shader.PropertyToID("_StartSpeed");
+        static readonly int _StartSpeedMin = Shader.PropertyToID("_StartSpeedMin");
+        static readonly int _RandomizeStartSpeed = Shader.PropertyToID("_RandomizeStartSpeed");
         static readonly int _StartSize  = Shader.PropertyToID("_StartSize");
+        static readonly int _StartSizeMin = Shader.PropertyToID("_StartSizeMin");
+        static readonly int _RandomizeStartSize = Shader.PropertyToID("_RandomizeStartSize");
         static readonly int _StartColor = Shader.PropertyToID("_StartColor");
+        static readonly int _StartColorMin = Shader.PropertyToID("_StartColorMin");
+        static readonly int _RandomizeStartColor = Shader.PropertyToID("_RandomizeStartColor");
         static readonly int _StartRotation = Shader.PropertyToID("_StartRotation");
+        static readonly int _StartRotationMin = Shader.PropertyToID("_StartRotationMin");
+        static readonly int _RandomizeStartRotation = Shader.PropertyToID("_RandomizeStartRotation");
         static readonly int _RotationOverLifetime = Shader.PropertyToID("_RotationOverLifetime");
+        static readonly int _RotationOverLifetimeMin = Shader.PropertyToID("_RotationOverLifetimeMin");
+        static readonly int _RandomizeRotationOverLifetime = Shader.PropertyToID("_RandomizeRotationOverLifetime");
         static readonly int _GravityWS  = Shader.PropertyToID("_GravityWS");
+        static readonly int _GravityWSMin = Shader.PropertyToID("_GravityWSMin");
+        static readonly int _RandomizeGravityModifier = Shader.PropertyToID("_RandomizeGravityModifier");
         static readonly int _SimulationSpace = Shader.PropertyToID("_SimulationSpace");
         static readonly int _EmitStart  = Shader.PropertyToID("_EmitStart");
         static readonly int _EmitCount  = Shader.PropertyToID("_EmitCount");
         static readonly int _EmitCarryPrev = Shader.PropertyToID("_EmitCarryPrev");
         static readonly int _EmissionRate = Shader.PropertyToID("_EmissionRate");
         static readonly int _InitialDir = Shader.PropertyToID("_InitialDir");
+        static readonly int _SimulationTick = Shader.PropertyToID("_SimulationTick");
+        static readonly int _ForceOverLifetimeLUT = Shader.PropertyToID("_ForceOverLifetimeLUT");
+        static readonly int _ForceOverLifetimeEnabled = Shader.PropertyToID("_ForceOverLifetimeEnabled");
+        static readonly int _ForceOverLifetimeSpace = Shader.PropertyToID("_ForceOverLifetimeSpace");
+        static readonly int _ForceOverLifetimeRandomized = Shader.PropertyToID("_ForceOverLifetimeRandomized");
 
         // shape params
         static readonly int _ShapeType = Shader.PropertyToID("_ShapeType");
@@ -210,7 +253,9 @@ namespace GPUParticles
         {
             maxParticles = Mathf.Max(1, maxParticles);
             startLifetime = Mathf.Max(1e-3f, startLifetime);
+            startLifetimeMin = Mathf.Max(1e-3f, startLifetimeMin);
             startSize = Mathf.Max(0f, startSize);
+            startSizeMin = Mathf.Max(0f, startSizeMin);
             EnsureMaterials();
             RecreateTargetsIfNeeded(false);
         }
@@ -254,6 +299,7 @@ namespace GPUParticles
             ping = 0;
             emitCursor = 0;
             emitCarry = 0f;
+            simulationTick = 0;
             lastSimulatedFrame = -1;
         }
 
@@ -292,6 +338,86 @@ namespace GPUParticles
             RecreateTargetsIfNeeded(true);
         }
 
+        public void SetStartLifetimeRange(float minimum, float maximum)
+        {
+            startLifetimeMin = Mathf.Max(0.001f, Mathf.Min(minimum, maximum));
+            startLifetime = Mathf.Max(0.001f, Mathf.Max(minimum, maximum));
+            randomizeStartLifetime = !Mathf.Approximately(startLifetimeMin, startLifetime);
+        }
+
+        public void SetStartSpeedRange(float minimum, float maximum)
+        {
+            startSpeedMin = Mathf.Min(minimum, maximum);
+            startSpeed = Mathf.Max(minimum, maximum);
+            randomizeStartSpeed = !Mathf.Approximately(startSpeedMin, startSpeed);
+        }
+
+        public void SetStartSizeRange(float minimum, float maximum)
+        {
+            startSizeMin = Mathf.Max(0f, Mathf.Min(minimum, maximum));
+            startSize = Mathf.Max(0f, Mathf.Max(minimum, maximum));
+            randomizeStartSize = !Mathf.Approximately(startSizeMin, startSize);
+        }
+
+        public void SetStartColorRange(Color minimum, Color maximum, bool randomized)
+        {
+            startColorMin = minimum;
+            startColor = maximum;
+            randomizeStartColor = randomized;
+        }
+
+        public void SetGravityModifierRange(float minimum, float maximum)
+        {
+            gravityModifierMin = Mathf.Min(minimum, maximum);
+            gravityModifier = Mathf.Max(minimum, maximum);
+            randomizeGravityModifier = !Mathf.Approximately(gravityModifierMin, gravityModifier);
+        }
+
+        public void SetStartRotationRange(float minimum, float maximum)
+        {
+            startRotationMin = Mathf.Min(minimum, maximum);
+            startRotation = Mathf.Max(minimum, maximum);
+            randomizeStartRotation = !Mathf.Approximately(startRotationMin, startRotation);
+        }
+
+        public void SetRotationOverLifetimeRange(float minimum, float maximum)
+        {
+            rotationOverLifetimeMin = Mathf.Min(minimum, maximum);
+            rotationOverLifetime = Mathf.Max(minimum, maximum);
+            randomizeRotationOverLifetime =
+                !Mathf.Approximately(rotationOverLifetimeMin, rotationOverLifetime);
+        }
+
+        internal float ResolveStartLifetime(int particleId)
+        {
+            return ResolveRandomRange(randomizeStartLifetime, startLifetimeMin, startLifetime,
+                (uint)particleId, 0x68E31DA4u);
+        }
+
+        static float ResolveRandomRange(
+            bool randomized,
+            float minimum,
+            float maximum,
+            uint particleId,
+            uint salt)
+        {
+            if (!randomized) return maximum;
+            return Mathf.LerpUnclamped(minimum, maximum, Hash01(particleId ^ salt));
+        }
+
+        static float Hash01(uint value)
+        {
+            unchecked
+            {
+                value += value << 10;
+                value ^= value >> 6;
+                value += value << 3;
+                value ^= value >> 11;
+                value += value << 15;
+            }
+            return (value & 0x00FFFFFFu) / 16777216f;
+        }
+
         internal void Simulate(CommandBuffer cmd, Camera camera)
         {
             if (simulateMaterial == null) return;
@@ -313,8 +439,11 @@ namespace GPUParticles
 
         internal void SimulateStep(CommandBuffer cmd, float dt)
         {
+            float emissionRate = emissionEnabled ? emissionRateOverTime : 0f;
+            if (!emissionEnabled) emitCarry = 0f;
+
             float emitCarryPrev = emitCarry;
-            float toEmit = (emissionRateOverTime * dt) + emitCarryPrev;
+            float toEmit = (emissionRate * dt) + emitCarryPrev;
             int emitCount = Mathf.Clamp(Mathf.FloorToInt(toEmit), 0, maxParticles);
             emitCarry = toEmit - emitCount;
             int emitStart = emitCursor;
@@ -327,24 +456,45 @@ namespace GPUParticles
             simulateMaterial.SetTexture(_CurColor,   colorRT[src]);
             simulateMaterial.SetTexture("_GradLUT", colorOverLifetimeLUT != null ? colorOverLifetimeLUT : GradientLUTBuilder.GetDefaultWhiteLUT());
             simulateMaterial.SetTexture("_SizeLUT", sizeOverLifetimeLUT != null ? sizeOverLifetimeLUT : CurveLUTBuilder.GetDefaultUnitLUT());
+            simulateMaterial.SetTexture(_ForceOverLifetimeLUT,
+                forceOverLifetimeLUT != null ? forceOverLifetimeLUT : MinMaxCurveVector3LUTBuilder.GetDefaultZeroLUT());
 
             simulateMaterial.SetInt(_GridSize, gridSize);
             simulateMaterial.SetInt(_MaxParticles, maxParticles);
             simulateMaterial.SetFloat(_DeltaTime, dt);
             simulateMaterial.SetFloat(_StartLifetime, startLifetime);
+            simulateMaterial.SetFloat(_StartLifetimeMin, startLifetimeMin);
+            simulateMaterial.SetInt(_RandomizeStartLifetime, randomizeStartLifetime ? 1 : 0);
             simulateMaterial.SetFloat(_StartSpeed, startSpeed);
+            simulateMaterial.SetFloat(_StartSpeedMin, startSpeedMin);
+            simulateMaterial.SetInt(_RandomizeStartSpeed, randomizeStartSpeed ? 1 : 0);
             simulateMaterial.SetFloat(_StartSize, startSize);
+            simulateMaterial.SetFloat(_StartSizeMin, startSizeMin);
+            simulateMaterial.SetInt(_RandomizeStartSize, randomizeStartSize ? 1 : 0);
             simulateMaterial.SetColor(_StartColor, startColor);
+            simulateMaterial.SetColor(_StartColorMin, startColorMin);
+            simulateMaterial.SetInt(_RandomizeStartColor, randomizeStartColor ? 1 : 0);
 
             Vector3 gWorld = Physics.gravity * gravityModifier;
+            Vector3 gWorldMin = Physics.gravity * gravityModifierMin;
             Vector3 gSim = (simulationSpace == SimulationSpace.World) ? gWorld : transform.InverseTransformDirection(gWorld);
+            Vector3 gSimMin = simulationSpace == SimulationSpace.World
+                ? gWorldMin
+                : transform.InverseTransformDirection(gWorldMin);
             simulateMaterial.SetVector(_GravityWS, new Vector4(gSim.x, gSim.y, gSim.z, 0));
+            simulateMaterial.SetVector(_GravityWSMin,
+                new Vector4(gSimMin.x, gSimMin.y, gSimMin.z, 0));
+            simulateMaterial.SetInt(_RandomizeGravityModifier, randomizeGravityModifier ? 1 : 0);
 
             simulateMaterial.SetInt(_SimulationSpace, (int)simulationSpace);
             simulateMaterial.SetInt(_EmitStart, emitStart);
             simulateMaterial.SetInt(_EmitCount, emitCount);
             simulateMaterial.SetFloat(_EmitCarryPrev, emitCarryPrev);
-            simulateMaterial.SetFloat(_EmissionRate, emissionRateOverTime);
+            simulateMaterial.SetFloat(_EmissionRate, emissionRate);
+            simulateMaterial.SetInt(_SimulationTick, unchecked((int)simulationTick));
+            simulateMaterial.SetInt(_ForceOverLifetimeEnabled, forceOverLifetimeEnabled ? 1 : 0);
+            simulateMaterial.SetInt(_ForceOverLifetimeSpace, (int)forceOverLifetimeSpace);
+            simulateMaterial.SetInt(_ForceOverLifetimeRandomized, forceOverLifetimeRandomized ? 1 : 0);
 
             Vector3 dirInitW = initialDirectionWS.sqrMagnitude > 1e-6f ? initialDirectionWS.normalized : transform.forward;
             Vector3 dirInitSim = (simulationSpace == SimulationSpace.World) ? dirInitW : transform.InverseTransformDirection(dirInitW);
@@ -354,6 +504,8 @@ namespace GPUParticles
             simulateMaterial.SetInt(_ShapeEmitFrom, (int)shapeEmitFrom);
             simulateMaterial.SetInt(_AlignToDirection, alignToDirection ? 1 : 0);
             simulateMaterial.SetFloat(_ShapeRadiusThickness, Mathf.Clamp01(shapeRadiusThickness));
+            simulateMaterial.SetFloat(_ShapeConeArcRad,
+                Mathf.Clamp(shapeConeArcDeg, 0f, 360f) * Mathf.Deg2Rad);
 
             float avgScale = (shapeLocalScale.x + shapeLocalScale.y + shapeLocalScale.z) / 3f;
 
@@ -371,7 +523,6 @@ namespace GPUParticles
                     float coneLengthScaled = shapeConeLength * shapeLocalScale.z;
                     simulateMaterial.SetFloat(_ShapeConeRadius, coneRadiusScaled);
                     simulateMaterial.SetFloat(_ShapeConeLength, coneLengthScaled);
-                    simulateMaterial.SetFloat(_ShapeConeArcRad, Mathf.Clamp(shapeConeArcDeg, 0f, 360f) * Mathf.Deg2Rad);
                     break;
 
                 case ShapeTypeGPU.Donut:
@@ -424,6 +575,7 @@ namespace GPUParticles
             CoreUtils.DrawFullScreen(cmd, simulateMaterial, null, 0);
 
             ping = dst;
+            simulationTick++;
         }
 
         internal void Render(CommandBuffer cmd, Camera camera)
@@ -439,8 +591,15 @@ namespace GPUParticles
             renderMaterial.SetInt(_MaxParticles, maxParticles);
             renderMaterial.SetInt(_SimulationSpace, (int)simulationSpace);
             renderMaterial.SetFloat(_StartLifetime, startLifetime);
+            renderMaterial.SetFloat(_StartLifetimeMin, startLifetimeMin);
+            renderMaterial.SetInt(_RandomizeStartLifetime, randomizeStartLifetime ? 1 : 0);
             renderMaterial.SetFloat(_StartRotation, startRotation);
+            renderMaterial.SetFloat(_StartRotationMin, startRotationMin);
+            renderMaterial.SetInt(_RandomizeStartRotation, randomizeStartRotation ? 1 : 0);
             renderMaterial.SetFloat(_RotationOverLifetime, rotationOverLifetime);
+            renderMaterial.SetFloat(_RotationOverLifetimeMin, rotationOverLifetimeMin);
+            renderMaterial.SetInt(_RandomizeRotationOverLifetime,
+                randomizeRotationOverLifetime ? 1 : 0);
             renderMaterial.SetMatrix(_EmitterLocalToWorld_Render, transform.localToWorldMatrix);
             renderMaterial.SetVector(_CameraRightWS, camera.transform.right);
             renderMaterial.SetVector(_CameraUpWS, camera.transform.up);

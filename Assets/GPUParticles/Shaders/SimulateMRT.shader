@@ -33,6 +33,7 @@ Shader "Hidden/GPUParticles/SimulateMRT"
             TEXTURE2D(_CurColor);        SAMPLER(sampler_CurColor);
             TEXTURE2D(_GradLUT);         SAMPLER(sampler_GradLUT);
             TEXTURE2D(_SizeLUT);         SAMPLER(sampler_SizeLUT);
+            TEXTURE2D(_ForceOverLifetimeLUT); SAMPLER(sampler_ForceOverLifetimeLUT);
 
             // --- Params ---
             CBUFFER_START(UnityPerMaterial)
@@ -40,22 +41,36 @@ Shader "Hidden/GPUParticles/SimulateMRT"
                 int     _MaxParticles;
                 float   _DeltaTime;
                 float   _StartLifetime;
+                float   _StartLifetimeMin;
+                int     _RandomizeStartLifetime;
                 float   _StartSpeed;
+                float   _StartSpeedMin;
+                int     _RandomizeStartSpeed;
                 float   _StartSize;
+                float   _StartSizeMin;
+                int     _RandomizeStartSize;
                 float4  _StartColor;
+                float4  _StartColorMin;
+                int     _RandomizeStartColor;
                 float3  _GravityWS;          // NOTE: contains space-correct gravity (WS or LS)
+                float3  _GravityWSMin;
+                int     _RandomizeGravityModifier;
                 int     _SimulationSpace;    // 0 Local, 1 World
                 uint    _EmitStart;
                 uint    _EmitCount;
                 float   _EmitCarryPrev;
                 float   _EmissionRate;
+                uint    _SimulationTick;
+                int     _ForceOverLifetimeEnabled;
+                int     _ForceOverLifetimeSpace;       // 0 Local, 1 World
+                int     _ForceOverLifetimeRandomized;
 
                 // Initial direction already in simulation space
                 float3  _InitialDir;
                 float   _Pad0;
 
                 // ----- Shape (generic) -----
-                int     _ShapeType;          // 0 Sphere, 1 Hemisphere, 2 Cone, 3 Donut, 4 Box, 5 Circle, 6 Edge, 7 Rectangle
+                int     _ShapeType;          // 0..7 shapes, 8 point emitter (Shape disabled)
                 int     _ShapeEmitFrom;      // 0 Volume, 1 Surface, 2 Base (for Cone)
                 int     _AlignToDirection;   // bool
 
@@ -123,6 +138,11 @@ Shader "Hidden/GPUParticles/SimulateMRT"
                 return float3(Hash01(x*747796405u+2891336453u), Hash01(x*2891336453u+1181783497u), Hash01(x*1181783497u+747796405u));
             }
 
+            float RandomRange(uint id, uint salt, int randomized, float minimum, float maximum)
+            {
+                return randomized != 0 ? lerp(minimum, maximum, Hash01(id ^ salt)) : maximum;
+            }
+
             struct FragOut {
                 float4 PosLife : SV_Target0;
                 float4 VelSize : SV_Target1;
@@ -178,6 +198,14 @@ Shader "Hidden/GPUParticles/SimulateMRT"
                 float r = sqrt(r2);
                 float phi = 6.28318530718 * u.y;
                 return float2(r*cos(phi), r*sin(phi));
+            }
+
+            float2 SampleDiskArc(float2 u, float innerR, float outerR, float arcRad)
+            {
+                float r2 = lerp(innerR * innerR, outerR * outerR, u.x);
+                float r = sqrt(r2);
+                float phi = clamp(arcRad, 0.0, 6.28318530718) * u.y;
+                return float2(r * cos(phi), r * sin(phi));
             }
 
             // Sample inside a right cone with base at z=0 (radius R), apex at z=L along +Z
@@ -294,6 +322,39 @@ Shader "Hidden/GPUParticles/SimulateMRT"
                 return vLocal;
             }
 
+            float3 ModuleVectorToSimSpace(float3 value, int moduleSpace)
+            {
+                if (moduleSpace == 1) // Module value is world-space.
+                {
+                    if (_SimulationSpace == 0)
+                    {
+                        return mul(_EmitterWorldToLocal, float4(value, 0.0)).xyz;
+                    }
+                    return value;
+                }
+
+                // Module value is emitter-local.
+                if (_SimulationSpace == 1)
+                {
+                    return mul(_EmitterLocalToWorld, float4(value, 0.0)).xyz;
+                }
+                return value;
+            }
+
+            float3 ForceOverLifetime(uint id, float normalizedAge)
+            {
+                float3 minimum = SAMPLE_TEXTURE2D_LOD(
+                    _ForceOverLifetimeLUT, sampler_ForceOverLifetimeLUT,
+                    float2(normalizedAge, 0.25), 0).rgb;
+                float3 maximum = SAMPLE_TEXTURE2D_LOD(
+                    _ForceOverLifetimeLUT, sampler_ForceOverLifetimeLUT,
+                    float2(normalizedAge, 0.75), 0).rgb;
+
+                uint tick = _ForceOverLifetimeRandomized != 0 ? _SimulationTick : 0u;
+                float3 randomValue = Hash03(id * 1597334677u + tick * 3812015801u + 0xA511E9B3u);
+                return ModuleVectorToSimSpace(lerp(minimum, maximum, randomValue), _ForceOverLifetimeSpace);
+            }
+
             FragOut Frag(Varyings i)
             {
                 FragOut o;
@@ -318,6 +379,19 @@ Shader "Hidden/GPUParticles/SimulateMRT"
                 float  size= curVelSize.w;
                 float4 col = curColor;
 
+                float particleStartLifetime = RandomRange(
+                    id, 0x68E31DA4u, _RandomizeStartLifetime, _StartLifetimeMin, _StartLifetime);
+                float particleStartSpeed = RandomRange(
+                    id, 0xB5297A4Du, _RandomizeStartSpeed, _StartSpeedMin, _StartSpeed);
+                float particleStartSize = RandomRange(
+                    id, 0x1B56C4E9u, _RandomizeStartSize, _StartSizeMin, _StartSize);
+                float4 particleStartColor = _RandomizeStartColor != 0
+                    ? lerp(_StartColorMin, _StartColor, Hash01(id ^ 0xC2B2AE35u))
+                    : _StartColor;
+                float3 particleGravity = _RandomizeGravityModifier != 0
+                    ? lerp(_GravityWSMin, _GravityWS, Hash01(id ^ 0x27D4EB2Fu))
+                    : _GravityWS;
+
                 // Out-of-cap pixels remain dead
                 if (id >= _MaxParticles)
                 {
@@ -339,8 +413,15 @@ Shader "Hidden/GPUParticles/SimulateMRT"
                     float3 posL = 0;
                     float3 velL = 0;
 
+                    // 8. Point (Shuriken Shape module disabled)
+                    if (_ShapeType == 8)
+                    {
+                        float3 fwd = normalize(_ShapeFwdL);
+                        posL = 0.0;
+                        velL = fwd * particleStartSpeed;
+                    }
                     // 0. Sphere
-                    if (_ShapeType == 0)
+                    else if (_ShapeType == 0)
                     {
                         float3 right = normalize(_ShapeRightL);
                         float3 up    = normalize(_ShapeUpL);
@@ -363,7 +444,7 @@ Shader "Hidden/GPUParticles/SimulateMRT"
                         posL = _ShapePosL + pL;
 
                         float3 vdirL = (_AlignToDirection != 0) ? normalize(pL) : fwd;
-                        velL = vdirL * _StartSpeed;
+                        velL = vdirL * particleStartSpeed;
                     }
                     // 1. Hemisphere
                     else if (_ShapeType == 1)
@@ -389,7 +470,7 @@ Shader "Hidden/GPUParticles/SimulateMRT"
                         posL = _ShapePosL + pL;
 
                         float3 vdirL = (_AlignToDirection != 0) ? normalize(pL) : fwd;
-                        velL = vdirL * _StartSpeed;
+                        velL = vdirL * particleStartSpeed;
                     }
                     // 2. Cone
                     else if (_ShapeType == 2)
@@ -403,11 +484,11 @@ Shader "Hidden/GPUParticles/SimulateMRT"
                         if (_ShapeEmitFrom == 2) // Base disc at shape position
                         {
                             float innerR = _ShapeConeRadius * saturate(1.0 - _ShapeRadiusThickness);
-                            float2 d = SampleDisk(urnd.xy, innerR, _ShapeConeRadius);
+                            float2 d = SampleDiskArc(urnd.xy, innerR, _ShapeConeRadius, _ShapeConeArcRad);
                             posL = _ShapePosL + right * d.x + up * d.y;
 
                             float3 dirL = BuildConeVelocity(d, _ShapeConeRadius, right, up, fwd, _ShapeConeAngleRad);
-                            velL = dirL * _StartSpeed;
+                            velL = dirL * particleStartSpeed;
                         }
                         else if (_ShapeEmitFrom == 0) // Volume
                         {
@@ -416,13 +497,13 @@ Shader "Hidden/GPUParticles/SimulateMRT"
 
                             float Ri = Rz * saturate(1.0 - _ShapeRadiusThickness);
                             float  r = sqrt(lerp(Ri*Ri, Rz*Rz, urnd.y));
-                            float  phi = 6.28318530718 * urnd.z;
+                            float  phi = clamp(_ShapeConeArcRad, 0.0, 6.28318530718) * urnd.z;
                             float2 d = float2(r * cos(phi), r * sin(phi));
 
                             posL = _ShapePosL + right * d.x + up * d.y + fwd * z;
 
                             float3 dirL = BuildConeVelocity(d, max(Rz, 1e-6), right, up, fwd, _ShapeConeAngleRad);
-                            velL = dirL * _StartSpeed;
+                            velL = dirL * particleStartSpeed;
                         }
                     }
                     // 3. Donut
@@ -433,7 +514,7 @@ Shader "Hidden/GPUParticles/SimulateMRT"
                         float3 fwd   = normalize(_ShapeFwdL);
                         
                         // 在XY平面生成圆环（主圆环）
-                        float phi = 6.28318530718 * urnd.x; // [0, 2π]
+                        float phi = clamp(_ShapeConeArcRad, 0.0, 6.28318530718) * urnd.x;
                         float R = _ShapeDonutRadius;
                         
                         // 环的厚度采样
@@ -460,7 +541,7 @@ Shader "Hidden/GPUParticles/SimulateMRT"
                         
                         // 方向：从圆环中心指向粒子位置
                         float3 vdirL = (_AlignToDirection != 0) ? normalize(right * pos2D.x + up * pos2D.y) : fwd;
-                        velL = vdirL * _StartSpeed;
+                        velL = vdirL * particleStartSpeed;
                     }
                     // 4. Box
                     else if (_ShapeType == 4)
@@ -477,7 +558,7 @@ Shader "Hidden/GPUParticles/SimulateMRT"
                             posL = _ShapePosL + right*pB.x + up*pB.y + fwd*pB.z;
 
                             float3 dirL = (_AlignToDirection != 0) ? nLocal : fwd;
-                            velL = dirL * _StartSpeed;
+                            velL = dirL * particleStartSpeed;
                         }
                         else // Volume
                         {
@@ -485,7 +566,7 @@ Shader "Hidden/GPUParticles/SimulateMRT"
                             posL = _ShapePosL + right*pB.x + up*pB.y + fwd*pB.z;
 
                             float3 dirL = fwd;
-                            velL = dirL * _StartSpeed;
+                            velL = dirL * particleStartSpeed;
                         }
                     }
                     // 5. Circle
@@ -496,7 +577,7 @@ Shader "Hidden/GPUParticles/SimulateMRT"
                         float3 fwd   = normalize(_ShapeFwdL);
                         
                         float R = _ShapeCircleRadius;
-                        float phi = 6.28318530718 * urnd.x; // [0, 2π]
+                        float phi = clamp(_ShapeConeArcRad, 0.0, 6.28318530718) * urnd.x;
                         
                         float r;
                         if (_ShapeEmitFrom == 1) // Edge (表面)
@@ -505,14 +586,15 @@ Shader "Hidden/GPUParticles/SimulateMRT"
                         }
                         else // Volume
                         {
-                            r = R * sqrt(urnd.y); // 体积：均匀分布
+                            float innerR = R * saturate(1.0 - _ShapeRadiusThickness);
+                            r = sqrt(lerp(innerR * innerR, R * R, urnd.y));
                         }
                         
                         float2 pos2D = float2(r * cos(phi), r * sin(phi));
                         posL = _ShapePosL + right * pos2D.x + up * pos2D.y;
                         
                         float3 vdirL = (_AlignToDirection != 0) ? normalize(right * pos2D.x + up * pos2D.y) : fwd;
-                        velL = vdirL * _StartSpeed;
+                        velL = vdirL * particleStartSpeed;
                     }
                     // 6. Edge
                     else if (_ShapeType == 6)
@@ -528,7 +610,7 @@ Shader "Hidden/GPUParticles/SimulateMRT"
                         posL = _ShapePosL + right * pos1D;
                         
                         float3 vdirL = (_AlignToDirection != 0) ? right : fwd;
-                        velL = vdirL * _StartSpeed;
+                        velL = vdirL * particleStartSpeed;
                     }
                     // 7. Rectangle
                     else if (_ShapeType == 7)
@@ -576,7 +658,7 @@ Shader "Hidden/GPUParticles/SimulateMRT"
                         posL = _ShapePosL + right * pos2D.x + up * pos2D.y;
                         
                         float3 vdirL = (_AlignToDirection != 0) ? normalize(right * pos2D.x + up * pos2D.y) : fwd;
-                        velL = vdirL * _StartSpeed;
+                        velL = vdirL * particleStartSpeed;
                     }
                     // Fallback (默认使用Cone)
                     else
@@ -588,11 +670,11 @@ Shader "Hidden/GPUParticles/SimulateMRT"
                         if (_ShapeEmitFrom == 2) // Base disc at shape position
                         {
                             float innerR = _ShapeConeRadius * saturate(1.0 - _ShapeRadiusThickness);
-                            float2 d = SampleDisk(urnd.xy, innerR, _ShapeConeRadius);
+                            float2 d = SampleDiskArc(urnd.xy, innerR, _ShapeConeRadius, _ShapeConeArcRad);
                             posL = _ShapePosL + right * d.x + up * d.y;
 
                             float3 dirL = BuildConeVelocity(d, _ShapeConeRadius, right, up, fwd, _ShapeConeAngleRad);
-                            velL = dirL * _StartSpeed;
+                            velL = dirL * particleStartSpeed;
                         }
                         else if (_ShapeEmitFrom == 0) // Volume
                         {
@@ -601,35 +683,35 @@ Shader "Hidden/GPUParticles/SimulateMRT"
 
                             float Ri = Rz * saturate(1.0 - _ShapeRadiusThickness);
                             float  r = sqrt(lerp(Ri*Ri, Rz*Rz, urnd.y));
-                            float  phi = 6.28318530718 * urnd.z;
+                            float  phi = clamp(_ShapeConeArcRad, 0.0, 6.28318530718) * urnd.z;
                             float2 d = float2(r * cos(phi), r * sin(phi));
 
                             posL = _ShapePosL + right * d.x + up * d.y + fwd * z;
 
                             float3 dirL = BuildConeVelocity(d, max(Rz, 1e-6), right, up, fwd, _ShapeConeAngleRad);
-                            velL = dirL * _StartSpeed;
+                            velL = dirL * particleStartSpeed;
                         }
                         else // Surface fallback to Base
                         {
                             float innerR = _ShapeConeRadius * saturate(1.0 - _ShapeRadiusThickness);
-                            float2 d = SampleDisk(urnd.xy, innerR, _ShapeConeRadius);
+                            float2 d = SampleDiskArc(urnd.xy, innerR, _ShapeConeRadius, _ShapeConeArcRad);
                             posL = _ShapePosL + right * d.x + up * d.y;
 
                             float3 dirL = BuildConeVelocity(d, _ShapeConeRadius, right, up, fwd, _ShapeConeAngleRad);
-                            velL = dirL * _StartSpeed;
+                            velL = dirL * particleStartSpeed;
                         }
                     }
 
                     // finalize spawn in sim space
                     pos  = ToSimSpacePos(posL);
                     vel  = ToSimSpaceVec(velL);
-                    life = _StartLifetime;
+                    life = particleStartLifetime;
                     
                     float tSpawn = 0.0;
                     float4 lutColSpawn  = SAMPLE_TEXTURE2D_LOD(_GradLUT, sampler_GradLUT, float2(tSpawn, 0.5), 0);
                     float  lutSizeSpawn = SAMPLE_TEXTURE2D_LOD(_SizeLUT, sampler_SizeLUT, float2(tSpawn, 0.5), 0).r;
-                    col   = _StartColor * lutColSpawn;
-                    size  = _StartSize * lutSizeSpawn;
+                    col   = particleStartColor * lutColSpawn;
+                    size  = particleStartSize * lutSizeSpawn;
 
                     uint emitOrdinal = EmitOrdinal(id, _EmitStart, (uint)_MaxParticles);
                     stepDt = SpawnAgeThisFrame(emitOrdinal);
@@ -643,21 +725,29 @@ Shader "Hidden/GPUParticles/SimulateMRT"
                         stepDt = _DeltaTime;
                     }
 
+                    float normalizedAgeBeforeStep = saturate(
+                        1.0 - (life / max(particleStartLifetime, 1e-5)));
                     life = max(0.0, life - stepDt);
 
-                    // gravity already in correct space
-                    vel += _GravityWS * stepDt;
+                    // Gravity is already in simulation space. Force over Lifetime is
+                    // sampled with Shuriken's stable per-particle MinMax random values.
+                    float3 acceleration = particleGravity;
+                    if (_ForceOverLifetimeEnabled != 0)
+                    {
+                        acceleration += ForceOverLifetime(id, normalizedAgeBeforeStep);
+                    }
+                    vel += acceleration * stepDt;
                     pos += vel * stepDt;
 
                     // lifetime normalized 0..1 (0 birth, 1 death)
-                    float t = saturate(1.0 - (life / max(_StartLifetime, 1e-5)));
+                    float t = saturate(1.0 - (life / max(particleStartLifetime, 1e-5)));
 
                     // Color over lifetime & Size over lifetime via LUTs
                     float4 lutCol  = SAMPLE_TEXTURE2D_LOD(_GradLUT, sampler_GradLUT, float2(t, 0.5), 0);
                     float  lutSize = SAMPLE_TEXTURE2D_LOD(_SizeLUT, sampler_SizeLUT, float2(t, 0.5), 0).r;
 
-                    col   = _StartColor * lutCol;
-                    size  = _StartSize   * lutSize;
+                    col   = particleStartColor * lutCol;
+                    size  = particleStartSize  * lutSize;
                 }
                 else
                 {
