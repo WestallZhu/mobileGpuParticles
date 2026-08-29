@@ -9,12 +9,14 @@ namespace GPUParticles
         public static Texture2D Build(
             ParticleSystem.MinMaxCurve curve,
             int resolution = 256,
-            bool saveAsAsset = false)
+            bool saveAsAsset = false,
+            string assetName = "SizeOverLife_LUT")
         {
             resolution = Mathf.Max(2, resolution);
+            if (string.IsNullOrEmpty(assetName)) assetName = "SizeOverLife_LUT";
             var tex = new Texture2D(resolution, 2, TextureFormat.RHalf, false, true)
             {
-                name = "SizeOverLife_LUT",
+                name = assetName,
                 wrapMode = TextureWrapMode.Clamp,
                 filterMode = FilterMode.Bilinear
             };
@@ -41,7 +43,7 @@ namespace GPUParticles
             if (saveAsAsset && !Application.isPlaying)
             {
                 string path = UnityEditor.AssetDatabase.GenerateUniqueAssetPath(
-                    "Assets/SizeOverLife_LUT.asset");
+                    $"Assets/{assetName}.asset");
                 UnityEditor.AssetDatabase.CreateAsset(tex, path);
                 UnityEditor.AssetDatabase.SaveAssets();
             }
@@ -52,12 +54,14 @@ namespace GPUParticles
         public static Texture2D Build(
             AnimationCurve curve,
             int resolution = 256,
-            bool saveAsAsset = false)
+            bool saveAsAsset = false,
+            string assetName = "SizeOverLife_LUT")
         {
             return Build(new ParticleSystem.MinMaxCurve(
                 1f, curve ?? AnimationCurve.Linear(0f, 1f, 1f, 1f)),
                 resolution,
-                saveAsAsset);
+                saveAsAsset,
+                assetName);
         }
 
         public static Texture2D GetDefaultUnitLUT(int resolution = 256)

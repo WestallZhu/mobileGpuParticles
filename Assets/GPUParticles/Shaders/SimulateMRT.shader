@@ -33,6 +33,8 @@ Shader "Hidden/GPUParticles/SimulateMRT"
             TEXTURE2D(_CurColor);        SAMPLER(sampler_CurColor);
             TEXTURE2D(_GradLUT);         SAMPLER(sampler_GradLUT);
             TEXTURE2D(_SizeLUT);         SAMPLER(sampler_SizeLUT);
+            TEXTURE2D(_ColorBySpeedLUT); SAMPLER(sampler_ColorBySpeedLUT);
+            TEXTURE2D(_SizeBySpeedLUT);  SAMPLER(sampler_SizeBySpeedLUT);
             TEXTURE2D(_ForceOverLifetimeLUT); SAMPLER(sampler_ForceOverLifetimeLUT);
             TEXTURE2D(_VelocityOverLifetimeLUT); SAMPLER(sampler_VelocityOverLifetimeLUT);
 
@@ -75,6 +77,17 @@ Shader "Hidden/GPUParticles/SimulateMRT"
                 int     _VelocityOverLifetimeEnabled;
                 int     _VelocityOverLifetimeSpace;    // 0 Local, 1 World
                 int     _ColorOverLifetimeMode;
+                int     _ColorBySpeedEnabled;
+                int     _ColorBySpeedMode;
+                int     _SizeBySpeedEnabled;
+                float2  _ColorBySpeedRange;
+                float2  _SizeBySpeedRange;
+                float   _GradLUTInvWidth;
+                float   _SizeLUTInvWidth;
+                float   _ForceOverLifetimeLUTInvWidth;
+                float   _VelocityOverLifetimeLUTInvWidth;
+                float   _ColorBySpeedLUTInvWidth;
+                float   _SizeBySpeedLUTInvWidth;
 
                 // Initial direction already in simulation space
                 float3  _InitialDir;
@@ -397,14 +410,22 @@ Shader "Hidden/GPUParticles/SimulateMRT"
                 return value;
             }
 
+            float LUTPosition(float position, float inverseWidth)
+            {
+                return saturate(position) * (1.0 - inverseWidth) +
+                    0.5 * inverseWidth;
+            }
+
             float3 ForceOverLifetime(uint id, float normalizedAge)
             {
+                float lutPosition = LUTPosition(
+                    normalizedAge, _ForceOverLifetimeLUTInvWidth);
                 float3 minimum = SAMPLE_TEXTURE2D_LOD(
                     _ForceOverLifetimeLUT, sampler_ForceOverLifetimeLUT,
-                    float2(normalizedAge, 0.25), 0).rgb;
+                    float2(lutPosition, 0.25), 0).rgb;
                 float3 maximum = SAMPLE_TEXTURE2D_LOD(
                     _ForceOverLifetimeLUT, sampler_ForceOverLifetimeLUT,
-                    float2(normalizedAge, 0.75), 0).rgb;
+                    float2(lutPosition, 0.75), 0).rgb;
 
                 uint tick = _ForceOverLifetimeRandomized != 0 ? _SimulationTick : 0u;
                 float3 randomValue = Hash03(id * 1597334677u + tick * 3812015801u + 0xA511E9B3u);
@@ -413,12 +434,14 @@ Shader "Hidden/GPUParticles/SimulateMRT"
 
             float3 VelocityOverLifetime(uint id, float normalizedAge)
             {
+                float lutPosition = LUTPosition(
+                    normalizedAge, _VelocityOverLifetimeLUTInvWidth);
                 float3 minimum = SAMPLE_TEXTURE2D_LOD(
                     _VelocityOverLifetimeLUT, sampler_VelocityOverLifetimeLUT,
-                    float2(normalizedAge, 0.25), 0).rgb;
+                    float2(lutPosition, 0.25), 0).rgb;
                 float3 maximum = SAMPLE_TEXTURE2D_LOD(
                     _VelocityOverLifetimeLUT, sampler_VelocityOverLifetimeLUT,
-                    float2(normalizedAge, 0.75), 0).rgb;
+                    float2(lutPosition, 0.75), 0).rgb;
                 float3 randomValue = Hash03(id * 2246822519u + 0x9E3779B9u);
                 return ModuleVectorToSimSpace(
                     lerp(minimum, maximum, randomValue),
@@ -432,27 +455,75 @@ Shader "Hidden/GPUParticles/SimulateMRT"
                 {
                     return SAMPLE_TEXTURE2D_LOD(
                         _GradLUT, sampler_GradLUT,
-                        float2(randomValue, 0.25), 0);
+                        float2(LUTPosition(randomValue, _GradLUTInvWidth), 0.25), 0);
                 }
 
+                float lutPosition = LUTPosition(normalizedAge, _GradLUTInvWidth);
                 float4 minimum = SAMPLE_TEXTURE2D_LOD(
                     _GradLUT, sampler_GradLUT,
-                    float2(normalizedAge, 0.25), 0);
+                    float2(lutPosition, 0.25), 0);
                 float4 maximum = SAMPLE_TEXTURE2D_LOD(
                     _GradLUT, sampler_GradLUT,
-                    float2(normalizedAge, 0.75), 0);
+                    float2(lutPosition, 0.75), 0);
                 return lerp(minimum, maximum, randomValue);
             }
 
             float SizeOverLifetime(uint id, float normalizedAge)
             {
+                float lutPosition = LUTPosition(normalizedAge, _SizeLUTInvWidth);
                 float minimum = SAMPLE_TEXTURE2D_LOD(
                     _SizeLUT, sampler_SizeLUT,
-                    float2(normalizedAge, 0.25), 0).r;
+                    float2(lutPosition, 0.25), 0).r;
                 float maximum = SAMPLE_TEXTURE2D_LOD(
                     _SizeLUT, sampler_SizeLUT,
-                    float2(normalizedAge, 0.75), 0).r;
+                    float2(lutPosition, 0.75), 0).r;
                 return lerp(minimum, maximum, Hash01(id ^ 0x91E10DA5u));
+            }
+
+            float SpeedRangePosition(float speed, float2 speedRange)
+            {
+                float width = speedRange.y - speedRange.x;
+                if (width <= 1e-6)
+                {
+                    return speed > speedRange.x ? 1.0 : 0.0;
+                }
+                return saturate((speed - speedRange.x) / width);
+            }
+
+            float4 ColorBySpeed(uint id, float speedPosition)
+            {
+                float randomValue = Hash01(id ^ 0x7F4A7C15u);
+                if (_ColorBySpeedMode == 4) // RandomColor
+                {
+                    return SAMPLE_TEXTURE2D_LOD(
+                        _ColorBySpeedLUT, sampler_ColorBySpeedLUT,
+                        float2(
+                            LUTPosition(randomValue, _ColorBySpeedLUTInvWidth),
+                            0.25), 0);
+                }
+
+                float lutPosition = LUTPosition(
+                    speedPosition, _ColorBySpeedLUTInvWidth);
+                float4 minimum = SAMPLE_TEXTURE2D_LOD(
+                    _ColorBySpeedLUT, sampler_ColorBySpeedLUT,
+                    float2(lutPosition, 0.25), 0);
+                float4 maximum = SAMPLE_TEXTURE2D_LOD(
+                    _ColorBySpeedLUT, sampler_ColorBySpeedLUT,
+                    float2(lutPosition, 0.75), 0);
+                return lerp(minimum, maximum, randomValue);
+            }
+
+            float SizeBySpeed(uint id, float speedPosition)
+            {
+                float lutPosition = LUTPosition(
+                    speedPosition, _SizeBySpeedLUTInvWidth);
+                float minimum = SAMPLE_TEXTURE2D_LOD(
+                    _SizeBySpeedLUT, sampler_SizeBySpeedLUT,
+                    float2(lutPosition, 0.25), 0).r;
+                float maximum = SAMPLE_TEXTURE2D_LOD(
+                    _SizeBySpeedLUT, sampler_SizeBySpeedLUT,
+                    float2(lutPosition, 0.75), 0).r;
+                return lerp(minimum, maximum, Hash01(id ^ 0xD192ED03u));
             }
 
             FragOut Frag(Varyings i)
@@ -810,8 +881,19 @@ Shader "Hidden/GPUParticles/SimulateMRT"
                     float tSpawn = 0.0;
                     float4 lutColSpawn = ColorOverLifetime(id, tSpawn);
                     float lutSizeSpawn = SizeOverLifetime(id, tSpawn);
-                    col   = particleStartColor * lutColSpawn;
-                    size  = particleStartSize * lutSizeSpawn;
+                    float spawnSpeed = length(vel);
+                    float spawnColorSpeedPosition = SpeedRangePosition(
+                        spawnSpeed, _ColorBySpeedRange);
+                    float spawnSizeSpeedPosition = SpeedRangePosition(
+                        spawnSpeed, _SizeBySpeedRange);
+                    float4 colorBySpeedSpawn = _ColorBySpeedEnabled != 0
+                        ? ColorBySpeed(id, spawnColorSpeedPosition)
+                        : 1.0;
+                    float sizeBySpeedSpawn = _SizeBySpeedEnabled != 0
+                        ? SizeBySpeed(id, spawnSizeSpeedPosition)
+                        : 1.0;
+                    col = particleStartColor * lutColSpawn * colorBySpeedSpawn;
+                    size = particleStartSize * lutSizeSpawn * sizeBySpeedSpawn;
 
                     uint emitOrdinal = EmitOrdinal(id, _EmitStart, (uint)_MaxParticles);
                     stepDt = SpawnAgeThisFrame(emitOrdinal);
@@ -876,9 +958,20 @@ Shader "Hidden/GPUParticles/SimulateMRT"
                     // Color over lifetime & Size over lifetime via LUTs
                     float4 lutCol = ColorOverLifetime(id, t);
                     float lutSize = SizeOverLifetime(id, t);
+                    float currentSpeed = length(vel);
+                    float colorSpeedPosition = SpeedRangePosition(
+                        currentSpeed, _ColorBySpeedRange);
+                    float sizeSpeedPosition = SpeedRangePosition(
+                        currentSpeed, _SizeBySpeedRange);
+                    float4 speedColor = _ColorBySpeedEnabled != 0
+                        ? ColorBySpeed(id, colorSpeedPosition)
+                        : 1.0;
+                    float speedSize = _SizeBySpeedEnabled != 0
+                        ? SizeBySpeed(id, sizeSpeedPosition)
+                        : 1.0;
 
-                    col   = particleStartColor * lutCol;
-                    size  = particleStartSize  * lutSize;
+                    col = particleStartColor * lutCol * speedColor;
+                    size = particleStartSize * lutSize * speedSize;
                 }
                 else
                 {

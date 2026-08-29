@@ -75,6 +75,15 @@ namespace GPUParticles
         public ParticleSystemGradientMode colorOverLifetimeMode = ParticleSystemGradientMode.Gradient;
         public Texture2D sizeOverLifetimeLUT;
 
+        [Header("By Speed (LUTs)")]
+        public bool colorBySpeedEnabled;
+        public Texture2D colorBySpeedLUT;
+        public ParticleSystemGradientMode colorBySpeedMode = ParticleSystemGradientMode.Gradient;
+        public Vector2 colorBySpeedRange = new Vector2(0f, 1f);
+        public bool sizeBySpeedEnabled;
+        public Texture2D sizeBySpeedLUT;
+        public Vector2 sizeBySpeedRange = new Vector2(0f, 1f);
+
         [Header("Force Over Lifetime")]
         public bool forceOverLifetimeEnabled;
         public Texture2D forceOverLifetimeLUT;
@@ -232,6 +241,23 @@ namespace GPUParticles
         static readonly int _VelocityOverLifetimeEnabled = Shader.PropertyToID("_VelocityOverLifetimeEnabled");
         static readonly int _VelocityOverLifetimeSpace = Shader.PropertyToID("_VelocityOverLifetimeSpace");
         static readonly int _ColorOverLifetimeMode = Shader.PropertyToID("_ColorOverLifetimeMode");
+        static readonly int _GradLUTInvWidth = Shader.PropertyToID("_GradLUTInvWidth");
+        static readonly int _SizeLUTInvWidth = Shader.PropertyToID("_SizeLUTInvWidth");
+        static readonly int _ForceOverLifetimeLUTInvWidth =
+            Shader.PropertyToID("_ForceOverLifetimeLUTInvWidth");
+        static readonly int _VelocityOverLifetimeLUTInvWidth =
+            Shader.PropertyToID("_VelocityOverLifetimeLUTInvWidth");
+        static readonly int _ColorBySpeedLUT = Shader.PropertyToID("_ColorBySpeedLUT");
+        static readonly int _ColorBySpeedLUTInvWidth =
+            Shader.PropertyToID("_ColorBySpeedLUTInvWidth");
+        static readonly int _ColorBySpeedEnabled = Shader.PropertyToID("_ColorBySpeedEnabled");
+        static readonly int _ColorBySpeedMode = Shader.PropertyToID("_ColorBySpeedMode");
+        static readonly int _ColorBySpeedRange = Shader.PropertyToID("_ColorBySpeedRange");
+        static readonly int _SizeBySpeedLUT = Shader.PropertyToID("_SizeBySpeedLUT");
+        static readonly int _SizeBySpeedLUTInvWidth =
+            Shader.PropertyToID("_SizeBySpeedLUTInvWidth");
+        static readonly int _SizeBySpeedEnabled = Shader.PropertyToID("_SizeBySpeedEnabled");
+        static readonly int _SizeBySpeedRange = Shader.PropertyToID("_SizeBySpeedRange");
 
         // shape params
         static readonly int _ShapeType = Shader.PropertyToID("_ShapeType");
@@ -313,6 +339,8 @@ namespace GPUParticles
             emissionDuration = Mathf.Max(0.05f, emissionDuration);
             emissionStartDelayMin = Mathf.Max(0f, emissionStartDelayMin);
             emissionStartDelay = Mathf.Max(0f, emissionStartDelay);
+            colorBySpeedRange = OrderedRange(colorBySpeedRange);
+            sizeBySpeedRange = OrderedRange(sizeBySpeedRange);
             if (emissionBursts == null) emissionBursts = System.Array.Empty<GPUEmissionBurst>();
             EnsureMaterials();
             RecreateTargetsIfNeeded(false);
@@ -451,6 +479,28 @@ namespace GPUParticles
             rotationOverLifetime = Mathf.Max(minimum, maximum);
             randomizeRotationOverLifetime =
                 !Mathf.Approximately(rotationOverLifetimeMin, rotationOverLifetime);
+        }
+
+        public void SetColorBySpeedRange(Vector2 range)
+        {
+            colorBySpeedRange = OrderedRange(range);
+        }
+
+        public void SetSizeBySpeedRange(Vector2 range)
+        {
+            sizeBySpeedRange = OrderedRange(range);
+        }
+
+        static Vector2 OrderedRange(Vector2 range)
+        {
+            return new Vector2(
+                Mathf.Min(range.x, range.y),
+                Mathf.Max(range.x, range.y));
+        }
+
+        static float InverseTextureWidth(Texture2D texture)
+        {
+            return 1f / Mathf.Max(1, texture != null ? texture.width : 1);
         }
 
         public void SetEmissionRateOverTime(ParticleSystem.MinMaxCurve curve)
@@ -1058,14 +1108,47 @@ namespace GPUParticles
             simulateMaterial.SetTexture(_CurPosLife, posLife[src]);
             simulateMaterial.SetTexture(_CurVelSize, velSize[src]);
             simulateMaterial.SetTexture(_CurColor,   colorRT[src]);
-            simulateMaterial.SetTexture("_GradLUT", colorOverLifetimeLUT != null ? colorOverLifetimeLUT : GradientLUTBuilder.GetDefaultWhiteLUT());
-            simulateMaterial.SetTexture("_SizeLUT", sizeOverLifetimeLUT != null ? sizeOverLifetimeLUT : CurveLUTBuilder.GetDefaultUnitLUT());
-            simulateMaterial.SetTexture(_ForceOverLifetimeLUT,
-                forceOverLifetimeLUT != null ? forceOverLifetimeLUT : MinMaxCurveVector3LUTBuilder.GetDefaultZeroLUT());
-            simulateMaterial.SetTexture(_VelocityOverLifetimeLUT,
-                velocityOverLifetimeLUT != null
-                    ? velocityOverLifetimeLUT
-                    : MinMaxCurveVector3LUTBuilder.GetDefaultZeroLUT());
+            Texture2D selectedColorOverLifetimeLUT = colorOverLifetimeLUT != null
+                ? colorOverLifetimeLUT
+                : GradientLUTBuilder.GetDefaultWhiteLUT();
+            Texture2D selectedSizeOverLifetimeLUT = sizeOverLifetimeLUT != null
+                ? sizeOverLifetimeLUT
+                : CurveLUTBuilder.GetDefaultUnitLUT();
+            Texture2D selectedColorBySpeedLUT = colorBySpeedLUT != null
+                ? colorBySpeedLUT
+                : GradientLUTBuilder.GetDefaultWhiteLUT();
+            Texture2D selectedSizeBySpeedLUT = sizeBySpeedLUT != null
+                ? sizeBySpeedLUT
+                : CurveLUTBuilder.GetDefaultUnitLUT();
+            Texture2D selectedForceOverLifetimeLUT = forceOverLifetimeLUT != null
+                ? forceOverLifetimeLUT
+                : MinMaxCurveVector3LUTBuilder.GetDefaultZeroLUT();
+            Texture2D selectedVelocityOverLifetimeLUT = velocityOverLifetimeLUT != null
+                ? velocityOverLifetimeLUT
+                : MinMaxCurveVector3LUTBuilder.GetDefaultZeroLUT();
+
+            simulateMaterial.SetTexture("_GradLUT", selectedColorOverLifetimeLUT);
+            simulateMaterial.SetTexture("_SizeLUT", selectedSizeOverLifetimeLUT);
+            simulateMaterial.SetTexture(_ColorBySpeedLUT, selectedColorBySpeedLUT);
+            simulateMaterial.SetTexture(_SizeBySpeedLUT, selectedSizeBySpeedLUT);
+            simulateMaterial.SetTexture(
+                _ForceOverLifetimeLUT, selectedForceOverLifetimeLUT);
+            simulateMaterial.SetTexture(
+                _VelocityOverLifetimeLUT, selectedVelocityOverLifetimeLUT);
+            simulateMaterial.SetFloat(
+                _GradLUTInvWidth, InverseTextureWidth(selectedColorOverLifetimeLUT));
+            simulateMaterial.SetFloat(
+                _SizeLUTInvWidth, InverseTextureWidth(selectedSizeOverLifetimeLUT));
+            simulateMaterial.SetFloat(
+                _ColorBySpeedLUTInvWidth, InverseTextureWidth(selectedColorBySpeedLUT));
+            simulateMaterial.SetFloat(
+                _SizeBySpeedLUTInvWidth, InverseTextureWidth(selectedSizeBySpeedLUT));
+            simulateMaterial.SetFloat(
+                _ForceOverLifetimeLUTInvWidth,
+                InverseTextureWidth(selectedForceOverLifetimeLUT));
+            simulateMaterial.SetFloat(
+                _VelocityOverLifetimeLUTInvWidth,
+                InverseTextureWidth(selectedVelocityOverLifetimeLUT));
 
             simulateMaterial.SetInt(_GridSize, gridSize);
             simulateMaterial.SetInt(_MaxParticles, maxParticles);
@@ -1119,6 +1202,15 @@ namespace GPUParticles
             simulateMaterial.SetInt(
                 _VelocityOverLifetimeSpace, (int)velocityOverLifetimeSpace);
             simulateMaterial.SetInt(_ColorOverLifetimeMode, (int)colorOverLifetimeMode);
+            simulateMaterial.SetInt(_ColorBySpeedEnabled, colorBySpeedEnabled ? 1 : 0);
+            simulateMaterial.SetInt(_ColorBySpeedMode, (int)colorBySpeedMode);
+            simulateMaterial.SetVector(
+                _ColorBySpeedRange,
+                new Vector4(colorBySpeedRange.x, colorBySpeedRange.y, 0f, 0f));
+            simulateMaterial.SetInt(_SizeBySpeedEnabled, sizeBySpeedEnabled ? 1 : 0);
+            simulateMaterial.SetVector(
+                _SizeBySpeedRange,
+                new Vector4(sizeBySpeedRange.x, sizeBySpeedRange.y, 0f, 0f));
 
             Vector3 dirInitW = initialDirectionWS.sqrMagnitude > 1e-6f ? initialDirectionWS.normalized : transform.forward;
             Vector3 dirInitSim = (simulationSpace == SimulationSpace.World) ? dirInitW : transform.InverseTransformDirection(dirInitW);

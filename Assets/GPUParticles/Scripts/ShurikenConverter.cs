@@ -37,6 +37,7 @@ namespace GPUParticles
 
             ApplyEmission(ps, gpu, owner);
             ApplyColorAndSizeOverLifetime(ps, gpu, owner);
+            ApplyColorAndSizeBySpeed(ps, gpu, owner);
 
             // ---- Shape TRS ----
             gpu.shapeLocalPosition = shape.position;
@@ -270,6 +271,7 @@ namespace GPUParticles
 
             ApplyEmission(particleSystem, gpu, gpuChild);
             ApplyColorAndSizeOverLifetime(particleSystem, gpu, gpuChild);
+            ApplyColorAndSizeBySpeed(particleSystem, gpu, gpuChild);
 
             // ---- Shape TRS ----
             gpu.shapeLocalPosition = shape.position;
@@ -606,6 +608,46 @@ namespace GPUParticles
 
             gpu.sizeOverLifetimeLUT = size.enabled
                 ? CurveLUTBuilder.Build(sizeCurve, saveAsAsset: true)
+                : CurveLUTBuilder.GetDefaultUnitLUT();
+        }
+
+        static void ApplyColorAndSizeBySpeed(
+            ParticleSystem particleSystem,
+            GPUParticleSystem gpu,
+            Object context)
+        {
+            var color = particleSystem.colorBySpeed;
+            gpu.colorBySpeedEnabled = color.enabled;
+            gpu.colorBySpeedMode = color.enabled
+                ? color.color.mode
+                : ParticleSystemGradientMode.Gradient;
+            gpu.SetColorBySpeedRange(color.range);
+            gpu.colorBySpeedLUT = color.enabled
+                ? GradientLUTBuilder.Build(
+                    color.color,
+                    saveAsAsset: true,
+                    assetName: "ColorBySpeed_LUT")
+                : GradientLUTBuilder.GetDefaultWhiteLUT();
+
+            var size = particleSystem.sizeBySpeed;
+            gpu.sizeBySpeedEnabled = size.enabled;
+            gpu.SetSizeBySpeedRange(size.range);
+            ParticleSystem.MinMaxCurve sizeCurve = size.separateAxes
+                ? size.x
+                : size.size;
+            if (size.enabled && size.separateAxes)
+            {
+                Debug.LogWarning(
+                    "Size by Speed Separate Axes is reduced to X and applied uniformly " +
+                    "to GPU billboards; Y/Z are not supported yet.",
+                    context);
+            }
+
+            gpu.sizeBySpeedLUT = size.enabled
+                ? CurveLUTBuilder.Build(
+                    sizeCurve,
+                    saveAsAsset: true,
+                    assetName: "SizeBySpeed_LUT")
                 : CurveLUTBuilder.GetDefaultUnitLUT();
         }
 

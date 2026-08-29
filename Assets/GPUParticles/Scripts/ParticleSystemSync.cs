@@ -47,11 +47,15 @@ namespace GPUParticles
         private float lastSizeLUTUpdate = 0f;
         private float lastForceLUTUpdate = 0f;
         private float lastVelocityLUTUpdate = 0f;
+        private float lastColorBySpeedLUTUpdate = 0f;
+        private float lastSizeBySpeedLUTUpdate = 0f;
         private float lastEmissionTimelineUpdate = 0f;
         private Texture2D generatedForceLUT;
         private Texture2D generatedVelocityLUT;
         private Texture2D generatedColorLUT;
         private Texture2D generatedSizeLUT;
+        private Texture2D generatedColorBySpeedLUT;
+        private Texture2D generatedSizeBySpeedLUT;
         private const float LUT_UPDATE_INTERVAL = 0.1f; // 每0.1秒更新一次LUT
 
         private bool isInitialized = false;
@@ -97,6 +101,8 @@ namespace GPUParticles
             SyncMaterialParameters(true);
             SyncColorOverLifetime(true);
             SyncSizeOverLifetime(true);
+            SyncColorBySpeed(true);
+            SyncSizeBySpeed(true);
             isInitialized = true;
         }
 
@@ -160,6 +166,8 @@ namespace GPUParticles
             SyncMaterialParameters();
             SyncColorOverLifetime();
             SyncSizeOverLifetime();
+            SyncColorBySpeed();
+            SyncSizeBySpeed();
         }
 
         void SyncMainParameters(bool force = false)
@@ -493,6 +501,8 @@ namespace GPUParticles
             DestroyGeneratedVelocityLUT();
             DestroyGeneratedColorLUT();
             DestroyGeneratedSizeLUT();
+            DestroyGeneratedColorBySpeedLUT();
+            DestroyGeneratedSizeBySpeedLUT();
         }
 
         void DestroyGeneratedForceLUT()
@@ -529,6 +539,24 @@ namespace GPUParticles
             if (Application.isPlaying) Destroy(generatedSizeLUT);
             else DestroyImmediate(generatedSizeLUT);
             generatedSizeLUT = null;
+        }
+
+        void DestroyGeneratedColorBySpeedLUT()
+        {
+            if (generatedColorBySpeedLUT == null) return;
+
+            if (Application.isPlaying) Destroy(generatedColorBySpeedLUT);
+            else DestroyImmediate(generatedColorBySpeedLUT);
+            generatedColorBySpeedLUT = null;
+        }
+
+        void DestroyGeneratedSizeBySpeedLUT()
+        {
+            if (generatedSizeBySpeedLUT == null) return;
+
+            if (Application.isPlaying) Destroy(generatedSizeBySpeedLUT);
+            else DestroyImmediate(generatedSizeBySpeedLUT);
+            generatedSizeBySpeedLUT = null;
         }
 
         void SyncRendererParameters(bool force = false)
@@ -709,6 +737,64 @@ namespace GPUParticles
             }
 
             lastSizeLUTUpdate = Time.realtimeSinceStartup;
+        }
+
+        void SyncColorBySpeed(bool force = false)
+        {
+            var color = sourceParticleSystem.colorBySpeed;
+            bool timeToUpdate =
+                Time.realtimeSinceStartup - lastColorBySpeedLUTUpdate > LUT_UPDATE_INTERVAL;
+            if (!force && !timeToUpdate) return;
+
+            targetGPUParticleSystem.colorBySpeedEnabled = color.enabled;
+            targetGPUParticleSystem.colorBySpeedMode = color.enabled
+                ? color.color.mode
+                : ParticleSystemGradientMode.Gradient;
+            targetGPUParticleSystem.SetColorBySpeedRange(color.range);
+            DestroyGeneratedColorBySpeedLUT();
+            if (color.enabled)
+            {
+                generatedColorBySpeedLUT = GradientLUTBuilder.Build(
+                    color.color,
+                    assetName: "ColorBySpeed_LUT");
+                targetGPUParticleSystem.colorBySpeedLUT = generatedColorBySpeedLUT;
+            }
+            else
+            {
+                targetGPUParticleSystem.colorBySpeedLUT =
+                    GradientLUTBuilder.GetDefaultWhiteLUT();
+            }
+
+            lastColorBySpeedLUTUpdate = Time.realtimeSinceStartup;
+        }
+
+        void SyncSizeBySpeed(bool force = false)
+        {
+            var size = sourceParticleSystem.sizeBySpeed;
+            bool timeToUpdate =
+                Time.realtimeSinceStartup - lastSizeBySpeedLUTUpdate > LUT_UPDATE_INTERVAL;
+            if (!force && !timeToUpdate) return;
+
+            targetGPUParticleSystem.sizeBySpeedEnabled = size.enabled;
+            targetGPUParticleSystem.SetSizeBySpeedRange(size.range);
+            DestroyGeneratedSizeBySpeedLUT();
+            if (size.enabled)
+            {
+                ParticleSystem.MinMaxCurve curve = size.separateAxes
+                    ? size.x
+                    : size.size;
+                generatedSizeBySpeedLUT = CurveLUTBuilder.Build(
+                    curve,
+                    assetName: "SizeBySpeed_LUT");
+                targetGPUParticleSystem.sizeBySpeedLUT = generatedSizeBySpeedLUT;
+            }
+            else
+            {
+                targetGPUParticleSystem.sizeBySpeedLUT =
+                    CurveLUTBuilder.GetDefaultUnitLUT();
+            }
+
+            lastSizeBySpeedLUTUpdate = Time.realtimeSinceStartup;
         }
     }
 }

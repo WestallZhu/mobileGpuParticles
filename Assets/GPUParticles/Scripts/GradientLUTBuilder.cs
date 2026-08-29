@@ -9,12 +9,14 @@ namespace GPUParticles
         public static Texture2D Build(
             ParticleSystem.MinMaxGradient gradient,
             int resolution = 256,
-            bool saveAsAsset = false)
+            bool saveAsAsset = false,
+            string assetName = "ColorOverLife_LUT")
         {
             resolution = Mathf.Max(2, resolution);
+            if (string.IsNullOrEmpty(assetName)) assetName = "ColorOverLife_LUT";
             var tex = new Texture2D(resolution, 2, TextureFormat.RGBAHalf, false, true)
             {
-                name = "ColorOverLife_LUT",
+                name = assetName,
                 wrapMode = TextureWrapMode.Clamp,
                 filterMode = FilterMode.Bilinear
             };
@@ -41,7 +43,7 @@ namespace GPUParticles
             if (saveAsAsset && !Application.isPlaying)
             {
                 string path = UnityEditor.AssetDatabase.GenerateUniqueAssetPath(
-                    "Assets/ColorOverLife_LUT.asset");
+                    $"Assets/{assetName}.asset");
                 UnityEditor.AssetDatabase.CreateAsset(tex, path);
                 UnityEditor.AssetDatabase.SaveAssets();
             }
@@ -52,10 +54,11 @@ namespace GPUParticles
         public static Texture2D Build(
             Gradient gradient,
             int resolution = 256,
-            bool saveAsAsset = false)
+            bool saveAsAsset = false,
+            string assetName = "ColorOverLife_LUT")
         {
             return Build(new ParticleSystem.MinMaxGradient(
-                gradient ?? CreateWhiteGradient()), resolution, saveAsAsset);
+                gradient ?? CreateWhiteGradient()), resolution, saveAsAsset, assetName);
         }
 
         public static Texture2D GetDefaultWhiteLUT(int resolution = 256)

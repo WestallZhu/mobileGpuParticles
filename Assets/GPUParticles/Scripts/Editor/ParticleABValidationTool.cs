@@ -133,6 +133,21 @@ namespace GPUParticles.Editor
                 ParticleABValidationProfile.ColorSizeOverLifetimeRandomizedPoint);
         }
 
+        [MenuItem("Tools/GPU Particles/Run Color Size by Speed A-B RT Capture")]
+        public static void RunColorSizeBySpeedCaptureMenu()
+        {
+            if (EditorApplication.isPlaying)
+            {
+                Debug.LogWarning("Stop Play Mode before starting a deterministic A/B capture.");
+                return;
+            }
+
+            if (!EditorSceneManager.SaveCurrentModifiedScenesIfUserWantsTo()) return;
+            StartCapture(
+                false,
+                ParticleABValidationProfile.ColorSizeBySpeedRandomizedPoint);
+        }
+
         [MenuItem("Tools/GPU Particles/Validate Common Feature Mapping")]
         public static void ValidateCommonFeatureMappingMenu()
         {
@@ -190,6 +205,14 @@ namespace GPUParticles.Editor
             StartCapture(
                 true,
                 ParticleABValidationProfile.ColorSizeOverLifetimeRandomizedPoint);
+        }
+
+        public static void RunBatchColorSizeBySpeedCapture()
+        {
+            ValidateCommonFeatureMapping();
+            StartCapture(
+                true,
+                ParticleABValidationProfile.ColorSizeBySpeedRandomizedPoint);
         }
 
         static void StartCapture(bool exitWhenComplete, ParticleABValidationProfile profile)
@@ -295,6 +318,7 @@ namespace GPUParticles.Editor
                 case ParticleABValidationProfile.EmissionRateDistancePoint: return 2.2f;
                 case ParticleABValidationProfile.VelocityOverLifetimePoint: return 3f;
                 case ParticleABValidationProfile.ColorSizeOverLifetimeRandomizedPoint: return 2f;
+                case ParticleABValidationProfile.ColorSizeBySpeedRandomizedPoint: return 2f;
                 default: return 3f;
             }
         }
@@ -328,6 +352,8 @@ namespace GPUParticles.Editor
                     return "TestResults/ParticleVelocityOverLifetime";
                 case ParticleABValidationProfile.ColorSizeOverLifetimeRandomizedPoint:
                     return "TestResults/ParticleColorSizeOverLifetime";
+                case ParticleABValidationProfile.ColorSizeBySpeedRandomizedPoint:
+                    return "TestResults/ParticleColorSizeBySpeed";
                 default:
                     return "TestResults/ParticleAB";
             }
@@ -341,6 +367,8 @@ namespace GPUParticles.Editor
             Texture2D firstVelocityLUT = null;
             Texture2D firstColorLUT = null;
             Texture2D firstSizeLUT = null;
+            Texture2D firstColorBySpeedLUT = null;
+            Texture2D firstSizeBySpeedLUT = null;
             string firstForceAssetPath = null;
             string secondForceAssetPath = null;
             string firstVelocityAssetPath = null;
@@ -349,6 +377,10 @@ namespace GPUParticles.Editor
             string secondColorAssetPath = null;
             string firstSizeAssetPath = null;
             string secondSizeAssetPath = null;
+            string firstColorBySpeedAssetPath = null;
+            string secondColorBySpeedAssetPath = null;
+            string firstSizeBySpeedAssetPath = null;
+            string secondSizeBySpeedAssetPath = null;
 
             try
             {
@@ -419,6 +451,28 @@ namespace GPUParticles.Editor
                     1f,
                     AnimationCurve.Linear(0f, 0.5f, 1f, 1f),
                     AnimationCurve.Linear(0f, 1.5f, 1f, 2f));
+
+                Gradient minimumSpeedGradient = CreateGradient(
+                    new Color(0.1f, 0.2f, 0.3f, 0.7f),
+                    new Color(0.3f, 0.4f, 0.5f, 0.5f));
+                Gradient maximumSpeedGradient = CreateGradient(
+                    new Color(0.7f, 0.8f, 0.9f, 1f),
+                    new Color(0.9f, 1f, 0.8f, 0.8f));
+                var colorBySpeed = shuriken.colorBySpeed;
+                colorBySpeed.enabled = true;
+                colorBySpeed.range = new Vector2(1f, 5f);
+                colorBySpeed.color = new ParticleSystem.MinMaxGradient(
+                    minimumSpeedGradient,
+                    maximumSpeedGradient);
+
+                var sizeBySpeed = shuriken.sizeBySpeed;
+                sizeBySpeed.enabled = true;
+                sizeBySpeed.separateAxes = false;
+                sizeBySpeed.range = new Vector2(2f, 6f);
+                sizeBySpeed.size = new ParticleSystem.MinMaxCurve(
+                    1f,
+                    AnimationCurve.Linear(0f, 0.25f, 1f, 0.75f),
+                    AnimationCurve.Linear(0f, 1.25f, 1f, 2.25f));
 
                 ShurikenConverter.Convert(owner);
                 var gpu = owner.GetComponent<GPUParticleSystem>();
@@ -528,6 +582,56 @@ namespace GPUParticles.Editor
                     2f,
                     "Size over Lifetime maximum end above one");
 
+                Require(gpu.colorBySpeedEnabled,
+                    "Color by Speed enabled state was not mapped.");
+                Require(gpu.colorBySpeedMode == ParticleSystemGradientMode.TwoGradients,
+                    "Color by Speed Two Gradients mode was not mapped.");
+                RequireApproximately(gpu.colorBySpeedRange.x, 1f,
+                    "Color by Speed range minimum");
+                RequireApproximately(gpu.colorBySpeedRange.y, 5f,
+                    "Color by Speed range maximum");
+                Require(gpu.colorBySpeedLUT != null && gpu.colorBySpeedLUT.height == 2,
+                    "Color by Speed minimum/maximum LUT rows were not generated.");
+                firstColorBySpeedLUT = gpu.colorBySpeedLUT;
+                firstColorBySpeedAssetPath =
+                    AssetDatabase.GetAssetPath(firstColorBySpeedLUT);
+                RequireColorApproximately(
+                    firstColorBySpeedLUT.GetPixel(0, 0),
+                    new Color(0.1f, 0.2f, 0.3f, 0.7f),
+                    "Color by Speed minimum start");
+                RequireColorApproximately(
+                    firstColorBySpeedLUT.GetPixel(0, 1),
+                    new Color(0.7f, 0.8f, 0.9f, 1f),
+                    "Color by Speed maximum start");
+
+                Require(gpu.sizeBySpeedEnabled,
+                    "Size by Speed enabled state was not mapped.");
+                RequireApproximately(gpu.sizeBySpeedRange.x, 2f,
+                    "Size by Speed range minimum");
+                RequireApproximately(gpu.sizeBySpeedRange.y, 6f,
+                    "Size by Speed range maximum");
+                Require(gpu.sizeBySpeedLUT != null && gpu.sizeBySpeedLUT.height == 2,
+                    "Size by Speed minimum/maximum LUT rows were not generated.");
+                firstSizeBySpeedLUT = gpu.sizeBySpeedLUT;
+                firstSizeBySpeedAssetPath =
+                    AssetDatabase.GetAssetPath(firstSizeBySpeedLUT);
+                RequireApproximately(
+                    firstSizeBySpeedLUT.GetPixel(0, 0).r,
+                    0.25f,
+                    "Size by Speed minimum start");
+                RequireApproximately(
+                    firstSizeBySpeedLUT.GetPixel(firstSizeBySpeedLUT.width - 1, 0).r,
+                    0.75f,
+                    "Size by Speed minimum end");
+                RequireApproximately(
+                    firstSizeBySpeedLUT.GetPixel(0, 1).r,
+                    1.25f,
+                    "Size by Speed maximum start");
+                RequireApproximately(
+                    firstSizeBySpeedLUT.GetPixel(firstSizeBySpeedLUT.width - 1, 1).r,
+                    2.25f,
+                    "Size by Speed maximum end above one");
+
                 firstForceLUT = gpu.forceOverLifetimeLUT;
                 firstForceAssetPath = AssetDatabase.GetAssetPath(firstForceLUT);
                 Color minimum = firstForceLUT.GetPixel(0, 0);
@@ -577,6 +681,20 @@ namespace GPUParticles.Editor
                 }
                 firstSizeLUT = null;
                 gpu.sizeOverLifetimeLUT = null;
+
+                if (string.IsNullOrEmpty(firstColorBySpeedAssetPath))
+                {
+                    Object.DestroyImmediate(firstColorBySpeedLUT);
+                }
+                firstColorBySpeedLUT = null;
+                gpu.colorBySpeedLUT = null;
+
+                if (string.IsNullOrEmpty(firstSizeBySpeedAssetPath))
+                {
+                    Object.DestroyImmediate(firstSizeBySpeedLUT);
+                }
+                firstSizeBySpeedLUT = null;
+                gpu.sizeBySpeedLUT = null;
 
                 emission.rateOverTime = new ParticleSystem.MinMaxCurve(4f, 8f);
                 shape.enabled = true;
@@ -641,6 +759,28 @@ namespace GPUParticles.Editor
                     gpu.sizeOverLifetimeLUT = null;
                 }
 
+                if (gpu.colorBySpeedLUT != null)
+                {
+                    secondColorBySpeedAssetPath =
+                        AssetDatabase.GetAssetPath(gpu.colorBySpeedLUT);
+                    if (string.IsNullOrEmpty(secondColorBySpeedAssetPath))
+                    {
+                        Object.DestroyImmediate(gpu.colorBySpeedLUT);
+                    }
+                    gpu.colorBySpeedLUT = null;
+                }
+
+                if (gpu.sizeBySpeedLUT != null)
+                {
+                    secondSizeBySpeedAssetPath =
+                        AssetDatabase.GetAssetPath(gpu.sizeBySpeedLUT);
+                    if (string.IsNullOrEmpty(secondSizeBySpeedAssetPath))
+                    {
+                        Object.DestroyImmediate(gpu.sizeBySpeedLUT);
+                    }
+                    gpu.sizeBySpeedLUT = null;
+                }
+
                 Debug.Log("PARTICLE_COMMON_FEATURE_MAPPING_RESULT:PASS");
             }
             finally
@@ -661,6 +801,16 @@ namespace GPUParticles.Editor
                 if (firstSizeLUT != null && string.IsNullOrEmpty(firstSizeAssetPath))
                 {
                     Object.DestroyImmediate(firstSizeLUT);
+                }
+                if (firstColorBySpeedLUT != null &&
+                    string.IsNullOrEmpty(firstColorBySpeedAssetPath))
+                {
+                    Object.DestroyImmediate(firstColorBySpeedLUT);
+                }
+                if (firstSizeBySpeedLUT != null &&
+                    string.IsNullOrEmpty(firstSizeBySpeedAssetPath))
+                {
+                    Object.DestroyImmediate(firstSizeBySpeedLUT);
                 }
                 Object.DestroyImmediate(owner);
                 if (!string.IsNullOrEmpty(firstForceAssetPath))
@@ -698,6 +848,24 @@ namespace GPUParticles.Editor
                     secondSizeAssetPath != firstSizeAssetPath)
                 {
                     AssetDatabase.DeleteAsset(secondSizeAssetPath);
+                }
+                if (!string.IsNullOrEmpty(firstColorBySpeedAssetPath))
+                {
+                    AssetDatabase.DeleteAsset(firstColorBySpeedAssetPath);
+                }
+                if (!string.IsNullOrEmpty(secondColorBySpeedAssetPath) &&
+                    secondColorBySpeedAssetPath != firstColorBySpeedAssetPath)
+                {
+                    AssetDatabase.DeleteAsset(secondColorBySpeedAssetPath);
+                }
+                if (!string.IsNullOrEmpty(firstSizeBySpeedAssetPath))
+                {
+                    AssetDatabase.DeleteAsset(firstSizeBySpeedAssetPath);
+                }
+                if (!string.IsNullOrEmpty(secondSizeBySpeedAssetPath) &&
+                    secondSizeBySpeedAssetPath != firstSizeBySpeedAssetPath)
+                {
+                    AssetDatabase.DeleteAsset(secondSizeBySpeedAssetPath);
                 }
             }
         }
