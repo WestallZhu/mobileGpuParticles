@@ -28,6 +28,12 @@ namespace GPUParticles
         [Min(0)] public float emissionRateOverTimeCurveMultiplier = 1f;
         public AnimationCurve emissionRateOverTimeCurveMin = AnimationCurve.Constant(0f, 1f, 2000f);
         public AnimationCurve emissionRateOverTimeCurveMax = AnimationCurve.Constant(0f, 1f, 2000f);
+        [Min(0)] public float emissionRateOverDistance;
+        public ParticleSystemCurveMode emissionRateOverDistanceMode = ParticleSystemCurveMode.Constant;
+        [Min(0)] public float emissionRateOverDistanceMin;
+        [Min(0)] public float emissionRateOverDistanceCurveMultiplier = 1f;
+        public AnimationCurve emissionRateOverDistanceCurveMin = AnimationCurve.Constant(0f, 1f, 0f);
+        public AnimationCurve emissionRateOverDistanceCurveMax = AnimationCurve.Constant(0f, 1f, 0f);
         [Min(0.05f)] public float emissionDuration = 5f;
         public bool emissionLooping = true;
         public bool randomizeEmissionStartDelay;
@@ -73,6 +79,11 @@ namespace GPUParticles
         public Texture2D forceOverLifetimeLUT;
         public SimulationSpace forceOverLifetimeSpace = SimulationSpace.Local;
         public bool forceOverLifetimeRandomized;
+
+        [Header("Velocity Over Lifetime (Linear XYZ)")]
+        public bool velocityOverLifetimeEnabled;
+        public Texture2D velocityOverLifetimeLUT;
+        public SimulationSpace velocityOverLifetimeSpace = SimulationSpace.Local;
 
         [Header("Rendering")]
         public Texture2D baseMap;
@@ -153,7 +164,10 @@ namespace GPUParticles
         // emission cursor
         int emitCursor = 0;
         float emitCarry = 0f;
+        float distanceEmitCarry;
         float emissionTime;
+        Vector3 previousEmitterPositionWS;
+        bool previousEmitterPositionValid;
         uint simulationTick;
         int lastSimulatedFrame = -1;
         const int MaxBurstGroupsPerStep = 8;
@@ -202,6 +216,7 @@ namespace GPUParticles
         static readonly int _ContinuousEmitCount = Shader.PropertyToID("_ContinuousEmitCount");
         static readonly int _ContinuousEmissionWindowStart =
             Shader.PropertyToID("_ContinuousEmissionWindowStart");
+        static readonly int _DistanceEmitCount = Shader.PropertyToID("_DistanceEmitCount");
         static readonly int _BurstCounts0 = Shader.PropertyToID("_BurstCounts0");
         static readonly int _BurstCounts1 = Shader.PropertyToID("_BurstCounts1");
         static readonly int _BurstAges0 = Shader.PropertyToID("_BurstAges0");
@@ -212,6 +227,9 @@ namespace GPUParticles
         static readonly int _ForceOverLifetimeEnabled = Shader.PropertyToID("_ForceOverLifetimeEnabled");
         static readonly int _ForceOverLifetimeSpace = Shader.PropertyToID("_ForceOverLifetimeSpace");
         static readonly int _ForceOverLifetimeRandomized = Shader.PropertyToID("_ForceOverLifetimeRandomized");
+        static readonly int _VelocityOverLifetimeLUT = Shader.PropertyToID("_VelocityOverLifetimeLUT");
+        static readonly int _VelocityOverLifetimeEnabled = Shader.PropertyToID("_VelocityOverLifetimeEnabled");
+        static readonly int _VelocityOverLifetimeSpace = Shader.PropertyToID("_VelocityOverLifetimeSpace");
 
         // shape params
         static readonly int _ShapeType = Shader.PropertyToID("_ShapeType");
@@ -236,6 +254,8 @@ namespace GPUParticles
 
         static readonly int _EmitterLocalToWorld = Shader.PropertyToID("_EmitterLocalToWorld");
         static readonly int _EmitterWorldToLocal = Shader.PropertyToID("_EmitterWorldToLocal");
+        static readonly int _EmitterPreviousPositionWS = Shader.PropertyToID("_EmitterPreviousPositionWS");
+        static readonly int _EmitterCurrentPositionWS = Shader.PropertyToID("_EmitterCurrentPositionWS");
 
         // render shader ids
         static readonly int _EmitterLocalToWorld_Render = Shader.PropertyToID("_EmitterLocalToWorld");
@@ -284,6 +304,10 @@ namespace GPUParticles
             emissionRateOverTime = Mathf.Max(0f, emissionRateOverTime);
             emissionRateOverTimeMin = Mathf.Max(0f, emissionRateOverTimeMin);
             emissionRateOverTimeCurveMultiplier = Mathf.Max(0f, emissionRateOverTimeCurveMultiplier);
+            emissionRateOverDistance = Mathf.Max(0f, emissionRateOverDistance);
+            emissionRateOverDistanceMin = Mathf.Max(0f, emissionRateOverDistanceMin);
+            emissionRateOverDistanceCurveMultiplier =
+                Mathf.Max(0f, emissionRateOverDistanceCurveMultiplier);
             emissionDuration = Mathf.Max(0.05f, emissionDuration);
             emissionStartDelayMin = Mathf.Max(0f, emissionStartDelayMin);
             emissionStartDelay = Mathf.Max(0f, emissionStartDelay);
@@ -331,7 +355,10 @@ namespace GPUParticles
             ping = 0;
             emitCursor = 0;
             emitCarry = 0f;
+            distanceEmitCarry = 0f;
             emissionTime = 0f;
+            previousEmitterPositionWS = transform.position;
+            previousEmitterPositionValid = true;
             stepBurstGroupCount = 0;
             System.Array.Clear(stepBurstCounts, 0, stepBurstCounts.Length);
             System.Array.Clear(stepBurstAges, 0, stepBurstAges.Length);
@@ -465,6 +492,51 @@ namespace GPUParticles
                         minimumCurveValue * emissionRateOverTimeCurveMultiplier);
                     emissionRateOverTime = Mathf.Max(0f,
                         maximumCurveValue * emissionRateOverTimeCurveMultiplier);
+                    break;
+            }
+        }
+
+        public void SetEmissionRateOverDistance(ParticleSystem.MinMaxCurve curve)
+        {
+            emissionRateOverDistanceMode = curve.mode;
+            emissionRateOverDistanceCurveMultiplier = Mathf.Max(0f, curve.curveMultiplier);
+            emissionRateOverDistanceCurveMin = curve.curveMin ?? curve.curve;
+            emissionRateOverDistanceCurveMax = curve.curveMax ?? curve.curve;
+
+            switch (curve.mode)
+            {
+                case ParticleSystemCurveMode.Constant:
+                    emissionRateOverDistanceMin = Mathf.Max(0f, curve.constant);
+                    emissionRateOverDistance = emissionRateOverDistanceMin;
+                    break;
+
+                case ParticleSystemCurveMode.TwoConstants:
+                    emissionRateOverDistanceMin = Mathf.Max(0f,
+                        Mathf.Min(curve.constantMin, curve.constantMax));
+                    emissionRateOverDistance = Mathf.Max(0f,
+                        Mathf.Max(curve.constantMin, curve.constantMax));
+                    break;
+
+                case ParticleSystemCurveMode.Curve:
+                    float curveValue = emissionRateOverDistanceCurveMax != null
+                        ? emissionRateOverDistanceCurveMax.Evaluate(0f)
+                        : 0f;
+                    emissionRateOverDistance = Mathf.Max(0f,
+                        curveValue * emissionRateOverDistanceCurveMultiplier);
+                    emissionRateOverDistanceMin = emissionRateOverDistance;
+                    break;
+
+                case ParticleSystemCurveMode.TwoCurves:
+                    float minimumCurveValue = emissionRateOverDistanceCurveMin != null
+                        ? emissionRateOverDistanceCurveMin.Evaluate(0f)
+                        : 0f;
+                    float maximumCurveValue = emissionRateOverDistanceCurveMax != null
+                        ? emissionRateOverDistanceCurveMax.Evaluate(0f)
+                        : 0f;
+                    emissionRateOverDistanceMin = Mathf.Max(0f,
+                        minimumCurveValue * emissionRateOverDistanceCurveMultiplier);
+                    emissionRateOverDistance = Mathf.Max(0f,
+                        maximumCurveValue * emissionRateOverDistanceCurveMultiplier);
                     break;
             }
         }
@@ -645,6 +717,100 @@ namespace GPUParticles
             }
         }
 
+        void CalculateDistanceEmission(
+            float stepStart,
+            float stepEnd,
+            float startDelay,
+            float stepDistance,
+            out float emissionAmount)
+        {
+            emissionAmount = 0f;
+
+            float stepDuration = stepEnd - stepStart;
+            if (stepDuration <= 1e-6f || stepDistance <= 1e-6f) return;
+
+            float duration = Mathf.Max(0.05f, emissionDuration);
+            float activeStart = Mathf.Max(stepStart, startDelay);
+            float activeEnd = stepEnd;
+            if (!emissionLooping)
+            {
+                float timelineEnd = startDelay + duration;
+                activeEnd = stepStart < timelineEnd && stepEnd > timelineEnd + 1e-6f
+                    ? stepStart
+                    : Mathf.Min(activeEnd, timelineEnd);
+            }
+
+            if (activeEnd <= activeStart) return;
+
+            float windowDuration = activeEnd - activeStart;
+            float activeDistance = stepDistance * (windowDuration / stepDuration);
+            if (activeDistance <= 1e-6f) return;
+
+            float localStart = activeStart - startDelay;
+            float localEnd = activeEnd - startDelay;
+            if (!emissionLooping)
+            {
+                emissionAmount = EvaluateEmissionRateOverDistance(
+                    localEnd / duration, 0) * activeDistance;
+            }
+            else
+            {
+                float cursor = localStart;
+                while (cursor < localEnd - 1e-6f)
+                {
+                    int loopIndex = Mathf.Max(0, Mathf.FloorToInt(cursor / duration));
+                    float loopStart = loopIndex * duration;
+                    float segmentEnd = Mathf.Min(localEnd, loopStart + duration);
+                    float segmentDuration = segmentEnd - cursor;
+                    float segmentDistance = stepDistance * (segmentDuration / stepDuration);
+                    emissionAmount += EvaluateEmissionRateOverDistance(
+                        (segmentEnd - loopStart) / duration, loopIndex) * segmentDistance;
+                    cursor = segmentEnd;
+                }
+            }
+
+            emissionAmount = Mathf.Max(0f, emissionAmount);
+        }
+
+        float EvaluateEmissionRateOverDistance(float normalizedTime, int loopIndex)
+        {
+            normalizedTime = Mathf.Clamp01(normalizedTime);
+            uint seed;
+            unchecked
+            {
+                seed = emissionRandomSeed ^ ((uint)loopIndex * 0x9E3779B9u) ^ 0x94D049BBu;
+            }
+            float randomValue = Hash01(seed);
+
+            switch (emissionRateOverDistanceMode)
+            {
+                case ParticleSystemCurveMode.TwoConstants:
+                    return Mathf.Max(0f, Mathf.LerpUnclamped(
+                        emissionRateOverDistanceMin, emissionRateOverDistance, randomValue));
+
+                case ParticleSystemCurveMode.Curve:
+                    return emissionRateOverDistanceCurveMax != null
+                        ? Mathf.Max(0f,
+                            emissionRateOverDistanceCurveMax.Evaluate(normalizedTime) *
+                            emissionRateOverDistanceCurveMultiplier)
+                        : Mathf.Max(0f, emissionRateOverDistance);
+
+                case ParticleSystemCurveMode.TwoCurves:
+                    float minimum = emissionRateOverDistanceCurveMin != null
+                        ? emissionRateOverDistanceCurveMin.Evaluate(normalizedTime) *
+                          emissionRateOverDistanceCurveMultiplier
+                        : emissionRateOverDistanceMin;
+                    float maximum = emissionRateOverDistanceCurveMax != null
+                        ? emissionRateOverDistanceCurveMax.Evaluate(normalizedTime) *
+                          emissionRateOverDistanceCurveMultiplier
+                        : emissionRateOverDistance;
+                    return Mathf.Max(0f, Mathf.LerpUnclamped(minimum, maximum, randomValue));
+
+                default:
+                    return Mathf.Max(0f, emissionRateOverDistance);
+            }
+        }
+
         void ScheduleBurstEmission(
             float stepStart,
             float stepEnd,
@@ -806,14 +972,23 @@ namespace GPUParticles
         internal void SimulateStep(CommandBuffer cmd, float dt)
         {
             dt = Mathf.Max(0f, dt);
+            Vector3 emitterCurrentPositionWS = transform.position;
+            Vector3 emitterPreviousPositionWS = previousEmitterPositionValid
+                ? previousEmitterPositionWS
+                : emitterCurrentPositionWS;
+            float emitterDistance = Vector3.Distance(
+                emitterPreviousPositionWS, emitterCurrentPositionWS);
             float stepStart = emissionTime;
             float stepEnd = stepStart + dt;
             float startDelay = ResolveEmissionStartDelay();
             float emitCarryPrev = emitCarry;
+            float distanceEmitCarryPrev = distanceEmitCarry;
             float emissionAmount = 0f;
             float emissionRate = 0f;
             float emissionWindowStart = 0f;
             int continuousEmitCount = 0;
+            float distanceEmissionAmount = 0f;
+            int distanceEmitCount = 0;
 
             if (emissionEnabled)
             {
@@ -830,10 +1005,27 @@ namespace GPUParticles
                     : Mathf.FloorToInt(continuousTotal);
                 emitCarry = continuousTotal - Mathf.Floor(continuousTotal);
 
+                CalculateDistanceEmission(
+                    stepStart,
+                    stepEnd,
+                    startDelay,
+                    emitterDistance,
+                    out distanceEmissionAmount);
+                float distanceTotal = Mathf.Max(
+                    0f, distanceEmissionAmount + distanceEmitCarryPrev);
+                // Shuriken waits until accumulated movement strictly exceeds a
+                // distance threshold. Retaining an exact threshold as carry delays
+                // that particle until the next non-zero Transform movement step.
+                distanceEmitCount = distanceTotal >= int.MaxValue
+                    ? int.MaxValue
+                    : Mathf.Max(0, Mathf.FloorToInt(distanceTotal - 1e-5f));
+                distanceEmitCarry = distanceTotal - distanceEmitCount;
+
                 if (!emissionLooping &&
                     stepEnd >= startDelay + Mathf.Max(0.05f, emissionDuration) - 1e-6f)
                 {
                     emitCarry = 0f;
+                    distanceEmitCarry = 0f;
                 }
 
                 ScheduleBurstEmission(stepStart, stepEnd, startDelay);
@@ -841,17 +1033,23 @@ namespace GPUParticles
             else
             {
                 emitCarry = 0f;
+                distanceEmitCarry = 0f;
                 stepBurstGroupCount = 0;
                 System.Array.Clear(stepBurstCounts, 0, stepBurstCounts.Length);
                 System.Array.Clear(stepBurstAges, 0, stepBurstAges.Length);
             }
 
             continuousEmitCount = Mathf.Min(continuousEmitCount, maxParticles);
-            int burstEmitCount = TrimBurstStepGroups(maxParticles - continuousEmitCount);
-            int emitCount = continuousEmitCount + burstEmitCount;
+            distanceEmitCount = Mathf.Min(
+                distanceEmitCount, maxParticles - continuousEmitCount);
+            int burstEmitCount = TrimBurstStepGroups(
+                maxParticles - continuousEmitCount - distanceEmitCount);
+            int emitCount = continuousEmitCount + distanceEmitCount + burstEmitCount;
             int emitStart = emitCursor;
             emitCursor = (emitCursor + emitCount) % maxParticles;
             emissionTime = stepEnd;
+            previousEmitterPositionWS = emitterCurrentPositionWS;
+            previousEmitterPositionValid = true;
 
             int src = ping, dst = 1 - ping;
 
@@ -862,6 +1060,10 @@ namespace GPUParticles
             simulateMaterial.SetTexture("_SizeLUT", sizeOverLifetimeLUT != null ? sizeOverLifetimeLUT : CurveLUTBuilder.GetDefaultUnitLUT());
             simulateMaterial.SetTexture(_ForceOverLifetimeLUT,
                 forceOverLifetimeLUT != null ? forceOverLifetimeLUT : MinMaxCurveVector3LUTBuilder.GetDefaultZeroLUT());
+            simulateMaterial.SetTexture(_VelocityOverLifetimeLUT,
+                velocityOverLifetimeLUT != null
+                    ? velocityOverLifetimeLUT
+                    : MinMaxCurveVector3LUTBuilder.GetDefaultZeroLUT());
 
             simulateMaterial.SetInt(_GridSize, gridSize);
             simulateMaterial.SetInt(_MaxParticles, maxParticles);
@@ -897,6 +1099,7 @@ namespace GPUParticles
             simulateMaterial.SetFloat(_EmissionRate, emissionRate);
             simulateMaterial.SetInt(_ContinuousEmitCount, continuousEmitCount);
             simulateMaterial.SetFloat(_ContinuousEmissionWindowStart, emissionWindowStart);
+            simulateMaterial.SetInt(_DistanceEmitCount, distanceEmitCount);
             simulateMaterial.SetVector(_BurstCounts0, new Vector4(
                 stepBurstCounts[0], stepBurstCounts[1], stepBurstCounts[2], stepBurstCounts[3]));
             simulateMaterial.SetVector(_BurstCounts1, new Vector4(
@@ -909,6 +1112,10 @@ namespace GPUParticles
             simulateMaterial.SetInt(_ForceOverLifetimeEnabled, forceOverLifetimeEnabled ? 1 : 0);
             simulateMaterial.SetInt(_ForceOverLifetimeSpace, (int)forceOverLifetimeSpace);
             simulateMaterial.SetInt(_ForceOverLifetimeRandomized, forceOverLifetimeRandomized ? 1 : 0);
+            simulateMaterial.SetInt(
+                _VelocityOverLifetimeEnabled, velocityOverLifetimeEnabled ? 1 : 0);
+            simulateMaterial.SetInt(
+                _VelocityOverLifetimeSpace, (int)velocityOverLifetimeSpace);
 
             Vector3 dirInitW = initialDirectionWS.sqrMagnitude > 1e-6f ? initialDirectionWS.normalized : transform.forward;
             Vector3 dirInitSim = (simulationSpace == SimulationSpace.World) ? dirInitW : transform.InverseTransformDirection(dirInitW);
@@ -978,6 +1185,18 @@ namespace GPUParticles
 
             simulateMaterial.SetMatrix(_EmitterLocalToWorld, transform.localToWorldMatrix);
             simulateMaterial.SetMatrix(_EmitterWorldToLocal, transform.worldToLocalMatrix);
+            simulateMaterial.SetVector(_EmitterPreviousPositionWS,
+                new Vector4(
+                    emitterPreviousPositionWS.x,
+                    emitterPreviousPositionWS.y,
+                    emitterPreviousPositionWS.z,
+                    0f));
+            simulateMaterial.SetVector(_EmitterCurrentPositionWS,
+                new Vector4(
+                    emitterCurrentPositionWS.x,
+                    emitterCurrentPositionWS.y,
+                    emitterCurrentPositionWS.z,
+                    0f));
 
             var mrt = new RenderTargetIdentifier[] {
                 new RenderTargetIdentifier(posLife[dst]),

@@ -15,7 +15,8 @@ namespace GPUParticles
             ParticleSystem.MinMaxCurve y,
             ParticleSystem.MinMaxCurve z,
             int resolution = 256,
-            bool saveAsAsset = false)
+            bool saveAsAsset = false,
+            string assetName = "MinMaxCurveVector3_LUT")
         {
             resolution = Mathf.Max(2, resolution);
             var texture = new Texture2D(resolution, 2, TextureFormat.RGBAHalf, false, true)
@@ -47,7 +48,7 @@ namespace GPUParticles
             if (saveAsAsset && !Application.isPlaying)
             {
                 string path = UnityEditor.AssetDatabase.GenerateUniqueAssetPath(
-                    "Assets/ForceOverLife_LUT.asset");
+                    $"Assets/{assetName}.asset");
                 UnityEditor.AssetDatabase.CreateAsset(texture, path);
                 UnityEditor.AssetDatabase.SaveAssets();
             }

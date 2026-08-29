@@ -34,6 +34,7 @@ Shader "Hidden/GPUParticles/SimulateMRT"
             TEXTURE2D(_GradLUT);         SAMPLER(sampler_GradLUT);
             TEXTURE2D(_SizeLUT);         SAMPLER(sampler_SizeLUT);
             TEXTURE2D(_ForceOverLifetimeLUT); SAMPLER(sampler_ForceOverLifetimeLUT);
+            TEXTURE2D(_VelocityOverLifetimeLUT); SAMPLER(sampler_VelocityOverLifetimeLUT);
 
             // --- Params ---
             CBUFFER_START(UnityPerMaterial)
@@ -62,6 +63,7 @@ Shader "Hidden/GPUParticles/SimulateMRT"
                 float   _EmissionRate;
                 uint    _ContinuousEmitCount;
                 float   _ContinuousEmissionWindowStart;
+                uint    _DistanceEmitCount;
                 float4  _BurstCounts0;
                 float4  _BurstCounts1;
                 float4  _BurstAges0;
@@ -70,6 +72,8 @@ Shader "Hidden/GPUParticles/SimulateMRT"
                 int     _ForceOverLifetimeEnabled;
                 int     _ForceOverLifetimeSpace;       // 0 Local, 1 World
                 int     _ForceOverLifetimeRandomized;
+                int     _VelocityOverLifetimeEnabled;
+                int     _VelocityOverLifetimeSpace;    // 0 Local, 1 World
 
                 // Initial direction already in simulation space
                 float3  _InitialDir;
@@ -125,6 +129,10 @@ Shader "Hidden/GPUParticles/SimulateMRT"
                 // Emitter transforms
                 float4x4 _EmitterLocalToWorld;
                 float4x4 _EmitterWorldToLocal;
+                float3 _EmitterPreviousPositionWS;
+                float _Pad19;
+                float3 _EmitterCurrentPositionWS;
+                float _Pad20;
             CBUFFER_END
 
             // local hash helpers (rename to avoid conflict with URP Random.hlsl Hash)
@@ -193,7 +201,15 @@ Shader "Hidden/GPUParticles/SimulateMRT"
                     return clamp(_DeltaTime - spawnTime, 0.0, _DeltaTime);
                 }
 
-                uint burstOrdinal = emitOrdinal - _ContinuousEmitCount;
+                uint distanceOrdinal = emitOrdinal - _ContinuousEmitCount;
+                if (distanceOrdinal < _DistanceEmitCount)
+                {
+                    // Unlike Rate over Time, Shuriken creates distance particles at
+                    // the current-step emitter position with zero sub-frame age.
+                    return 0.0;
+                }
+
+                uint burstOrdinal = distanceOrdinal - _DistanceEmitCount;
                 uint cumulativeCount = 0u;
                 [unroll]
                 for (int burstIndex = 0; burstIndex < 8; burstIndex++)
@@ -392,6 +408,20 @@ Shader "Hidden/GPUParticles/SimulateMRT"
                 uint tick = _ForceOverLifetimeRandomized != 0 ? _SimulationTick : 0u;
                 float3 randomValue = Hash03(id * 1597334677u + tick * 3812015801u + 0xA511E9B3u);
                 return ModuleVectorToSimSpace(lerp(minimum, maximum, randomValue), _ForceOverLifetimeSpace);
+            }
+
+            float3 VelocityOverLifetime(uint id, float normalizedAge)
+            {
+                float3 minimum = SAMPLE_TEXTURE2D_LOD(
+                    _VelocityOverLifetimeLUT, sampler_VelocityOverLifetimeLUT,
+                    float2(normalizedAge, 0.25), 0).rgb;
+                float3 maximum = SAMPLE_TEXTURE2D_LOD(
+                    _VelocityOverLifetimeLUT, sampler_VelocityOverLifetimeLUT,
+                    float2(normalizedAge, 0.75), 0).rgb;
+                float3 randomValue = Hash03(id * 2246822519u + 0x9E3779B9u);
+                return ModuleVectorToSimSpace(
+                    lerp(minimum, maximum, randomValue),
+                    _VelocityOverLifetimeSpace);
             }
 
             FragOut Frag(Varyings i)
@@ -754,6 +784,20 @@ Shader "Hidden/GPUParticles/SimulateMRT"
 
                     uint emitOrdinal = EmitOrdinal(id, _EmitStart, (uint)_MaxParticles);
                     stepDt = SpawnAgeThisFrame(emitOrdinal);
+
+                    // ToSimSpacePos uses the current emitter transform. Move a
+                    // world-space birth back to its sub-frame emitter position so
+                    // moving Rate-over-Time, Rate-over-Distance and Burst particles
+                    // are distributed along the actual emitter trajectory.
+                    if (_SimulationSpace == 1 && _DeltaTime > 1e-6)
+                    {
+                        float spawnFraction = saturate(1.0 - stepDt / _DeltaTime);
+                        float3 emitterPositionAtSpawn = lerp(
+                            _EmitterPreviousPositionWS,
+                            _EmitterCurrentPositionWS,
+                            spawnFraction);
+                        pos += emitterPositionAtSpawn - _EmitterCurrentPositionWS;
+                    }
                 }
                
                 // Update alive particles
@@ -767,6 +811,8 @@ Shader "Hidden/GPUParticles/SimulateMRT"
                     float normalizedAgeBeforeStep = saturate(
                         1.0 - (life / max(particleStartLifetime, 1e-5)));
                     life = max(0.0, life - stepDt);
+                    float normalizedAgeAfterStep = saturate(
+                        1.0 - (life / max(particleStartLifetime, 1e-5)));
 
                     // Gravity is already in simulation space. Force over Lifetime is
                     // sampled with Shuriken's stable per-particle MinMax random values.
@@ -776,10 +822,25 @@ Shader "Hidden/GPUParticles/SimulateMRT"
                         acceleration += ForceOverLifetime(id, normalizedAgeBeforeStep);
                     }
                     vel += acceleration * stepDt;
+
+                    if (_VelocityOverLifetimeEnabled != 0)
+                    {
+                        float3 velocityAfterStep = VelocityOverLifetime(
+                            id, normalizedAgeAfterStep);
+                        if (spawn)
+                        {
+                            vel += velocityAfterStep;
+                        }
+                        else
+                        {
+                            vel += velocityAfterStep - VelocityOverLifetime(
+                                id, normalizedAgeBeforeStep);
+                        }
+                    }
                     pos += vel * stepDt;
 
                     // lifetime normalized 0..1 (0 birth, 1 death)
-                    float t = saturate(1.0 - (life / max(particleStartLifetime, 1e-5)));
+                    float t = normalizedAgeAfterStep;
 
                     // Color over lifetime & Size over lifetime via LUTs
                     float4 lutCol  = SAMPLE_TEXTURE2D_LOD(_GradLUT, sampler_GradLUT, float2(t, 0.5), 0);

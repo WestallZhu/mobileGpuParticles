@@ -35,6 +35,7 @@ namespace GPUParticles
             gpu.simulationSpeed = main.simulationSpeed;
 
             ApplyForceOverLifetime(ps, gpu, owner);
+            ApplyVelocityOverLifetime(ps, gpu, owner);
 
             ApplyEmission(ps, gpu, owner);
 
@@ -293,6 +294,7 @@ namespace GPUParticles
             gpu.simulationSpeed = main.simulationSpeed;
 
             ApplyForceOverLifetime(particleSystem, gpu, gpuChild);
+            ApplyVelocityOverLifetime(particleSystem, gpu, gpuChild);
 
             ApplyEmission(particleSystem, gpu, gpuChild);
 
@@ -623,8 +625,61 @@ namespace GPUParticles
 
             gpu.forceOverLifetimeLUT = force.enabled
                 ? MinMaxCurveVector3LUTBuilder.Build(
-                    force.x, force.y, force.z, saveAsAsset: true)
+                    force.x, force.y, force.z, saveAsAsset: true,
+                    assetName: "ForceOverLife_LUT")
                 : MinMaxCurveVector3LUTBuilder.GetDefaultZeroLUT();
+        }
+
+        static void ApplyVelocityOverLifetime(
+            ParticleSystem particleSystem,
+            GPUParticleSystem gpu,
+            Object context)
+        {
+            var velocity = particleSystem.velocityOverLifetime;
+            gpu.velocityOverLifetimeEnabled = velocity.enabled;
+            gpu.velocityOverLifetimeSpace =
+                velocity.space == ParticleSystemSimulationSpace.World
+                    ? SimulationSpace.World
+                    : SimulationSpace.Local;
+
+            if (velocity.space == ParticleSystemSimulationSpace.Custom)
+            {
+                Debug.LogWarning(
+                    "Velocity over Lifetime Custom space is not supported; using emitter Local space.",
+                    context);
+            }
+
+            gpu.velocityOverLifetimeLUT = velocity.enabled
+                ? MinMaxCurveVector3LUTBuilder.Build(
+                    velocity.x, velocity.y, velocity.z, saveAsAsset: true,
+                    assetName: "VelocityOverLife_LUT")
+                : MinMaxCurveVector3LUTBuilder.GetDefaultZeroLUT();
+
+            if (!velocity.enabled) return;
+
+            bool hasOrbitalOrRadial =
+                HasNonZeroRate(velocity.orbitalX) ||
+                HasNonZeroRate(velocity.orbitalY) ||
+                HasNonZeroRate(velocity.orbitalZ) ||
+                HasNonZeroRate(velocity.radial);
+            bool hasOrbitalOffset =
+                HasNonZeroRate(velocity.orbitalOffsetX) ||
+                HasNonZeroRate(velocity.orbitalOffsetY) ||
+                HasNonZeroRate(velocity.orbitalOffsetZ);
+            if (hasOrbitalOrRadial || hasOrbitalOffset)
+            {
+                Debug.LogWarning(
+                    "Velocity over Lifetime Orbital, Offset and Radial channels are not supported yet; " +
+                    "Linear XYZ was mapped.",
+                    context);
+            }
+
+            if (CurveDiffersFrom(velocity.speedModifier, 1f))
+            {
+                Debug.LogWarning(
+                    "Velocity over Lifetime Speed Modifier is not supported yet; Linear XYZ was mapped.",
+                    context);
+            }
         }
 
         static void ApplyEmission(
@@ -642,6 +697,7 @@ namespace GPUParticles
                 ? 1u
                 : particleSystem.randomSeed;
             gpu.SetEmissionRateOverTime(emission.rateOverTime);
+            gpu.SetEmissionRateOverDistance(emission.rateOverDistance);
 
             bool supportedStartDelay = ShurikenMinMaxUtility.TryGetConstantRange(
                 main.startDelay, out float minimumDelay, out float maximumDelay);
@@ -657,12 +713,28 @@ namespace GPUParticles
             emission.GetBursts(bursts);
             gpu.SetEmissionBursts(bursts);
 
-            if (HasNonZeroRate(emission.rateOverDistance))
+            if (HasNonZeroRate(emission.rateOverDistance) &&
+                main.emitterVelocityMode != ParticleSystemEmitterVelocityMode.Transform)
             {
                 Debug.LogWarning(
-                    "Emission Rate over Distance is not supported yet; only Rate over Time and Bursts are mapped.",
+                    "Emission Rate over Distance currently measures Transform movement; " +
+                    "Rigidbody and Custom emitter velocity modes are not supported.",
                     context);
             }
+        }
+
+        static bool CurveDiffersFrom(ParticleSystem.MinMaxCurve curve, float expected)
+        {
+            for (int i = 0; i <= 4; i++)
+            {
+                float time = i * 0.25f;
+                if (Mathf.Abs(curve.Evaluate(time, 0f) - expected) > 1e-5f ||
+                    Mathf.Abs(curve.Evaluate(time, 1f) - expected) > 1e-5f)
+                {
+                    return true;
+                }
+            }
+            return false;
         }
 
         static bool HasNonZeroRate(ParticleSystem.MinMaxCurve curve)

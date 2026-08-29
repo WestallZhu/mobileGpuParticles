@@ -48,8 +48,10 @@ namespace GPUParticles
         private float lastColorLUTUpdate = 0f;
         private float lastSizeLUTUpdate = 0f;
         private float lastForceLUTUpdate = 0f;
+        private float lastVelocityLUTUpdate = 0f;
         private float lastEmissionTimelineUpdate = 0f;
         private Texture2D generatedForceLUT;
+        private Texture2D generatedVelocityLUT;
         private const float LUT_UPDATE_INTERVAL = 0.1f; // 每0.1秒更新一次LUT
 
         private bool isInitialized = false;
@@ -89,6 +91,7 @@ namespace GPUParticles
             SyncEmissionParameters(true);
             SyncShapeParameters(true);
             SyncForceOverLifetime(true);
+            SyncVelocityOverLifetime(true);
             SyncRendererParameters(true);
             SyncRotationParameters(true);
             SyncMaterialParameters(true);
@@ -151,6 +154,7 @@ namespace GPUParticles
             SyncEmissionParameters();
             SyncShapeParameters();
             SyncForceOverLifetime();
+            SyncVelocityOverLifetime();
             SyncRendererParameters();
             SyncRotationParameters();
             SyncMaterialParameters();
@@ -234,6 +238,7 @@ namespace GPUParticles
                 ? 1u
                 : sourceParticleSystem.randomSeed;
             targetGPUParticleSystem.SetEmissionRateOverTime(emission.rateOverTime);
+            targetGPUParticleSystem.SetEmissionRateOverDistance(emission.rateOverDistance);
 
             ShurikenMinMaxUtility.TryGetConstantRange(
                 main.startDelay, out float minimumDelay, out float maximumDelay);
@@ -453,9 +458,39 @@ namespace GPUParticles
             lastForceLUTUpdate = Time.realtimeSinceStartup;
         }
 
+        void SyncVelocityOverLifetime(bool forceUpdate = false)
+        {
+            var velocity = sourceParticleSystem.velocityOverLifetime;
+            bool timeToUpdate =
+                Time.realtimeSinceStartup - lastVelocityLUTUpdate > LUT_UPDATE_INTERVAL;
+            if (!forceUpdate && !timeToUpdate) return;
+
+            targetGPUParticleSystem.velocityOverLifetimeEnabled = velocity.enabled;
+            targetGPUParticleSystem.velocityOverLifetimeSpace =
+                velocity.space == ParticleSystemSimulationSpace.World
+                    ? SimulationSpace.World
+                    : SimulationSpace.Local;
+
+            DestroyGeneratedVelocityLUT();
+            if (velocity.enabled)
+            {
+                generatedVelocityLUT = MinMaxCurveVector3LUTBuilder.Build(
+                    velocity.x, velocity.y, velocity.z);
+                targetGPUParticleSystem.velocityOverLifetimeLUT = generatedVelocityLUT;
+            }
+            else
+            {
+                targetGPUParticleSystem.velocityOverLifetimeLUT =
+                    MinMaxCurveVector3LUTBuilder.GetDefaultZeroLUT();
+            }
+
+            lastVelocityLUTUpdate = Time.realtimeSinceStartup;
+        }
+
         void OnDestroy()
         {
             DestroyGeneratedForceLUT();
+            DestroyGeneratedVelocityLUT();
         }
 
         void DestroyGeneratedForceLUT()
@@ -465,6 +500,15 @@ namespace GPUParticles
             if (Application.isPlaying) Destroy(generatedForceLUT);
             else DestroyImmediate(generatedForceLUT);
             generatedForceLUT = null;
+        }
+
+        void DestroyGeneratedVelocityLUT()
+        {
+            if (generatedVelocityLUT == null) return;
+
+            if (Application.isPlaying) Destroy(generatedVelocityLUT);
+            else DestroyImmediate(generatedVelocityLUT);
+            generatedVelocityLUT = null;
         }
 
         void SyncRendererParameters(bool force = false)
