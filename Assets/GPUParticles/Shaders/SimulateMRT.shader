@@ -56,6 +56,7 @@ Shader "Hidden/GPUParticles/SimulateMRT"
             TEXTURE2D(_NoiseStrengthLUT);
             TEXTURE2D(_NoiseAmountsLUT);
             TEXTURE2D(_NoiseRemapLUT);
+            TEXTURE2D(_CollisionParametersLUT);
 
             // Unity 2022.3 Shuriken samples Main curves just after the
             // emission tick boundary; this is the measured tick phase.
@@ -141,6 +142,14 @@ Shader "Hidden/GPUParticles/SimulateMRT"
                 int     _NoiseOctaveCount;
                 float   _NoiseOctaveMultiplier;
                 float   _NoiseOctaveScale;
+                int     _CollisionEnabled;
+                int     _CollisionPlaneCount;
+                float   _CollisionParametersLUTInvWidth;
+                float   _CollisionMinKillSpeed;
+                float   _CollisionMaxKillSpeed;
+                float   _CollisionRadiusScale;
+                float   _CollisionParticleScaleWS;
+                float4  _CollisionPlanes[6];
                 int     _ColorOverLifetimeMode;
                 int     _ColorBySpeedEnabled;
                 int     _ColorBySpeedMode;
@@ -1075,6 +1084,161 @@ Shader "Hidden/GPUParticles/SimulateMRT"
                     strength /= max(0.0001, _NoiseFrequency);
                 }
                 return field * strength;
+            }
+
+            float3 SimulationPositionToWorld(float3 position)
+            {
+                if (_SimulationSpace == 1)
+                {
+                    return position;
+                }
+                return mul(
+                    _SimulationLocalToWorld,
+                    float4(position, 1.0)).xyz;
+            }
+
+            float3 SimulationVectorToWorld(float3 value)
+            {
+                if (_SimulationSpace == 1)
+                {
+                    return value;
+                }
+                return mul(
+                    _SimulationLocalToWorld,
+                    float4(value, 0.0)).xyz;
+            }
+
+            float3 WorldPositionToSimulation(float3 position)
+            {
+                if (_SimulationSpace == 1)
+                {
+                    return position;
+                }
+                return mul(
+                    _SimulationWorldToLocal,
+                    float4(position, 1.0)).xyz;
+            }
+
+            float3 WorldVectorToSimulation(float3 value)
+            {
+                if (_SimulationSpace == 1)
+                {
+                    return value;
+                }
+                return mul(
+                    _SimulationWorldToLocal,
+                    float4(value, 0.0)).xyz;
+            }
+
+            float3 CollisionParameters(uint id, float normalizedAge)
+            {
+                float x = LUTPosition(
+                    normalizedAge,
+                    _CollisionParametersLUTInvWidth);
+                float3 minimum = SAMPLE_TEXTURE2D_LOD(
+                    _CollisionParametersLUT,
+                    sampler_SizeLUT,
+                    float2(x, 0.25),
+                    0).rgb;
+                float3 maximum = SAMPLE_TEXTURE2D_LOD(
+                    _CollisionParametersLUT,
+                    sampler_SizeLUT,
+                    float2(x, 0.75),
+                    0).rgb;
+                return saturate(float3(
+                    lerp(minimum.x, maximum.x, Hash01(id ^ 0x6E624EB7u)),
+                    lerp(minimum.y, maximum.y, Hash01(id ^ 0x7383ED49u)),
+                    lerp(minimum.z, maximum.z, Hash01(id ^ 0xDD49C23Bu))));
+            }
+
+            void ApplyPlaneCollisions(
+                uint id,
+                float3 positionBeforeStep,
+                inout float3 position,
+                inout float3 velocity,
+                float particleSize,
+                float particleStartLifetime,
+                bool startLifetimeUsesAgeState,
+                inout float life,
+                inout float normalizedAge,
+                float stepDt)
+            {
+                float radius = max(0.0, particleSize) * 0.5 *
+                    max(0.0, _CollisionRadiusScale) *
+                    max(0.0, _CollisionParticleScaleWS);
+                float3 previousPositionWS =
+                    SimulationPositionToWorld(positionBeforeStep);
+                float3 positionWS = SimulationPositionToWorld(position);
+                float3 velocityWS = SimulationVectorToWorld(velocity);
+                float3 parameters = CollisionParameters(id, normalizedAge);
+                bool collided = false;
+
+                [unroll]
+                for (int planeIndex = 0; planeIndex < 6; planeIndex++)
+                {
+                    if (planeIndex < _CollisionPlaneCount && life > 0.0)
+                    {
+                        float4 plane = _CollisionPlanes[planeIndex];
+                        float3 normal = plane.xyz;
+                        float distance = dot(normal, positionWS) + plane.w;
+                        float normalSpeed = dot(normal, velocityWS);
+
+                        if (distance < radius && normalSpeed < 0.0)
+                        {
+                            float dampen = parameters.x;
+                            float bounce = parameters.y;
+                            velocityWS -= normal * normalSpeed * (1.0 + bounce);
+                            velocityWS *= 1.0 - dampen;
+
+                            // Shuriken restarts the collision tick from the prior
+                            // position using the reflected velocity.
+                            positionWS = previousPositionWS + velocityWS * stepDt;
+                            distance = dot(normal, positionWS) + plane.w;
+                            if (distance < radius)
+                            {
+                                positionWS += normal * (radius - distance);
+                            }
+
+                            float postCollisionSpeed = length(velocityWS);
+                            if (postCollisionSpeed < _CollisionMinKillSpeed ||
+                                postCollisionSpeed > _CollisionMaxKillSpeed)
+                            {
+                                life = 0.0;
+                            }
+                            else
+                            {
+                                float lifetimeLoss = parameters.z *
+                                    particleStartLifetime;
+                                if (startLifetimeUsesAgeState)
+                                {
+                                    float particleAge = max(0.0, life - 1.0) +
+                                        lifetimeLoss;
+                                    life = particleAge + 1e-4 >=
+                                           particleStartLifetime
+                                        ? 0.0
+                                        : particleAge + 1.0;
+                                    normalizedAge = saturate(
+                                        particleAge /
+                                        max(1e-5, particleStartLifetime));
+                                }
+                                else
+                                {
+                                    life = max(0.0, life - lifetimeLoss);
+                                    normalizedAge = saturate(
+                                        1.0 - life /
+                                        max(1e-5, particleStartLifetime));
+                                }
+                            }
+                            collided = true;
+                        }
+                    }
+                }
+
+                if (collided)
+                {
+                    position = WorldPositionToSimulation(positionWS);
+                    velocity = WorldVectorToSimulation(velocityWS);
+                }
             }
 
             float3 ForceOverLifetime(uint id, float normalizedAge)
@@ -2154,6 +2318,7 @@ Shader "Hidden/GPUParticles/SimulateMRT"
                         id, particleAgeAfterStep);
                     particleStartSize = StartSizeAtBirth(
                         id, particleAgeAfterStep);
+                    float3 positionBeforeStep = pos;
                     float speedBeforeStep = length(vel);
                     float3 particleNoiseValue = 0.0;
                     float4 particleNoiseAmounts = 0.0;
@@ -2320,6 +2485,41 @@ Shader "Hidden/GPUParticles/SimulateMRT"
                         // particle's stored velocity remains the module-free value.
                         pos += particleNoiseValue *
                                particleNoiseAmounts.x * stepDt;
+                    }
+                    if (_CollisionEnabled != 0)
+                    {
+                        float collisionSpeed = length(vel);
+                        float collisionSize = particleStartSize *
+                            SizeOverLifetime(id, normalizedAgeAfterStep);
+                        if (_SizeBySpeedEnabled != 0)
+                        {
+                            collisionSize *= SizeBySpeed(
+                                id,
+                                SpeedRangePosition(
+                                    collisionSpeed,
+                                    _SizeBySpeedRange));
+                        }
+                        if (_NoiseEnabled != 0 && _NoiseSeparateAxes == 0)
+                        {
+                            float collisionNoiseScale =
+                                _NoiseRemapEnabled != 0 ? 0.5 : 1.0;
+                            collisionSize *= max(
+                                0.0,
+                                1.0 + particleNoiseValue.z *
+                                      particleNoiseAmounts.z *
+                                      collisionNoiseScale);
+                        }
+                        ApplyPlaneCollisions(
+                            id,
+                            positionBeforeStep,
+                            pos,
+                            vel,
+                            collisionSize,
+                            particleStartLifetime,
+                            startLifetimeUsesAgeState,
+                            life,
+                            normalizedAgeAfterStep,
+                            stepDt);
                     }
 
                     // lifetime normalized 0..1 (0 birth, 1 death)

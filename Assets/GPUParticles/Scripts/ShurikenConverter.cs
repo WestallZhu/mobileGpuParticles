@@ -49,6 +49,7 @@ namespace GPUParticles
             ApplyInheritVelocity(ps, gpu);
             ApplyLifetimeByEmitterSpeed(ps, gpu);
             ApplyNoise(ps, gpu);
+            ApplyCollision(ps, gpu, owner);
             ApplyTextureSheetAnimation(ps, gpu, owner);
 
             ApplyEmission(ps, gpu, owner);
@@ -316,6 +317,7 @@ namespace GPUParticles
             ApplyInheritVelocity(particleSystem, gpu);
             ApplyLifetimeByEmitterSpeed(particleSystem, gpu);
             ApplyNoise(particleSystem, gpu);
+            ApplyCollision(particleSystem, gpu, gpuChild);
             ApplyTextureSheetAnimation(particleSystem, gpu, gpuChild);
 
             ApplyEmission(particleSystem, gpu, gpuChild);
@@ -992,6 +994,73 @@ namespace GPUParticles
                     saveAsAsset: true,
                     assetName: "NoiseRemap_LUT")
                 : MinMaxCurveVector3LUTBuilder.GetDefaultSignedIdentityLUT();
+        }
+
+        static void ApplyCollision(
+            ParticleSystem particleSystem,
+            GPUParticleSystem gpu,
+            Object context)
+        {
+            const int maxSupportedPlanes = 6;
+            ParticleSystem.CollisionModule collision =
+                particleSystem.collision;
+            gpu.collisionEnabled = collision.enabled;
+            gpu.collisionType = collision.type;
+            gpu.collisionMinKillSpeed = Mathf.Max(0f, collision.minKillSpeed);
+            gpu.collisionMaxKillSpeed = Mathf.Max(
+                gpu.collisionMinKillSpeed,
+                collision.maxKillSpeed);
+            gpu.collisionRadiusScale = Mathf.Max(0f, collision.radiusScale);
+
+            if (!collision.enabled)
+            {
+                gpu.collisionPlanes = System.Array.Empty<Transform>();
+                gpu.collisionParametersLUT = MinMaxCurveVector3LUTBuilder
+                    .GetDefaultCollisionParametersLUT();
+                return;
+            }
+
+            gpu.collisionParametersLUT = MinMaxCurveVector3LUTBuilder.Build(
+                collision.dampen,
+                collision.bounce,
+                collision.lifetimeLoss,
+                saveAsAsset: true,
+                assetName: "CollisionParameters_LUT");
+
+            if (collision.type != ParticleSystemCollisionType.Planes)
+            {
+                gpu.collisionPlanes = System.Array.Empty<Transform>();
+                Debug.LogWarning(
+                    "Collision World mode is not supported by the GPU simulator; " +
+                    "use Collision Planes mode.",
+                    context);
+            }
+            else
+            {
+                int planeCount = Mathf.Min(
+                    collision.planeCount,
+                    maxSupportedPlanes);
+                gpu.collisionPlanes = new Transform[planeCount];
+                for (int i = 0; i < planeCount; i++)
+                {
+                    gpu.collisionPlanes[i] = collision.GetPlane(i);
+                }
+
+                if (collision.planeCount > maxSupportedPlanes)
+                {
+                    Debug.LogWarning(
+                        $"Collision Planes supports the first " +
+                        $"{maxSupportedPlanes} planes; extra planes were ignored.",
+                        context);
+                }
+            }
+
+            if (collision.sendCollisionMessages)
+            {
+                Debug.LogWarning(
+                    "GPU Collision Planes does not emit OnParticleCollision messages.",
+                    context);
+            }
         }
 
         static void ApplyTextureSheetAnimation(

@@ -14,6 +14,7 @@ namespace GPUParticles
         static Texture2D s_DefaultUnitVectorLut;
         static Texture2D s_DefaultNoiseAmountsLut;
         static Texture2D s_DefaultSignedIdentityLut;
+        static Texture2D s_DefaultCollisionParametersLut;
 
         public static Texture2D Build(
             ParticleSystem.MinMaxCurve x,
@@ -177,6 +178,21 @@ namespace GPUParticles
                     return new Color(value, value, value, 0f);
                 });
             return s_DefaultSignedIdentityLut;
+        }
+
+        public static Texture2D GetDefaultCollisionParametersLUT(
+            int resolution = 2)
+        {
+            if (s_DefaultCollisionParametersLut != null)
+            {
+                return s_DefaultCollisionParametersLut;
+            }
+
+            s_DefaultCollisionParametersLut = CreateDefaultLUT(
+                "MinMaxCurveVector3_LUT_DefaultCollisionParameters",
+                resolution,
+                _ => new Color(0f, 1f, 0f, 0f));
+            return s_DefaultCollisionParametersLut;
         }
 
         static Texture2D CreateDefaultLUT(

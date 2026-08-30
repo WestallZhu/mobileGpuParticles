@@ -210,6 +210,18 @@ namespace GPUParticles
         public bool noiseRemapEnabled;
         public Texture2D noiseRemapLUT;
 
+        [Header("Collision (Planes)")]
+        public bool collisionEnabled;
+        public ParticleSystemCollisionType collisionType =
+            ParticleSystemCollisionType.Planes;
+        [Tooltip("Shuriken collision planes. The first six valid transforms are used.")]
+        public Transform[] collisionPlanes = System.Array.Empty<Transform>();
+        [Tooltip("RGB: Dampen, Bounce, and Lifetime Loss over particle lifetime.")]
+        public Texture2D collisionParametersLUT;
+        [Min(0f)] public float collisionMinKillSpeed;
+        [Min(0f)] public float collisionMaxKillSpeed = 10000f;
+        [Min(0f)] public float collisionRadiusScale = 1f;
+
         [Header("Texture Sheet Animation (Grid / UV0)")]
         public bool textureSheetAnimationEnabled;
         public ParticleSystemAnimationMode textureSheetMode =
@@ -332,6 +344,7 @@ namespace GPUParticles
         float lastSimulationDeltaTime = 1f / 60f;
         int lastSimulatedFrame = -1;
         readonly Plane[] cullingPlanes = new Plane[6];
+        readonly Vector4[] collisionPlaneEquations = new Vector4[6];
         int visibilityFrame = -1;
         bool visibleThisFrame;
         float lastCullingClock;
@@ -558,6 +571,24 @@ namespace GPUParticles
             Shader.PropertyToID("_NoiseOctaveMultiplier");
         static readonly int _NoiseOctaveScale =
             Shader.PropertyToID("_NoiseOctaveScale");
+        static readonly int _CollisionEnabled =
+            Shader.PropertyToID("_CollisionEnabled");
+        static readonly int _CollisionPlaneCount =
+            Shader.PropertyToID("_CollisionPlaneCount");
+        static readonly int _CollisionPlanes =
+            Shader.PropertyToID("_CollisionPlanes");
+        static readonly int _CollisionParametersLUT =
+            Shader.PropertyToID("_CollisionParametersLUT");
+        static readonly int _CollisionParametersLUTInvWidth =
+            Shader.PropertyToID("_CollisionParametersLUTInvWidth");
+        static readonly int _CollisionMinKillSpeed =
+            Shader.PropertyToID("_CollisionMinKillSpeed");
+        static readonly int _CollisionMaxKillSpeed =
+            Shader.PropertyToID("_CollisionMaxKillSpeed");
+        static readonly int _CollisionRadiusScale =
+            Shader.PropertyToID("_CollisionRadiusScale");
+        static readonly int _CollisionParticleScaleWS =
+            Shader.PropertyToID("_CollisionParticleScaleWS");
         static readonly int _ColorOverLifetimeMode = Shader.PropertyToID("_ColorOverLifetimeMode");
         static readonly int _GradLUTInvWidth = Shader.PropertyToID("_GradLUTInvWidth");
         static readonly int _SizeLUTInvWidth = Shader.PropertyToID("_SizeLUTInvWidth");
@@ -755,6 +786,15 @@ namespace GPUParticles
             noiseOctaveCount = Mathf.Clamp(noiseOctaveCount, 1, 4);
             noiseOctaveMultiplier = Mathf.Max(0f, noiseOctaveMultiplier);
             noiseOctaveScale = Mathf.Max(1f, noiseOctaveScale);
+            collisionMinKillSpeed = Mathf.Max(0f, collisionMinKillSpeed);
+            collisionMaxKillSpeed = Mathf.Max(
+                collisionMinKillSpeed,
+                collisionMaxKillSpeed);
+            collisionRadiusScale = Mathf.Max(0f, collisionRadiusScale);
+            if (collisionPlanes == null)
+            {
+                collisionPlanes = System.Array.Empty<Transform>();
+            }
             Vector3 cullingSize = localCullingBounds.size;
             localCullingBounds.size = new Vector3(
                 Mathf.Max(0.0002f, Mathf.Abs(cullingSize.x)),
@@ -2601,6 +2641,43 @@ namespace GPUParticles
                    Matrix4x4.Rotate(Quaternion.Inverse(transform.rotation));
         }
 
+        float CollisionParticleScaleWS(Matrix4x4 particleLocalToWorld)
+        {
+            float x = particleLocalToWorld.MultiplyVector(Vector3.right).magnitude;
+            float y = particleLocalToWorld.MultiplyVector(Vector3.up).magnitude;
+            float z = particleLocalToWorld.MultiplyVector(Vector3.forward).magnitude;
+            return Mathf.Max(0f, Mathf.Max(x, Mathf.Max(y, z)));
+        }
+
+        int PopulateCollisionPlaneEquations()
+        {
+            int count = 0;
+            if (collisionPlanes != null)
+            {
+                for (int i = 0;
+                     i < collisionPlanes.Length && count < collisionPlaneEquations.Length;
+                     i++)
+                {
+                    Transform plane = collisionPlanes[i];
+                    if (plane == null) continue;
+
+                    Vector3 normal = plane.up.normalized;
+                    Vector3 position = plane.position;
+                    collisionPlaneEquations[count++] = new Vector4(
+                        normal.x,
+                        normal.y,
+                        normal.z,
+                        -Vector3.Dot(normal, position));
+                }
+            }
+
+            for (int i = count; i < collisionPlaneEquations.Length; i++)
+            {
+                collisionPlaneEquations[i] = Vector4.zero;
+            }
+            return count;
+        }
+
         Vector3 ResolveEmitterVelocityWS(Vector3 transformVelocityWS)
         {
             switch (emitterVelocityMode)
@@ -2856,6 +2933,11 @@ namespace GPUParticles
             Texture2D selectedNoiseRemapLUT = noiseRemapLUT != null
                 ? noiseRemapLUT
                 : MinMaxCurveVector3LUTBuilder.GetDefaultSignedIdentityLUT();
+            Texture2D selectedCollisionParametersLUT =
+                collisionParametersLUT != null
+                    ? collisionParametersLUT
+                    : MinMaxCurveVector3LUTBuilder
+                        .GetDefaultCollisionParametersLUT();
 
             simulateProperties.SetTexture("_GradLUT", selectedColorOverLifetimeLUT);
             simulateProperties.SetTexture(
@@ -2893,6 +2975,9 @@ namespace GPUParticles
                 _NoiseAmountsLUT, selectedNoiseAmountsLUT);
             simulateProperties.SetTexture(
                 _NoiseRemapLUT, selectedNoiseRemapLUT);
+            simulateProperties.SetTexture(
+                _CollisionParametersLUT,
+                selectedCollisionParametersLUT);
             simulateProperties.SetFloat(
                 _GradLUTInvWidth, InverseTextureWidth(selectedColorOverLifetimeLUT));
             simulateProperties.SetFloat(
@@ -2949,6 +3034,9 @@ namespace GPUParticles
             simulateProperties.SetFloat(
                 _NoiseRemapLUTInvWidth,
                 InverseTextureWidth(selectedNoiseRemapLUT));
+            simulateProperties.SetFloat(
+                _CollisionParametersLUTInvWidth,
+                InverseTextureWidth(selectedCollisionParametersLUT));
 
             simulateProperties.SetInt(_GridSize, gridSize);
             simulateProperties.SetInt(_MaxParticles, maxParticles);
@@ -3102,6 +3190,28 @@ namespace GPUParticles
                 _NoiseOctaveMultiplier, Mathf.Max(0f, noiseOctaveMultiplier));
             simulateProperties.SetFloat(
                 _NoiseOctaveScale, Mathf.Max(1f, noiseOctaveScale));
+            int collisionPlaneCount = PopulateCollisionPlaneEquations();
+            bool planeCollisionEnabled = collisionEnabled &&
+                collisionType == ParticleSystemCollisionType.Planes &&
+                collisionPlaneCount > 0;
+            simulateProperties.SetInt(
+                _CollisionEnabled, planeCollisionEnabled ? 1 : 0);
+            simulateProperties.SetInt(
+                _CollisionPlaneCount, collisionPlaneCount);
+            simulateProperties.SetVectorArray(
+                _CollisionPlanes, collisionPlaneEquations);
+            simulateProperties.SetFloat(
+                _CollisionMinKillSpeed,
+                Mathf.Max(0f, collisionMinKillSpeed));
+            simulateProperties.SetFloat(
+                _CollisionMaxKillSpeed,
+                Mathf.Max(collisionMinKillSpeed, collisionMaxKillSpeed));
+            simulateProperties.SetFloat(
+                _CollisionRadiusScale,
+                Mathf.Max(0f, collisionRadiusScale));
+            simulateProperties.SetFloat(
+                _CollisionParticleScaleWS,
+                CollisionParticleScaleWS(particleLocalToWorld));
             simulateProperties.SetInt(_ColorOverLifetimeMode, (int)colorOverLifetimeMode);
             simulateProperties.SetInt(_ColorBySpeedEnabled, colorBySpeedEnabled ? 1 : 0);
             simulateProperties.SetInt(_ColorBySpeedMode, (int)colorBySpeedMode);

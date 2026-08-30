@@ -55,6 +55,7 @@ namespace GPUParticles
         NoiseCurlPositionPoint,
         NoiseSeparateAxesRemapPoint,
         NoiseRotationSizePoint,
+        CollisionPlaneBouncePoint,
         TextureSheetLifetimePoint,
         TextureSheetSpeedPoint,
         TextureSheetFPSPoint,
@@ -252,6 +253,8 @@ namespace GPUParticles
         Vector2 savedPhysics2DGravity;
         GameObject shurikenCustomSpaceObject;
         GameObject gpuCustomSpaceObject;
+        GameObject collisionPlaneObject;
+        Material collisionPlaneMaterial;
         Texture2D profileForceLUT;
         Texture2D profileVelocityLUT;
         Texture2D profileVelocityOrbitalLUT;
@@ -280,6 +283,7 @@ namespace GPUParticles
         Texture2D profileNoiseStrengthLUT;
         Texture2D profileNoiseAmountsLUT;
         Texture2D profileNoiseRemapLUT;
+        Texture2D profileCollisionParametersLUT;
         Gradient profileColorMinimumGradient;
         Gradient profileColorMaximumGradient;
         AnimationCurve profileStartLifetimeMinimumCurve;
@@ -342,6 +346,8 @@ namespace GPUParticles
         const float RendererClampPairTolerancePixels = 2f;
         const float ScalingPairTolerancePixels = 5f;
         const float UnscaledTimeScale = 0f;
+        const float CollisionPlaneHeight = -1.5f;
+        const float CollisionParticleRadius = 0.2f;
         const int PlaybackPlayFrame = 31;
         const int PlaybackPauseFrame = 77;
         const int PlaybackResumeFrame = 107;
@@ -408,6 +414,10 @@ namespace GPUParticles
         ObservedRange gpuNoiseXRange;
         ObservedRange gpuNoiseYRange;
         ObservedRange gpuNoiseZRange;
+        ObservedRange shurikenCollisionHeightRange;
+        ObservedRange gpuCollisionHeightRange;
+        ObservedRange shurikenCollisionVelocityYRange;
+        ObservedRange gpuCollisionVelocityYRange;
         ObservedRange shurikenLifetimeColorBlendRange;
         ObservedRange gpuLifetimeColorBlendRange;
         ObservedRange shurikenLifetimeSizeBlendRange;
@@ -594,6 +604,18 @@ namespace GPUParticles
             {
                 Destroy(profileNoiseRemapLUT);
             }
+            if (profileCollisionParametersLUT != null)
+            {
+                Destroy(profileCollisionParametersLUT);
+            }
+            if (collisionPlaneMaterial != null)
+            {
+                Destroy(collisionPlaneMaterial);
+            }
+            if (collisionPlaneObject != null)
+            {
+                Destroy(collisionPlaneObject);
+            }
             RestoreGravityOverride();
             DestroyCustomSimulationSpaces();
             DestroyStopActionProbes();
@@ -751,6 +773,13 @@ namespace GPUParticles
             if (IsNoiseProfile())
             {
                 ConfigureNoiseProfile();
+                return;
+            }
+
+            if (validationProfile ==
+                ParticleABValidationProfile.CollisionPlaneBouncePoint)
+            {
+                ConfigureCollisionPlaneProfile();
                 return;
             }
 
@@ -1084,6 +1113,8 @@ namespace GPUParticles
             inheritVelocity.enabled = false;
             var noise = shuriken.noise;
             noise.enabled = false;
+            var collision = shuriken.collision;
+            collision.enabled = false;
             var lifetimeByEmitterSpeed = shuriken.lifetimeByEmitterSpeed;
             lifetimeByEmitterSpeed.enabled = false;
 
@@ -2878,6 +2909,131 @@ namespace GPUParticles
                        ParticleABValidationProfile.NoiseRotationSizePoint;
         }
 
+        void ConfigureCollisionPlaneProfile()
+        {
+            const float lifetime = 3.5f;
+            const float startSpeed = 3f;
+            const float startSize = CollisionParticleRadius * 2f;
+            const float dampen = 0.2f;
+            const float bounce = 0.6f;
+            const float lifetimeLoss = 0.25f;
+
+            ConfigureEmissionPointBase(4f, true);
+            Transform plane = EnsureCollisionPlane();
+            Quaternion downwardRotation = Quaternion.Euler(90f, 0f, 0f);
+            shuriken.transform.rotation = downwardRotation;
+            gpuParticles.transform.rotation = downwardRotation;
+
+            ParticleSystem.MainModule main = shuriken.main;
+            main.maxParticles = 64;
+            main.startLifetime = lifetime;
+            main.startSpeed = startSpeed;
+            main.startSize = startSize;
+            main.simulationSpace = ParticleSystemSimulationSpace.World;
+
+            ParticleSystem.EmissionModule emission = shuriken.emission;
+            emission.rateOverTime = 5f;
+            emission.rateOverDistance = 0f;
+            emission.SetBursts(System.Array.Empty<ParticleSystem.Burst>());
+
+            ParticleSystem.ShapeModule shape = shuriken.shape;
+            shape.enabled = true;
+            shape.shapeType = ParticleSystemShapeType.Cone;
+            shape.angle = 0f;
+            shape.radius = 0f;
+            shape.radiusThickness = 1f;
+            shape.position = Vector3.zero;
+            shape.rotation = Vector3.zero;
+            shape.scale = Vector3.one;
+
+            ParticleSystem.CollisionModule collision = shuriken.collision;
+            collision.enabled = true;
+            collision.type = ParticleSystemCollisionType.Planes;
+            collision.dampen = dampen;
+            collision.bounce = bounce;
+            collision.lifetimeLoss = lifetimeLoss;
+            collision.minKillSpeed = 0.1f;
+            collision.maxKillSpeed = 10f;
+            collision.radiusScale = 1f;
+            collision.sendCollisionMessages = false;
+            collision.SetPlane(0, plane);
+
+            gpuParticles.maxParticles = main.maxParticles;
+            gpuParticles.SetStartLifetimeRange(lifetime, lifetime);
+            gpuParticles.SetStartSpeedRange(startSpeed, startSpeed);
+            gpuParticles.SetStartSizeRange(startSize, startSize);
+            gpuParticles.simulationSpace = SimulationSpace.World;
+            gpuParticles.SetEmissionRateOverTime(emission.rateOverTime);
+            gpuParticles.SetEmissionRateOverDistance(emission.rateOverDistance);
+            gpuParticles.SetEmissionBursts(
+                System.Array.Empty<ParticleSystem.Burst>());
+            gpuParticles.shapeType = ShapeTypeGPU.Cone;
+            gpuParticles.shapeEmitFrom = ShapeEmitFromGPU.Base;
+            gpuParticles.shapeConeAngle = 0f;
+            gpuParticles.shapeConeRadius = 0f;
+            gpuParticles.shapeRadiusThickness = 1f;
+            gpuParticles.shapeLocalPosition = Vector3.zero;
+            gpuParticles.shapeLocalRotationEuler = Vector3.zero;
+            gpuParticles.shapeLocalScale = Vector3.one;
+
+            gpuParticles.collisionEnabled = true;
+            gpuParticles.collisionType = ParticleSystemCollisionType.Planes;
+            gpuParticles.collisionPlanes = new[] { plane };
+            gpuParticles.collisionMinKillSpeed = collision.minKillSpeed;
+            gpuParticles.collisionMaxKillSpeed = collision.maxKillSpeed;
+            gpuParticles.collisionRadiusScale = collision.radiusScale;
+            if (profileCollisionParametersLUT != null)
+            {
+                Destroy(profileCollisionParametersLUT);
+            }
+            profileCollisionParametersLUT =
+                MinMaxCurveVector3LUTBuilder.Build(
+                    collision.dampen,
+                    collision.bounce,
+                    collision.lifetimeLoss,
+                    assetName: "CollisionParameters_Profile_LUT");
+            gpuParticles.collisionParametersLUT =
+                profileCollisionParametersLUT;
+        }
+
+        Transform EnsureCollisionPlane()
+        {
+            if (collisionPlaneObject == null)
+            {
+                collisionPlaneObject = GameObject.CreatePrimitive(
+                    PrimitiveType.Cube);
+                collisionPlaneObject.name = "ParticleAB_CollisionPlane";
+                Collider collider = collisionPlaneObject.GetComponent<Collider>();
+                if (collider != null)
+                {
+                    Destroy(collider);
+                }
+
+                Shader shader = Shader.Find(
+                    "Universal Render Pipeline/Unlit");
+                if (shader != null)
+                {
+                    collisionPlaneMaterial = new Material(shader)
+                    {
+                        name = "ParticleAB_CollisionPlane_Material",
+                        hideFlags = HideFlags.DontSave
+                    };
+                    collisionPlaneMaterial.SetColor(
+                        "_BaseColor",
+                        new Color(0.16f, 0.2f, 0.24f, 1f));
+                    collisionPlaneObject.GetComponent<MeshRenderer>()
+                        .sharedMaterial = collisionPlaneMaterial;
+                }
+            }
+
+            collisionPlaneObject.transform.position =
+                new Vector3(0f, CollisionPlaneHeight, 0.5f);
+            collisionPlaneObject.transform.rotation = Quaternion.identity;
+            collisionPlaneObject.transform.localScale =
+                new Vector3(12f, 0.05f, 0.1f);
+            return collisionPlaneObject.transform;
+        }
+
         void ConfigureTextureSheetAnimationProfile(
             ParticleSystemAnimationTimeMode timeMode)
         {
@@ -4162,6 +4318,15 @@ namespace GPUParticles
             gpuParticles.noiseRemapEnabled = false;
             gpuParticles.noiseRemapLUT =
                 MinMaxCurveVector3LUTBuilder.GetDefaultSignedIdentityLUT();
+            gpuParticles.collisionEnabled = false;
+            gpuParticles.collisionType = ParticleSystemCollisionType.Planes;
+            gpuParticles.collisionPlanes = System.Array.Empty<Transform>();
+            gpuParticles.collisionParametersLUT =
+                MinMaxCurveVector3LUTBuilder
+                    .GetDefaultCollisionParametersLUT();
+            gpuParticles.collisionMinKillSpeed = 0f;
+            gpuParticles.collisionMaxKillSpeed = 10000f;
+            gpuParticles.collisionRadiusScale = 1f;
             gpuParticles.screenSpaceSizeClampEnabled = false;
             gpuParticles.minParticleSize = 0f;
             gpuParticles.maxParticleSize = 0.5f;
@@ -4723,6 +4888,10 @@ namespace GPUParticles
             gpuNoiseXRange.Reset();
             gpuNoiseYRange.Reset();
             gpuNoiseZRange.Reset();
+            shurikenCollisionHeightRange.Reset();
+            gpuCollisionHeightRange.Reset();
+            shurikenCollisionVelocityYRange.Reset();
+            gpuCollisionVelocityYRange.Reset();
             captureActive = true;
 
             Debug.Log($"Particle A/B RT capture started: {sessionFolder}", this);
@@ -5259,6 +5428,14 @@ namespace GPUParticles
                     float age = particle.startLifetime - particle.remainingLifetime;
                     shurikenAgeSum += age;
                     shurikenLifetimeSum += particle.startLifetime;
+                    if (validationProfile ==
+                        ParticleABValidationProfile.CollisionPlaneBouncePoint)
+                    {
+                        shurikenCollisionHeightRange.Observe(
+                            shurikenPosition.y);
+                        shurikenCollisionVelocityYRange.Observe(
+                            shurikenVelocity.y);
+                    }
                     if (IsNoiseProfile())
                     {
                         ObserveNoisePosition(false, shurikenPosition, age);
@@ -5589,6 +5766,12 @@ namespace GPUParticles
                     out _);
                 gpuAgeSum += age;
                 gpuLifetimeSum += particleStartLifetime;
+                if (validationProfile ==
+                    ParticleABValidationProfile.CollisionPlaneBouncePoint)
+                {
+                    gpuCollisionHeightRange.Observe(gpuPosition.y);
+                    gpuCollisionVelocityYRange.Observe(gpuVelocity.y);
+                }
                 if (IsNoiseProfile())
                 {
                     ObserveNoisePosition(true, gpuPosition, age);
@@ -5997,10 +6180,12 @@ namespace GPUParticles
                      ParticleABValidationProfile.VelocitySpeedModifierPoint ||
                  validationProfile ==
                      ParticleABValidationProfile.LimitVelocityOverLifetimePoint ||
-                 validationProfile ==
-                     ParticleABValidationProfile.LimitVelocityOverLifetimeAxesPoint ||
-                 validationProfile ==
-                     ParticleABValidationProfile.InheritVelocityInitialPoint ||
+                  validationProfile ==
+                      ParticleABValidationProfile.LimitVelocityOverLifetimeAxesPoint ||
+                  validationProfile ==
+                      ParticleABValidationProfile.CollisionPlaneBouncePoint ||
+                  validationProfile ==
+                      ParticleABValidationProfile.InheritVelocityInitialPoint ||
                    validationProfile ==
                        ParticleABValidationProfile.InheritVelocityCurrentPoint ||
                    validationProfile ==
@@ -7770,6 +7955,29 @@ namespace GPUParticles
                                             maximumNoiseSizePixelError <= 3f;
                     break;
 
+                case ParticleABValidationProfile.CollisionPlaneBouncePoint:
+                {
+                    float minimumCollisionHeight =
+                        CollisionPlaneHeight + CollisionParticleRadius - 0.04f;
+                    profileSpecificPassed =
+                        maximumShurikenParticleCount > 0 &&
+                        maximumGPUParticleCount > 0 &&
+                        maximumMeanSpeedError <= 0.12f &&
+                        maximumMeanVelocityError <= 0.15f &&
+                        maximumMeanPositionError <= 0.12f &&
+                        shurikenCollisionHeightRange.HasSamples &&
+                        gpuCollisionHeightRange.HasSamples &&
+                        shurikenCollisionHeightRange.Minimum >=
+                            minimumCollisionHeight &&
+                        gpuCollisionHeightRange.Minimum >=
+                            minimumCollisionHeight &&
+                        shurikenCollisionVelocityYRange.Minimum <= -2.8f &&
+                        gpuCollisionVelocityYRange.Minimum <= -2.8f &&
+                        shurikenCollisionVelocityYRange.Maximum >= 1.3f &&
+                        gpuCollisionVelocityYRange.Maximum >= 1.3f;
+                    break;
+                }
+
                 case ParticleABValidationProfile.ShapeSpherePoint:
                 case ParticleABValidationProfile.ShapeCirclePoint:
                 case ParticleABValidationProfile.ShapeDonutPoint:
@@ -7946,6 +8154,9 @@ namespace GPUParticles
                     : validationProfile ==
                         ParticleABValidationProfile.StopActionCallbackPoint
                         ? 1
+                    : validationProfile ==
+                        ParticleABValidationProfile.CollisionPlaneBouncePoint
+                        ? 1
                     : IsEmitterVelocityProfile()
                         ? 1
                     : IsCullingProfile()
@@ -7965,6 +8176,9 @@ namespace GPUParticles
                         ? 0.05f
                     : validationProfile ==
                         ParticleABValidationProfile.StopActionCallbackPoint
+                        ? 0.03f
+                    : validationProfile ==
+                        ParticleABValidationProfile.CollisionPlaneBouncePoint
                         ? 0.03f
                     : IsEmitterVelocityProfile()
                         ? 0.03f
@@ -8002,6 +8216,14 @@ namespace GPUParticles
                 $"({FormatRange(gpuNoiseXRange)}," +
                 $"{FormatRange(gpuNoiseYRange)}," +
                 $"{FormatRange(gpuNoiseZRange)}); " +
+                $"shurikenCollisionHeightRange=" +
+                $"{FormatRange(shurikenCollisionHeightRange)}; " +
+                $"gpuCollisionHeightRange=" +
+                $"{FormatRange(gpuCollisionHeightRange)}; " +
+                $"shurikenCollisionVelocityYRange=" +
+                $"{FormatRange(shurikenCollisionVelocityYRange)}; " +
+                $"gpuCollisionVelocityYRange=" +
+                $"{FormatRange(gpuCollisionVelocityYRange)}; " +
                 $"playbackInitialStopped={playbackInitialStopped}; " +
                 $"playbackStateMismatchCount={playbackStateMismatchCount}; " +
                 $"playbackEmptyViolationCount={playbackEmptyViolationCount}; " +

@@ -98,6 +98,7 @@ namespace GPUParticles
         private float lastInheritVelocityLUTUpdate = 0f;
         private float lastLifetimeByEmitterSpeedLUTUpdate = 0f;
         private float lastNoiseLUTUpdate = 0f;
+        private float lastCollisionLUTUpdate = 0f;
         private float lastTextureSheetLUTUpdate = 0f;
         private float lastColorBySpeedLUTUpdate = 0f;
         private float lastSizeBySpeedLUTUpdate = 0f;
@@ -115,6 +116,7 @@ namespace GPUParticles
         private Texture2D generatedNoiseStrengthLUT;
         private Texture2D generatedNoiseAmountsLUT;
         private Texture2D generatedNoiseRemapLUT;
+        private Texture2D generatedCollisionParametersLUT;
         private Texture2D generatedTextureSheetFrameLUT;
         private Texture2D generatedTextureSheetStartLUT;
         private Texture2D generatedColorLUT;
@@ -177,6 +179,7 @@ namespace GPUParticles
             SyncInheritVelocity(true);
             SyncLifetimeByEmitterSpeed(true);
             SyncNoise(true);
+            SyncCollision(true);
             SyncTextureSheetAnimation(true);
             SyncRendererParameters(true);
             SyncRotationParameters(true);
@@ -276,6 +279,7 @@ namespace GPUParticles
             SyncInheritVelocity();
             SyncLifetimeByEmitterSpeed();
             SyncNoise();
+            SyncCollision();
             SyncTextureSheetAnimation();
             SyncRendererParameters();
             SyncRotationParameters();
@@ -1308,6 +1312,67 @@ namespace GPUParticles
             lastNoiseLUTUpdate = Time.realtimeSinceStartup;
         }
 
+        void SyncCollision(bool forceUpdate = false)
+        {
+            const int maxSupportedPlanes = 6;
+            ParticleSystem.CollisionModule collision =
+                sourceParticleSystem.collision;
+            bool timeToUpdate =
+                Time.realtimeSinceStartup - lastCollisionLUTUpdate >
+                LUT_UPDATE_INTERVAL;
+            if (!forceUpdate && !timeToUpdate) return;
+
+            targetGPUParticleSystem.collisionEnabled = collision.enabled;
+            targetGPUParticleSystem.collisionType = collision.type;
+            targetGPUParticleSystem.collisionMinKillSpeed =
+                Mathf.Max(0f, collision.minKillSpeed);
+            targetGPUParticleSystem.collisionMaxKillSpeed = Mathf.Max(
+                targetGPUParticleSystem.collisionMinKillSpeed,
+                collision.maxKillSpeed);
+            targetGPUParticleSystem.collisionRadiusScale =
+                Mathf.Max(0f, collision.radiusScale);
+
+            if (collision.enabled &&
+                collision.type == ParticleSystemCollisionType.Planes)
+            {
+                int planeCount = Mathf.Min(
+                    collision.planeCount,
+                    maxSupportedPlanes);
+                var planes = new Transform[planeCount];
+                for (int i = 0; i < planeCount; i++)
+                {
+                    planes[i] = collision.GetPlane(i);
+                }
+                targetGPUParticleSystem.collisionPlanes = planes;
+            }
+            else
+            {
+                targetGPUParticleSystem.collisionPlanes =
+                    System.Array.Empty<Transform>();
+            }
+
+            DestroyGeneratedTexture(ref generatedCollisionParametersLUT);
+            if (collision.enabled)
+            {
+                generatedCollisionParametersLUT =
+                    MinMaxCurveVector3LUTBuilder.Build(
+                        collision.dampen,
+                        collision.bounce,
+                        collision.lifetimeLoss,
+                        assetName: "CollisionParameters_LUT");
+                targetGPUParticleSystem.collisionParametersLUT =
+                    generatedCollisionParametersLUT;
+            }
+            else
+            {
+                targetGPUParticleSystem.collisionParametersLUT =
+                    MinMaxCurveVector3LUTBuilder
+                        .GetDefaultCollisionParametersLUT();
+            }
+
+            lastCollisionLUTUpdate = Time.realtimeSinceStartup;
+        }
+
         void SyncTextureSheetAnimation(bool forceUpdate = false)
         {
             var textureSheet = sourceParticleSystem.textureSheetAnimation;
@@ -1381,6 +1446,7 @@ namespace GPUParticles
             DestroyGeneratedTexture(ref generatedNoiseStrengthLUT);
             DestroyGeneratedTexture(ref generatedNoiseAmountsLUT);
             DestroyGeneratedTexture(ref generatedNoiseRemapLUT);
+            DestroyGeneratedTexture(ref generatedCollisionParametersLUT);
             DestroyGeneratedTexture(ref generatedShapeArcSpeedLUT);
             DestroyGeneratedForceLUT();
             DestroyGeneratedVelocityLUT();

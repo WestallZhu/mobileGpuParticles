@@ -624,6 +624,25 @@ namespace GPUParticles.Editor
             StartCapture(false, profile);
         }
 
+        [MenuItem("Tools/GPU Particles/Run Collision Plane A-B RT Capture")]
+        public static void RunCollisionPlaneCaptureMenu()
+        {
+            if (EditorApplication.isPlaying)
+            {
+                Debug.LogWarning(
+                    "Stop Play Mode before starting a deterministic A/B capture.");
+                return;
+            }
+
+            if (!EditorSceneManager.SaveCurrentModifiedScenesIfUserWantsTo())
+            {
+                return;
+            }
+            StartCapture(
+                false,
+                ParticleABValidationProfile.CollisionPlaneBouncePoint);
+        }
+
         [MenuItem("Tools/GPU Particles/Run Texture Sheet Lifetime A-B RT Capture")]
         public static void RunTextureSheetLifetimeCaptureMenu()
         {
@@ -1208,6 +1227,14 @@ namespace GPUParticles.Editor
                 ParticleABValidationProfile.NoiseRotationSizePoint);
         }
 
+        public static void RunBatchCollisionPlaneCapture()
+        {
+            ValidateCommonFeatureMapping();
+            StartCapture(
+                true,
+                ParticleABValidationProfile.CollisionPlaneBouncePoint);
+        }
+
         public static void RunBatchShapeSphereCapture()
         {
             ValidateCommonFeatureMapping();
@@ -1529,6 +1556,8 @@ namespace GPUParticles.Editor
                 case ParticleABValidationProfile.CullingAlwaysSimulatePoint:
                     return 1.6f;
                 case ParticleABValidationProfile.LifetimeByEmitterSpeedPoint: return 4.2f;
+                case ParticleABValidationProfile.CollisionPlaneBouncePoint:
+                    return 3.2f;
                 case ParticleABValidationProfile.ShapeSpherePoint:
                 case ParticleABValidationProfile.ShapeCirclePoint:
                 case ParticleABValidationProfile.ShapeDonutPoint:
@@ -1554,6 +1583,11 @@ namespace GPUParticles.Editor
 
         static float CaptureFrequency(ParticleABValidationProfile profile)
         {
+            if (profile ==
+                ParticleABValidationProfile.CollisionPlaneBouncePoint)
+            {
+                return 20f;
+            }
             if (profile == ParticleABValidationProfile.PlaybackLifecyclePoint)
             {
                 return 10f;
@@ -1744,6 +1778,8 @@ namespace GPUParticles.Editor
                     return "TestResults/ParticleNoiseSeparateAxesRemap";
                 case ParticleABValidationProfile.NoiseRotationSizePoint:
                     return "TestResults/ParticleNoiseRotationSize";
+                case ParticleABValidationProfile.CollisionPlaneBouncePoint:
+                    return "TestResults/ParticleCollisionPlane";
                 case ParticleABValidationProfile.ShapeSpherePoint:
                     return "TestResults/ParticleShapeSphere";
                 case ParticleABValidationProfile.ShapeCirclePoint:
@@ -3313,6 +3349,7 @@ namespace GPUParticles.Editor
                 ValidateSeparateAxisSizeMapping();
                 ValidateShapeMappings();
                 ValidateNoiseMapping();
+                ValidateCollisionMapping();
                 Debug.Log("PARTICLE_COMMON_FEATURE_MAPPING_RESULT:PASS");
             }
             finally
@@ -3858,6 +3895,102 @@ namespace GPUParticles.Editor
                 Require(gpu.noiseRemapLUT ==
                         MinMaxCurveVector3LUTBuilder.GetDefaultSignedIdentityLUT(),
                     "Disabled Noise did not restore the identity Remap LUT.");
+            }
+            finally
+            {
+                Object.DestroyImmediate(owner);
+                for (int i = 0; i < generatedTextures.Length; i++)
+                {
+                    CleanupGeneratedValidationTexture(generatedTextures[i]);
+                }
+            }
+        }
+
+        static void ValidateCollisionMapping()
+        {
+            var owner = new GameObject("ParticleCollisionMappingValidation");
+            owner.SetActive(false);
+            var firstPlane = new GameObject("CollisionPlaneA");
+            var secondPlane = new GameObject("CollisionPlaneB");
+            firstPlane.transform.SetParent(owner.transform, false);
+            secondPlane.transform.SetParent(owner.transform, false);
+            var generatedTextures = new Texture2D[2];
+            try
+            {
+                var shuriken = owner.AddComponent<ParticleSystem>();
+                ParticleSystem.MainModule main = shuriken.main;
+                main.playOnAwake = false;
+
+                ParticleSystem.CollisionModule collision =
+                    shuriken.collision;
+                collision.enabled = true;
+                collision.type = ParticleSystemCollisionType.Planes;
+                collision.dampen = new ParticleSystem.MinMaxCurve(
+                    1f,
+                    AnimationCurve.Linear(0f, 0.1f, 1f, 0.2f),
+                    AnimationCurve.Linear(0f, 0.3f, 1f, 0.4f));
+                collision.bounce = new ParticleSystem.MinMaxCurve(0.4f, 0.8f);
+                collision.lifetimeLoss = new ParticleSystem.MinMaxCurve(
+                    1f,
+                    AnimationCurve.Linear(0f, 0.05f, 1f, 0.25f));
+                collision.minKillSpeed = 0.35f;
+                collision.maxKillSpeed = 7.5f;
+                collision.radiusScale = 0.65f;
+                collision.SetPlane(0, firstPlane.transform);
+                collision.SetPlane(1, secondPlane.transform);
+
+                ShurikenConverter.Convert(owner);
+                var gpu = owner.GetComponent<GPUParticleSystem>();
+                Require(gpu != null,
+                    "Collision conversion did not create a GPUParticleSystem.");
+                generatedTextures[0] = gpu.collisionParametersLUT;
+                Require(gpu.collisionEnabled,
+                    "Collision enabled state was not mapped.");
+                Require(gpu.collisionType == ParticleSystemCollisionType.Planes,
+                    "Collision Planes type was not mapped.");
+                Require(gpu.collisionPlanes != null &&
+                        gpu.collisionPlanes.Length == 2 &&
+                        gpu.collisionPlanes[0] == firstPlane.transform &&
+                        gpu.collisionPlanes[1] == secondPlane.transform,
+                    "Collision plane references were not mapped in order.");
+                RequireApproximately(gpu.collisionMinKillSpeed, 0.35f,
+                    "Collision minimum kill speed");
+                RequireApproximately(gpu.collisionMaxKillSpeed, 7.5f,
+                    "Collision maximum kill speed");
+                RequireApproximately(gpu.collisionRadiusScale, 0.65f,
+                    "Collision radius scale");
+                RequireTwoRowLUT(
+                    gpu.collisionParametersLUT,
+                    "Collision Parameters");
+                RequireColorApproximately(
+                    gpu.collisionParametersLUT.GetPixel(0, 0),
+                    new Color(0.1f, 0.4f, 0.05f, 0f),
+                    "Collision Parameters minimum start");
+                RequireColorApproximately(
+                    gpu.collisionParametersLUT.GetPixel(
+                        gpu.collisionParametersLUT.width - 1,
+                        1),
+                    new Color(0.4f, 0.8f, 0.25f, 0f),
+                    "Collision Parameters maximum end");
+
+                collision.type = ParticleSystemCollisionType.World;
+                ShurikenConverter.Convert(owner);
+                generatedTextures[1] = gpu.collisionParametersLUT;
+                Require(gpu.collisionEnabled &&
+                        gpu.collisionType == ParticleSystemCollisionType.World,
+                    "Collision World source state was not preserved.");
+                Require(gpu.collisionPlanes != null &&
+                        gpu.collisionPlanes.Length == 0,
+                    "Unsupported Collision World mode retained plane references.");
+
+                collision.enabled = false;
+                ShurikenConverter.Convert(owner);
+                Require(!gpu.collisionEnabled,
+                    "Disabled Collision state was not remapped.");
+                Require(gpu.collisionParametersLUT ==
+                        MinMaxCurveVector3LUTBuilder
+                            .GetDefaultCollisionParametersLUT(),
+                    "Disabled Collision did not restore default parameters.");
             }
             finally
             {
