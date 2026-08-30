@@ -26,6 +26,7 @@ namespace GPUParticles
         private bool cachedEmissionEnabled;
         private int cachedMaxParticles;
         private ParticleSystemSimulationSpace cachedSimulationSpace;
+        private ParticleSystemScalingMode cachedScalingMode;
 
         // Shape缓存
         private ParticleSystemShapeType cachedShapeType;
@@ -173,6 +174,7 @@ namespace GPUParticles
             cachedEmissionEnabled = emission.enabled;
             cachedMaxParticles = main.maxParticles;
             cachedSimulationSpace = main.simulationSpace;
+            cachedScalingMode = main.scalingMode;
             var rotationOverLifetime = sourceParticleSystem.rotationOverLifetime;
             cachedRotationOverLifetime =
                 rotationOverLifetime.enabled &&
@@ -230,6 +232,14 @@ namespace GPUParticles
         {
             var main = sourceParticleSystem.main;
 
+            if (force ||
+                targetGPUParticleSystem.scalingSource !=
+                sourceParticleSystem.transform)
+            {
+                targetGPUParticleSystem.scalingSource =
+                    sourceParticleSystem.transform;
+            }
+
             // Max Particles
             if (force || main.maxParticles != cachedMaxParticles)
             {
@@ -244,6 +254,12 @@ namespace GPUParticles
                     ? SimulationSpace.World 
                     : SimulationSpace.Local;
                 cachedSimulationSpace = main.simulationSpace;
+            }
+
+            if (force || main.scalingMode != cachedScalingMode)
+            {
+                targetGPUParticleSystem.scalingMode = main.scalingMode;
+                cachedScalingMode = main.scalingMode;
             }
 
             ParticleSystem.MinMaxCurve startLifetime = main.startLifetime;

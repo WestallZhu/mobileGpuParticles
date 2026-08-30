@@ -77,6 +77,10 @@ namespace GPUParticles
         public Texture2D gravityModifierLUT;
         [Min(0.0f)] public float simulationSpeed = 1.0f;
         public bool useUnscaledTime;
+        public ParticleSystemScalingMode scalingMode =
+            ParticleSystemScalingMode.Hierarchy;
+        [Tooltip("Optional source Transform used for Shuriken Local scaling when the GPU system is created as a child.")]
+        public Transform scalingSource;
         public float startRotation = 0.0f;
         public ParticleSystemCurveMode startRotationMode =
             ParticleSystemCurveMode.Constant;
@@ -490,11 +494,13 @@ namespace GPUParticles
 
         static readonly int _EmitterLocalToWorld = Shader.PropertyToID("_EmitterLocalToWorld");
         static readonly int _EmitterWorldToLocal = Shader.PropertyToID("_EmitterWorldToLocal");
+        static readonly int _ShapeLocalToWorld = Shader.PropertyToID("_ShapeLocalToWorld");
         static readonly int _EmitterPreviousPositionWS = Shader.PropertyToID("_EmitterPreviousPositionWS");
         static readonly int _EmitterCurrentPositionWS = Shader.PropertyToID("_EmitterCurrentPositionWS");
 
         // render shader ids
         static readonly int _EmitterLocalToWorld_Render = Shader.PropertyToID("_EmitterLocalToWorld");
+        static readonly int _ParticleScaleWorld = Shader.PropertyToID("_ParticleScaleWorld");
         static readonly int _CameraRightWS = Shader.PropertyToID("_CameraRightWS");
         static readonly int _CameraUpWS = Shader.PropertyToID("_CameraUpWS");
         static readonly int _CameraPosWS = Shader.PropertyToID("_CameraPosWS");
@@ -1717,10 +1723,54 @@ namespace GPUParticles
             return useUnscaledTime ? Time.unscaledDeltaTime : Time.deltaTime;
         }
 
+        Matrix4x4 ParticleLocalToWorldMatrix()
+        {
+            switch (scalingMode)
+            {
+                case ParticleSystemScalingMode.Local:
+                    Transform source = scalingSource != null
+                        ? scalingSource
+                        : transform;
+                    return Matrix4x4.TRS(
+                        transform.position,
+                        transform.rotation,
+                        source.localScale);
+
+                case ParticleSystemScalingMode.Shape:
+                    return Matrix4x4.TRS(
+                        transform.position,
+                        transform.rotation,
+                        Vector3.one);
+
+                default:
+                    return transform.localToWorldMatrix;
+            }
+        }
+
+        Matrix4x4 ShapeLocalToWorldMatrix(Matrix4x4 particleLocalToWorld)
+        {
+            return scalingMode == ParticleSystemScalingMode.Local
+                ? particleLocalToWorld
+                : transform.localToWorldMatrix;
+        }
+
+        Matrix4x4 ParticleScaleWorldMatrix(Matrix4x4 particleLocalToWorld)
+        {
+            // Billboard axes are built in world space. Rotate them back into the
+            // particle system's frame before applying its selected scaling matrix,
+            // so an unscaled rotated emitter does not rotate a view-facing quad.
+            return particleLocalToWorld *
+                   Matrix4x4.Rotate(Quaternion.Inverse(transform.rotation));
+        }
+
         internal void SimulateStep(CommandBuffer cmd, float dt)
         {
             dt = Mathf.Max(0f, dt);
             lastSimulationDeltaTime = dt;
+            Matrix4x4 particleLocalToWorld = ParticleLocalToWorldMatrix();
+            Matrix4x4 particleWorldToLocal = particleLocalToWorld.inverse;
+            Matrix4x4 shapeLocalToWorld =
+                ShapeLocalToWorldMatrix(particleLocalToWorld);
             Vector3 emitterCurrentPositionWS = transform.position;
             Vector3 emitterPreviousPositionWS = previousEmitterPositionValid
                 ? previousEmitterPositionWS
@@ -1989,7 +2039,9 @@ namespace GPUParticles
             Vector3 gravityBase = simulationSpace == SimulationSpace.World
                 ? Physics.gravity
                 : transform.InverseTransformDirection(Physics.gravity);
-            Vector3 gSim = (simulationSpace == SimulationSpace.World) ? gWorld : transform.InverseTransformDirection(gWorld);
+            Vector3 gSim = simulationSpace == SimulationSpace.World
+                ? gWorld
+                : transform.InverseTransformDirection(gWorld);
             Vector3 gSimMin = simulationSpace == SimulationSpace.World
                 ? gWorldMin
                 : transform.InverseTransformDirection(gWorldMin);
@@ -2166,8 +2218,9 @@ namespace GPUParticles
             simulateMaterial.SetVector(_ShapeUpL, new Vector4(upL.x, upL.y, upL.z, 0));
             simulateMaterial.SetVector(_ShapeFwdL, new Vector4(fwdL.x, fwdL.y, fwdL.z, 0));
 
-            simulateMaterial.SetMatrix(_EmitterLocalToWorld, transform.localToWorldMatrix);
-            simulateMaterial.SetMatrix(_EmitterWorldToLocal, transform.worldToLocalMatrix);
+            simulateMaterial.SetMatrix(_EmitterLocalToWorld, particleLocalToWorld);
+            simulateMaterial.SetMatrix(_EmitterWorldToLocal, particleWorldToLocal);
+            simulateMaterial.SetMatrix(_ShapeLocalToWorld, shapeLocalToWorld);
             simulateMaterial.SetVector(_EmitterPreviousPositionWS,
                 new Vector4(
                     emitterPreviousPositionWS.x,
@@ -2447,7 +2500,13 @@ namespace GPUParticles
                 InverseTextureWidth(selectedRotationIntegralLUT));
             renderMaterial.SetInt(
                 _UseRotationOverLifetimeIntegralLUT, useRotationIntegralLUT ? 1 : 0);
-            renderMaterial.SetMatrix(_EmitterLocalToWorld_Render, transform.localToWorldMatrix);
+            Matrix4x4 particleLocalToWorld = ParticleLocalToWorldMatrix();
+            renderMaterial.SetMatrix(
+                _EmitterLocalToWorld_Render,
+                particleLocalToWorld);
+            renderMaterial.SetMatrix(
+                _ParticleScaleWorld,
+                ParticleScaleWorldMatrix(particleLocalToWorld));
             renderMaterial.SetVector(_CameraRightWS, camera.transform.right);
             renderMaterial.SetVector(_CameraUpWS, camera.transform.up);
 

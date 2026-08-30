@@ -30,6 +30,8 @@ namespace GPUParticles
             // ---- Main ----
             gpu.maxParticles = main.maxParticles;
             gpu.simulationSpace = main.simulationSpace == ParticleSystemSimulationSpace.World ? SimulationSpace.World : SimulationSpace.Local;
+            gpu.scalingMode = main.scalingMode;
+            gpu.scalingSource = null;
             ApplyMainRanges(ps, gpu, owner);
             gpu.simulationSpeed = main.simulationSpeed;
             gpu.useUnscaledTime = main.useUnscaledTime;
@@ -280,6 +282,8 @@ namespace GPUParticles
             // ---- Main ----
             gpu.maxParticles = main.maxParticles;
             gpu.simulationSpace = main.simulationSpace == ParticleSystemSimulationSpace.World ? SimulationSpace.World : SimulationSpace.Local;
+            gpu.scalingMode = main.scalingMode;
+            gpu.scalingSource = originalOwner.transform;
             ApplyMainRanges(particleSystem, gpu, gpuChild);
             gpu.simulationSpeed = main.simulationSpeed;
             gpu.useUnscaledTime = main.useUnscaledTime;

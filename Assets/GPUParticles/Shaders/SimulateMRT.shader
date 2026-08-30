@@ -197,6 +197,7 @@ Shader "Hidden/GPUParticles/SimulateMRT"
                 // Emitter transforms
                 float4x4 _EmitterLocalToWorld;
                 float4x4 _EmitterWorldToLocal;
+                float4x4 _ShapeLocalToWorld;
                 float3 _EmitterPreviousPositionWS;
                 float _Pad19;
                 float3 _EmitterCurrentPositionWS;
@@ -510,15 +511,21 @@ Shader "Hidden/GPUParticles/SimulateMRT"
                 return normalize(axis + radialDir * radialScale);
             }
 
-            // Transform emitter-local point to world if needed
+            // Shape scaling and particle scaling are independent in Shuriken.
+            // Shape mode uses the full hierarchy for birth positions, then stores
+            // them in a unit-scaled particle frame.
             float3 ToSimSpacePos(float3 pLocal)
             {
+                float3 positionWS = mul(
+                    _ShapeLocalToWorld,
+                    float4(pLocal, 1.0)).xyz;
                 if (_SimulationSpace == 1) // World
                 {
-                    float4 ws = mul(_EmitterLocalToWorld, float4(pLocal,1));
-                    return ws.xyz;
+                    return positionWS;
                 }
-                return pLocal;
+                return mul(
+                    _EmitterWorldToLocal,
+                    float4(positionWS, 1.0)).xyz;
             }
             // Transform emitter-local vector (no translation) to world if needed
             float3 ToSimSpaceVec(float3 vLocal)

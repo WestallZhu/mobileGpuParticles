@@ -108,6 +108,7 @@ Shader "GPUParticles/UnlitBillboardURP"
 
                 // emitter transforms (for LS->WS)
                 float4x4 _EmitterLocalToWorld;
+                float4x4 _ParticleScaleWorld;
 
                 // camera
                 float3 _CameraPosWS; float _pad0;
@@ -821,6 +822,16 @@ Shader "GPUParticles/UnlitBillboardURP"
                     else                          Basis_Billboard_Velocity(velWS, Right,Up,Normal);
                 }
 
+                // Shuriken applies Main.scalingMode to billboard dimensions even
+                // in world simulation space. The basis itself remains camera/world
+                // aligned; only its selected hierarchy/local scale is applied.
+                float3 RenderRight = mul(
+                    _ParticleScaleWorld,
+                    float4(Right, 0.0)).xyz;
+                float3 RenderUp = mul(
+                    _ParticleScaleWorld,
+                    float4(Up, 0.0)).xyz;
+
                 // size (W/L) & pivot
                 float2 sizeXY = BillboardSize(
                     quadId,
@@ -846,8 +857,8 @@ Shader "GPUParticles/UnlitBillboardURP"
                 }
                 float screenSizeScale = ScreenSpaceSizeClampScale(
                     posWS,
-                    Right,
-                    Up,
+                    RenderRight,
+                    RenderUp,
                     screenClampWidth,
                     screenClampHeight);
                 W *= screenSizeScale;
@@ -899,7 +910,8 @@ Shader "GPUParticles/UnlitBillboardURP"
                     local = float2(local.x * c - local.y * s, local.x * s + local.y * c);
                 }
 
-                float3 wpos = posWS + Right*local.x + Up*local.y;
+                float3 wpos =
+                    posWS + RenderRight * local.x + RenderUp * local.y;
 
                 o.posHCS = TransformWorldToHClip(wpos);
                 o.uv = TextureSheetUV(
