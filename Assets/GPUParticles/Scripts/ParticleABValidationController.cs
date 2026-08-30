@@ -23,6 +23,8 @@ namespace GPUParticles
         EmissionRateCurvePoint,
         EmissionRateDistancePoint,
         VelocityOverLifetimePoint,
+        LimitVelocityOverLifetimePoint,
+        LimitVelocityOverLifetimeAxesPoint,
         RotationOverLifetimeCurvePoint,
         RotationBySpeedCurvePoint,
         ColorSizeOverLifetimeRandomizedPoint,
@@ -77,10 +79,13 @@ namespace GPUParticles
         float maximumGPUSizeBoundsError;
         float maximumShurikenRotationError;
         float maximumGPURotationError;
+        float maximumShurikenLimitVelocityError;
+        float maximumGPULimitVelocityError;
         int maximumShurikenParticleCount;
         int maximumGPUParticleCount;
         Texture2D profileForceLUT;
         Texture2D profileVelocityLUT;
+        Texture2D profileLimitVelocityLUT;
         Texture2D profileColorLUT;
         Texture2D profileSizeLUT;
         Texture2D profileRotationLUT;
@@ -91,6 +96,8 @@ namespace GPUParticles
         AnimationCurve profileSizeMaximumCurve;
         static readonly Vector3 ValidationForce = new Vector3(2f, -1f, 0.5f);
         static readonly Vector3 RotationBySpeedAcceleration = Vector3.right * 2f;
+        static readonly Vector3 LimitVelocityAxesAcceleration =
+            new Vector3(10f, 4f, -8f);
         const float RotationProfileStartRotation = 0.25f;
         Vector3 shurikenBasePositionWS;
         Vector3 gpuBasePositionWS;
@@ -178,6 +185,7 @@ namespace GPUParticles
             Time.captureFramerate = 0;
             if (profileForceLUT != null) Destroy(profileForceLUT);
             if (profileVelocityLUT != null) Destroy(profileVelocityLUT);
+            if (profileLimitVelocityLUT != null) Destroy(profileLimitVelocityLUT);
             if (profileColorLUT != null) Destroy(profileColorLUT);
             if (profileSizeLUT != null) Destroy(profileSizeLUT);
             if (profileRotationLUT != null) Destroy(profileRotationLUT);
@@ -273,6 +281,20 @@ namespace GPUParticles
                 return;
             }
 
+            if (validationProfile ==
+                ParticleABValidationProfile.LimitVelocityOverLifetimePoint)
+            {
+                ConfigureLimitVelocityOverLifetimeProfile();
+                return;
+            }
+
+            if (validationProfile ==
+                ParticleABValidationProfile.LimitVelocityOverLifetimeAxesPoint)
+            {
+                ConfigureLimitVelocityOverLifetimeAxesProfile();
+                return;
+            }
+
             if (validationProfile == ParticleABValidationProfile.RotationOverLifetimeCurvePoint)
             {
                 ConfigureRotationOverLifetimeProfile();
@@ -337,6 +359,8 @@ namespace GPUParticles
             force.z = ValidationForce.z;
             var velocityOverLifetime = shuriken.velocityOverLifetime;
             velocityOverLifetime.enabled = false;
+            var limitVelocity = shuriken.limitVelocityOverLifetime;
+            limitVelocity.enabled = false;
 
             gpuParticles.maxParticles = main.maxParticles;
             gpuParticles.emissionEnabled = true;
@@ -376,6 +400,14 @@ namespace GPUParticles
             gpuParticles.velocityOverLifetimeEnabled = false;
             gpuParticles.velocityOverLifetimeLUT =
                 MinMaxCurveVector3LUTBuilder.GetDefaultZeroLUT();
+            gpuParticles.limitVelocityOverLifetimeEnabled = false;
+            gpuParticles.limitVelocityOverLifetimeSeparateAxes = false;
+            gpuParticles.limitVelocityOverLifetimeSpace = SimulationSpace.Local;
+            gpuParticles.limitVelocityOverLifetimeDampen = 0f;
+            gpuParticles.limitVelocityMultiplyDragBySize = false;
+            gpuParticles.limitVelocityMultiplyDragByVelocity = false;
+            gpuParticles.limitVelocityOverLifetimeLUT =
+                LimitVelocityLUTBuilder.GetDefaultZeroLUT();
         }
 
         void ConfigureRandomizedMainProfile()
@@ -548,6 +580,125 @@ namespace GPUParticles
             gpuParticles.velocityOverLifetimeEnabled = true;
             gpuParticles.velocityOverLifetimeSpace = SimulationSpace.World;
             gpuParticles.velocityOverLifetimeLUT = profileVelocityLUT;
+        }
+
+        void ConfigureLimitVelocityOverLifetimeProfile()
+        {
+            ConfigureEmissionPointBase(5f, true);
+
+            var main = shuriken.main;
+            main.startLifetime = 4f;
+            main.startSpeed = 10f;
+            main.startSize = 2f;
+            main.simulationSpace = ParticleSystemSimulationSpace.World;
+            gpuParticles.SetStartLifetimeRange(4f, 4f);
+            gpuParticles.SetStartSpeedRange(10f, 10f);
+            gpuParticles.SetStartSizeRange(2f, 2f);
+            gpuParticles.simulationSpace = SimulationSpace.World;
+
+            var emission = shuriken.emission;
+            emission.rateOverTime = 18f;
+            emission.rateOverDistance = 0f;
+            emission.SetBursts(Array.Empty<ParticleSystem.Burst>());
+            gpuParticles.SetEmissionRateOverTime(emission.rateOverTime);
+            gpuParticles.SetEmissionRateOverDistance(emission.rateOverDistance);
+            gpuParticles.SetEmissionBursts(Array.Empty<ParticleSystem.Burst>());
+
+            var limit = shuriken.limitVelocityOverLifetime;
+            limit.enabled = true;
+            limit.separateAxes = false;
+            limit.space = ParticleSystemSimulationSpace.Local;
+            limit.limit = new ParticleSystem.MinMaxCurve(
+                1f,
+                AnimationCurve.Linear(0f, 6f, 1f, 3f));
+            limit.dampen = 0.35f;
+            limit.drag = 0.02f;
+            limit.multiplyDragByParticleSize = true;
+            limit.multiplyDragByParticleVelocity = true;
+
+            gpuParticles.limitVelocityOverLifetimeEnabled = true;
+            gpuParticles.limitVelocityOverLifetimeSeparateAxes = false;
+            gpuParticles.limitVelocityOverLifetimeSpace = SimulationSpace.Local;
+            gpuParticles.limitVelocityOverLifetimeDampen = limit.dampen;
+            gpuParticles.limitVelocityMultiplyDragBySize = true;
+            gpuParticles.limitVelocityMultiplyDragByVelocity = true;
+            if (profileLimitVelocityLUT != null)
+            {
+                Destroy(profileLimitVelocityLUT);
+            }
+            profileLimitVelocityLUT = LimitVelocityLUTBuilder.Build(
+                limit,
+                assetName: "LimitVelocityOverLifetime_Profile_LUT");
+            gpuParticles.limitVelocityOverLifetimeLUT =
+                profileLimitVelocityLUT;
+        }
+
+        void ConfigureLimitVelocityOverLifetimeAxesProfile()
+        {
+            ConfigureEmissionPointBase(4f, true);
+
+            Quaternion emitterRotation = Quaternion.Euler(17f, 31f, -12f);
+            shuriken.transform.rotation = emitterRotation;
+            gpuParticles.transform.rotation = emitterRotation;
+
+            var main = shuriken.main;
+            main.startLifetime = 3f;
+            main.startSpeed = 0f;
+            main.simulationSpace = ParticleSystemSimulationSpace.World;
+            gpuParticles.SetStartLifetimeRange(3f, 3f);
+            gpuParticles.SetStartSpeedRange(0f, 0f);
+            gpuParticles.simulationSpace = SimulationSpace.World;
+
+            var emission = shuriken.emission;
+            emission.rateOverTime = 18f;
+            emission.rateOverDistance = 0f;
+            emission.SetBursts(Array.Empty<ParticleSystem.Burst>());
+            gpuParticles.SetEmissionRateOverTime(emission.rateOverTime);
+            gpuParticles.SetEmissionRateOverDistance(emission.rateOverDistance);
+            gpuParticles.SetEmissionBursts(Array.Empty<ParticleSystem.Burst>());
+
+            var force = shuriken.forceOverLifetime;
+            force.enabled = true;
+            force.space = ParticleSystemSimulationSpace.Local;
+            force.randomized = false;
+            force.x = LimitVelocityAxesAcceleration.x;
+            force.y = LimitVelocityAxesAcceleration.y;
+            force.z = LimitVelocityAxesAcceleration.z;
+            if (profileForceLUT != null) Destroy(profileForceLUT);
+            profileForceLUT = MinMaxCurveVector3LUTBuilder.Build(
+                force.x, force.y, force.z);
+            gpuParticles.forceOverLifetimeEnabled = true;
+            gpuParticles.forceOverLifetimeSpace = SimulationSpace.Local;
+            gpuParticles.forceOverLifetimeRandomized = false;
+            gpuParticles.forceOverLifetimeLUT = profileForceLUT;
+
+            var limit = shuriken.limitVelocityOverLifetime;
+            limit.enabled = true;
+            limit.separateAxes = true;
+            limit.space = ParticleSystemSimulationSpace.Local;
+            limit.limitX = 2f;
+            limit.limitY = 1f;
+            limit.limitZ = 1.5f;
+            limit.dampen = 0.6f;
+            limit.drag = 0f;
+            limit.multiplyDragByParticleSize = false;
+            limit.multiplyDragByParticleVelocity = false;
+
+            gpuParticles.limitVelocityOverLifetimeEnabled = true;
+            gpuParticles.limitVelocityOverLifetimeSeparateAxes = true;
+            gpuParticles.limitVelocityOverLifetimeSpace = SimulationSpace.Local;
+            gpuParticles.limitVelocityOverLifetimeDampen = limit.dampen;
+            gpuParticles.limitVelocityMultiplyDragBySize = false;
+            gpuParticles.limitVelocityMultiplyDragByVelocity = false;
+            if (profileLimitVelocityLUT != null)
+            {
+                Destroy(profileLimitVelocityLUT);
+            }
+            profileLimitVelocityLUT = LimitVelocityLUTBuilder.Build(
+                limit,
+                assetName: "LimitVelocityOverLifetimeAxes_Profile_LUT");
+            gpuParticles.limitVelocityOverLifetimeLUT =
+                profileLimitVelocityLUT;
         }
 
         void ConfigureRotationOverLifetimeProfile()
@@ -860,6 +1011,8 @@ namespace GPUParticles
             force.enabled = false;
             var velocityOverLifetime = shuriken.velocityOverLifetime;
             velocityOverLifetime.enabled = false;
+            var limitVelocity = shuriken.limitVelocityOverLifetime;
+            limitVelocity.enabled = false;
 
             gpuParticles.maxParticles = main.maxParticles;
             gpuParticles.emissionEnabled = true;
@@ -892,6 +1045,14 @@ namespace GPUParticles
             gpuParticles.velocityOverLifetimeEnabled = false;
             gpuParticles.velocityOverLifetimeLUT =
                 MinMaxCurveVector3LUTBuilder.GetDefaultZeroLUT();
+            gpuParticles.limitVelocityOverLifetimeEnabled = false;
+            gpuParticles.limitVelocityOverLifetimeSeparateAxes = false;
+            gpuParticles.limitVelocityOverLifetimeSpace = SimulationSpace.Local;
+            gpuParticles.limitVelocityOverLifetimeDampen = 0f;
+            gpuParticles.limitVelocityMultiplyDragBySize = false;
+            gpuParticles.limitVelocityMultiplyDragByVelocity = false;
+            gpuParticles.limitVelocityOverLifetimeLUT =
+                LimitVelocityLUTBuilder.GetDefaultZeroLUT();
         }
 
         public void RestartPlayback()
@@ -982,6 +1143,8 @@ namespace GPUParticles
             maximumGPUSizeBoundsError = 0f;
             maximumShurikenRotationError = 0f;
             maximumGPURotationError = 0f;
+            maximumShurikenLimitVelocityError = 0f;
+            maximumGPULimitVelocityError = 0f;
             maximumShurikenParticleCount = 0;
             maximumGPUParticleCount = 0;
             shurikenLifetimeRange.Reset();
@@ -1169,6 +1332,25 @@ namespace GPUParticles
                             (shurikenVelocity - ValidationForce * age).magnitude);
                     }
                     else if (validationProfile ==
+                             ParticleABValidationProfile.LimitVelocityOverLifetimePoint)
+                    {
+                        float speed = shurikenVelocity.magnitude;
+                        shurikenSpeedRange.Observe(speed);
+                        maximumShurikenLimitVelocityError = Mathf.Max(
+                            maximumShurikenLimitVelocityError,
+                            Mathf.Abs(speed - LimitVelocityProfileExpectedSpeed(age)));
+                    }
+                    else if (validationProfile ==
+                             ParticleABValidationProfile.LimitVelocityOverLifetimeAxesPoint)
+                    {
+                        Vector3 expectedVelocity =
+                            LimitVelocityAxesExpectedVelocity(
+                                age, shuriken.transform);
+                        maximumShurikenLimitVelocityError = Mathf.Max(
+                            maximumShurikenLimitVelocityError,
+                            (shurikenVelocity - expectedVelocity).magnitude);
+                    }
+                    else if (validationProfile ==
                              ParticleABValidationProfile.RotationOverLifetimeCurvePoint)
                     {
                         float expectedRotation = RotationProfileExpectedRadians(
@@ -1308,6 +1490,25 @@ namespace GPUParticles
                         (gpuVelocity - ValidationForce * age).magnitude);
                 }
                 else if (validationProfile ==
+                         ParticleABValidationProfile.LimitVelocityOverLifetimePoint)
+                {
+                    float speed = gpuVelocity.magnitude;
+                    gpuSpeedRange.Observe(speed);
+                    maximumGPULimitVelocityError = Mathf.Max(
+                        maximumGPULimitVelocityError,
+                        Mathf.Abs(speed - LimitVelocityProfileExpectedSpeed(age)));
+                }
+                else if (validationProfile ==
+                         ParticleABValidationProfile.LimitVelocityOverLifetimeAxesPoint)
+                {
+                    Vector3 expectedVelocity =
+                        LimitVelocityAxesExpectedVelocity(
+                            age, gpuParticles.transform);
+                    maximumGPULimitVelocityError = Mathf.Max(
+                        maximumGPULimitVelocityError,
+                        (gpuVelocity - expectedVelocity).magnitude);
+                }
+                else if (validationProfile ==
                          ParticleABValidationProfile.RotationOverLifetimeCurvePoint)
                 {
                     float expectedRotation = RotationProfileExpectedRadians(
@@ -1426,7 +1627,11 @@ namespace GPUParticles
             maximumMeanVelocityError = Mathf.Max(maximumMeanVelocityError,
                 (gpuMeanVelocity - shurikenMeanVelocity).magnitude);
             if ((validationProfile == ParticleABValidationProfile.EmissionRateDistancePoint ||
-                 validationProfile == ParticleABValidationProfile.VelocityOverLifetimePoint) &&
+                 validationProfile == ParticleABValidationProfile.VelocityOverLifetimePoint ||
+                 validationProfile ==
+                     ParticleABValidationProfile.LimitVelocityOverLifetimePoint ||
+                 validationProfile ==
+                     ParticleABValidationProfile.LimitVelocityOverLifetimeAxesPoint) &&
                 shurikenCount > 0 && gpuCount > 0)
             {
                 Vector3 shurikenMeanDisplacement =
@@ -1502,6 +1707,125 @@ namespace GPUParticles
                 : 4f * age - 4f;
             return RotationProfileStartRotation + 0.5f * age +
                    rotationBySpeedPhase;
+        }
+
+        static float LimitVelocityProfileExpectedSpeed(float age)
+        {
+            const float frameDeltaTime = 1f / 60f;
+            age = Mathf.Clamp(age, 0f, 4f);
+
+            int fullSteps = Mathf.FloorToInt(age / frameDeltaTime + 0.0001f);
+            float partialStep = age - fullSteps * frameDeltaTime;
+            if (partialStep < -0.00001f)
+            {
+                fullSteps--;
+                partialStep += frameDeltaTime;
+            }
+            if (partialStep < 0.00001f)
+            {
+                partialStep = 0f;
+            }
+
+            float speed = 10f;
+            float simulatedAge = 0f;
+            if (partialStep > 0f)
+            {
+                AdvanceLimitVelocityProfile(
+                    ref speed, ref simulatedAge, partialStep);
+            }
+            for (int i = 0; i < fullSteps; i++)
+            {
+                AdvanceLimitVelocityProfile(
+                    ref speed, ref simulatedAge, frameDeltaTime);
+            }
+            return speed;
+        }
+
+        static void AdvanceLimitVelocityProfile(
+            ref float speed,
+            ref float simulatedAge,
+            float deltaTime)
+        {
+            simulatedAge += deltaTime;
+            float normalizedAge = Mathf.Clamp01(simulatedAge / 4f);
+            float speedLimit = Mathf.Lerp(6f, 3f, normalizedAge);
+            if (speed > speedLimit)
+            {
+                float dampenFactor = Mathf.Pow(1f - 0.35f, deltaTime * 30f);
+                speed = speedLimit + (speed - speedLimit) * dampenFactor;
+            }
+
+            // Size is 2, so Multiply by Size contributes pi * (2 / 2)^2.
+            float drag = 0.02f * Mathf.PI * speed * speed;
+            speed = Mathf.Max(0f, speed - drag * deltaTime);
+        }
+
+        static Vector3 LimitVelocityAxesExpectedVelocity(
+            float age,
+            Transform emitter)
+        {
+            const float frameDeltaTime = 1f / 60f;
+            age = Mathf.Clamp(age, 0f, 3f);
+
+            int fullSteps = Mathf.FloorToInt(age / frameDeltaTime + 0.0001f);
+            float partialStep = age - fullSteps * frameDeltaTime;
+            if (partialStep < -0.00001f)
+            {
+                fullSteps--;
+                partialStep += frameDeltaTime;
+            }
+            if (partialStep < 0.00001f)
+            {
+                partialStep = 0f;
+            }
+
+            Vector3 accelerationInSimulationSpace = emitter
+                .TransformDirection(LimitVelocityAxesAcceleration);
+            Vector3 accelerationInLimitSpace = emitter
+                .TransformDirection(accelerationInSimulationSpace);
+            Vector3 velocityInLimitSpace = Vector3.zero;
+            if (partialStep > 0f)
+            {
+                AdvanceLimitVelocityAxes(
+                    ref velocityInLimitSpace,
+                    accelerationInLimitSpace,
+                    partialStep);
+            }
+            for (int i = 0; i < fullSteps; i++)
+            {
+                AdvanceLimitVelocityAxes(
+                    ref velocityInLimitSpace,
+                    accelerationInLimitSpace,
+                    frameDeltaTime);
+            }
+            return emitter.InverseTransformDirection(velocityInLimitSpace);
+        }
+
+        static void AdvanceLimitVelocityAxes(
+            ref Vector3 velocity,
+            Vector3 acceleration,
+            float deltaTime)
+        {
+            velocity += acceleration * deltaTime;
+            float dampenFactor = Mathf.Pow(1f - 0.6f, deltaTime * 30f);
+            velocity.x = DampenedExpectedAxis(
+                velocity.x, 2f, dampenFactor);
+            velocity.y = DampenedExpectedAxis(
+                velocity.y, 1f, dampenFactor);
+            velocity.z = DampenedExpectedAxis(
+                velocity.z, 1.5f, dampenFactor);
+        }
+
+        static float DampenedExpectedAxis(
+            float value,
+            float limit,
+            float dampenFactor)
+        {
+            float magnitude = Mathf.Abs(value);
+            if (magnitude <= limit) return value;
+            float dampenedMagnitude = limit +
+                (magnitude - limit) * dampenFactor;
+            return Mathf.Sign(value) * dampenedMagnitude;
         }
 
         static void ObserveBlendFactor(
@@ -1644,6 +1968,28 @@ namespace GPUParticles
                                             maximumGPUParticleCount > 0;
                     break;
 
+                case ParticleABValidationProfile.LimitVelocityOverLifetimePoint:
+                    profileSpecificPassed = maximumMeanSpeedError <= 0.03f &&
+                                            maximumMeanVelocityError <= 0.03f &&
+                                            maximumMeanPositionError <= 0.05f &&
+                                            maximumShurikenLimitVelocityError <= 0.04f &&
+                                            maximumGPULimitVelocityError <= 0.04f &&
+                                            maximumShurikenParticleCount > 0 &&
+                                            maximumGPUParticleCount > 0 &&
+                                            shurikenSpeedRange.Covers(2f, 10f) &&
+                                            gpuSpeedRange.Covers(2f, 10f);
+                    break;
+
+                case ParticleABValidationProfile.LimitVelocityOverLifetimeAxesPoint:
+                    profileSpecificPassed = maximumMeanSpeedError <= 0.02f &&
+                                            maximumMeanVelocityError <= 0.02f &&
+                                            maximumMeanPositionError <= 0.04f &&
+                                            maximumShurikenLimitVelocityError <= 0.02f &&
+                                            maximumGPULimitVelocityError <= 0.02f &&
+                                            maximumShurikenParticleCount > 0 &&
+                                            maximumGPUParticleCount > 0;
+                    break;
+
                 case ParticleABValidationProfile.RotationOverLifetimeCurvePoint:
                     profileSpecificPassed = maximumMeanSpeedError <= 0.001f &&
                                             maximumShurikenParticleCount > 0 &&
@@ -1718,6 +2064,8 @@ namespace GPUParticles
                 $"maxGPUSizeBoundsError={maximumGPUSizeBoundsError:R}; " +
                 $"maxShurikenRotationError={maximumShurikenRotationError:R}; " +
                 $"maxGPURotationError={maximumGPURotationError:R}; " +
+                $"maxShurikenLimitVelocityError={maximumShurikenLimitVelocityError:R}; " +
+                $"maxGPULimitVelocityError={maximumGPULimitVelocityError:R}; " +
                 $"maxShurikenCount={maximumShurikenParticleCount}; " +
                 $"maxGPUCount={maximumGPUParticleCount}; " +
                 $"shurikenLifetimeRange={FormatRange(shurikenLifetimeRange)}; " +

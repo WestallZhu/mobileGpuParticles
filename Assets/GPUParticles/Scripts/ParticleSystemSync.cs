@@ -47,6 +47,7 @@ namespace GPUParticles
         private float lastSizeLUTUpdate = 0f;
         private float lastForceLUTUpdate = 0f;
         private float lastVelocityLUTUpdate = 0f;
+        private float lastLimitVelocityLUTUpdate = 0f;
         private float lastColorBySpeedLUTUpdate = 0f;
         private float lastSizeBySpeedLUTUpdate = 0f;
         private float lastRotationLUTUpdate = 0f;
@@ -54,6 +55,7 @@ namespace GPUParticles
         private float lastEmissionTimelineUpdate = 0f;
         private Texture2D generatedForceLUT;
         private Texture2D generatedVelocityLUT;
+        private Texture2D generatedLimitVelocityLUT;
         private Texture2D generatedColorLUT;
         private Texture2D generatedSizeLUT;
         private Texture2D generatedColorBySpeedLUT;
@@ -100,6 +102,7 @@ namespace GPUParticles
             SyncShapeParameters(true);
             SyncForceOverLifetime(true);
             SyncVelocityOverLifetime(true);
+            SyncLimitVelocityOverLifetime(true);
             SyncRendererParameters(true);
             SyncRotationParameters(true);
             SyncMaterialParameters(true);
@@ -166,6 +169,7 @@ namespace GPUParticles
             SyncShapeParameters();
             SyncForceOverLifetime();
             SyncVelocityOverLifetime();
+            SyncLimitVelocityOverLifetime();
             SyncRendererParameters();
             SyncRotationParameters();
             SyncMaterialParameters();
@@ -501,10 +505,51 @@ namespace GPUParticles
             lastVelocityLUTUpdate = Time.realtimeSinceStartup;
         }
 
+        void SyncLimitVelocityOverLifetime(bool forceUpdate = false)
+        {
+            var limit = sourceParticleSystem.limitVelocityOverLifetime;
+            bool timeToUpdate =
+                Time.realtimeSinceStartup - lastLimitVelocityLUTUpdate >
+                LUT_UPDATE_INTERVAL;
+            if (!forceUpdate && !timeToUpdate) return;
+
+            targetGPUParticleSystem.limitVelocityOverLifetimeEnabled =
+                limit.enabled;
+            targetGPUParticleSystem.limitVelocityOverLifetimeSeparateAxes =
+                limit.separateAxes;
+            targetGPUParticleSystem.limitVelocityOverLifetimeSpace =
+                limit.space == ParticleSystemSimulationSpace.World
+                    ? SimulationSpace.World
+                    : SimulationSpace.Local;
+            targetGPUParticleSystem.limitVelocityOverLifetimeDampen =
+                Mathf.Clamp01(limit.dampen);
+            targetGPUParticleSystem.limitVelocityMultiplyDragBySize =
+                limit.multiplyDragByParticleSize;
+            targetGPUParticleSystem.limitVelocityMultiplyDragByVelocity =
+                limit.multiplyDragByParticleVelocity;
+
+            DestroyGeneratedLimitVelocityLUT();
+            if (limit.enabled)
+            {
+                generatedLimitVelocityLUT =
+                    LimitVelocityLUTBuilder.Build(limit);
+                targetGPUParticleSystem.limitVelocityOverLifetimeLUT =
+                    generatedLimitVelocityLUT;
+            }
+            else
+            {
+                targetGPUParticleSystem.limitVelocityOverLifetimeLUT =
+                    LimitVelocityLUTBuilder.GetDefaultZeroLUT();
+            }
+
+            lastLimitVelocityLUTUpdate = Time.realtimeSinceStartup;
+        }
+
         void OnDestroy()
         {
             DestroyGeneratedForceLUT();
             DestroyGeneratedVelocityLUT();
+            DestroyGeneratedLimitVelocityLUT();
             DestroyGeneratedColorLUT();
             DestroyGeneratedSizeLUT();
             DestroyGeneratedColorBySpeedLUT();
@@ -529,6 +574,15 @@ namespace GPUParticles
             if (Application.isPlaying) Destroy(generatedVelocityLUT);
             else DestroyImmediate(generatedVelocityLUT);
             generatedVelocityLUT = null;
+        }
+
+        void DestroyGeneratedLimitVelocityLUT()
+        {
+            if (generatedLimitVelocityLUT == null) return;
+
+            if (Application.isPlaying) Destroy(generatedLimitVelocityLUT);
+            else DestroyImmediate(generatedLimitVelocityLUT);
+            generatedLimitVelocityLUT = null;
         }
 
         void DestroyGeneratedColorLUT()

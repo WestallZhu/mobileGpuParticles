@@ -99,6 +99,15 @@ namespace GPUParticles
         public Texture2D velocityOverLifetimeLUT;
         public SimulationSpace velocityOverLifetimeSpace = SimulationSpace.Local;
 
+        [Header("Limit Velocity Over Lifetime")]
+        public bool limitVelocityOverLifetimeEnabled;
+        public Texture2D limitVelocityOverLifetimeLUT;
+        public bool limitVelocityOverLifetimeSeparateAxes;
+        public SimulationSpace limitVelocityOverLifetimeSpace = SimulationSpace.Local;
+        [Range(0f, 1f)] public float limitVelocityOverLifetimeDampen;
+        public bool limitVelocityMultiplyDragBySize;
+        public bool limitVelocityMultiplyDragByVelocity;
+
         [Header("Rendering")]
         public Texture2D baseMap;
         [Range(0,1)] public float minAlphaCull = 0.001f;
@@ -252,6 +261,22 @@ namespace GPUParticles
         static readonly int _VelocityOverLifetimeLUT = Shader.PropertyToID("_VelocityOverLifetimeLUT");
         static readonly int _VelocityOverLifetimeEnabled = Shader.PropertyToID("_VelocityOverLifetimeEnabled");
         static readonly int _VelocityOverLifetimeSpace = Shader.PropertyToID("_VelocityOverLifetimeSpace");
+        static readonly int _LimitVelocityLUT =
+            Shader.PropertyToID("_LimitVelocityLUT");
+        static readonly int _LimitVelocityLUTInvWidth =
+            Shader.PropertyToID("_LimitVelocityLUTInvWidth");
+        static readonly int _LimitVelocityEnabled =
+            Shader.PropertyToID("_LimitVelocityEnabled");
+        static readonly int _LimitVelocitySeparateAxes =
+            Shader.PropertyToID("_LimitVelocitySeparateAxes");
+        static readonly int _LimitVelocitySpace =
+            Shader.PropertyToID("_LimitVelocitySpace");
+        static readonly int _LimitVelocityDampen =
+            Shader.PropertyToID("_LimitVelocityDampen");
+        static readonly int _LimitVelocityMultiplyDragBySize =
+            Shader.PropertyToID("_LimitVelocityMultiplyDragBySize");
+        static readonly int _LimitVelocityMultiplyDragByVelocity =
+            Shader.PropertyToID("_LimitVelocityMultiplyDragByVelocity");
         static readonly int _ColorOverLifetimeMode = Shader.PropertyToID("_ColorOverLifetimeMode");
         static readonly int _GradLUTInvWidth = Shader.PropertyToID("_GradLUTInvWidth");
         static readonly int _SizeLUTInvWidth = Shader.PropertyToID("_SizeLUTInvWidth");
@@ -1225,6 +1250,9 @@ namespace GPUParticles
             Texture2D selectedVelocityOverLifetimeLUT = velocityOverLifetimeLUT != null
                 ? velocityOverLifetimeLUT
                 : MinMaxCurveVector3LUTBuilder.GetDefaultZeroLUT();
+            Texture2D selectedLimitVelocityLUT = limitVelocityOverLifetimeLUT != null
+                ? limitVelocityOverLifetimeLUT
+                : LimitVelocityLUTBuilder.GetDefaultZeroLUT();
 
             simulateMaterial.SetTexture("_GradLUT", selectedColorOverLifetimeLUT);
             simulateMaterial.SetTexture("_SizeLUT", selectedSizeOverLifetimeLUT);
@@ -1236,6 +1264,8 @@ namespace GPUParticles
                 _ForceOverLifetimeLUT, selectedForceOverLifetimeLUT);
             simulateMaterial.SetTexture(
                 _VelocityOverLifetimeLUT, selectedVelocityOverLifetimeLUT);
+            simulateMaterial.SetTexture(
+                _LimitVelocityLUT, selectedLimitVelocityLUT);
             simulateMaterial.SetFloat(
                 _GradLUTInvWidth, InverseTextureWidth(selectedColorOverLifetimeLUT));
             simulateMaterial.SetFloat(
@@ -1253,6 +1283,9 @@ namespace GPUParticles
             simulateMaterial.SetFloat(
                 _VelocityOverLifetimeLUTInvWidth,
                 InverseTextureWidth(selectedVelocityOverLifetimeLUT));
+            simulateMaterial.SetFloat(
+                _LimitVelocityLUTInvWidth,
+                InverseTextureWidth(selectedLimitVelocityLUT));
 
             simulateMaterial.SetInt(_GridSize, gridSize);
             simulateMaterial.SetInt(_MaxParticles, maxParticles);
@@ -1305,6 +1338,24 @@ namespace GPUParticles
                 _VelocityOverLifetimeEnabled, velocityOverLifetimeEnabled ? 1 : 0);
             simulateMaterial.SetInt(
                 _VelocityOverLifetimeSpace, (int)velocityOverLifetimeSpace);
+            simulateMaterial.SetInt(
+                _LimitVelocityEnabled,
+                limitVelocityOverLifetimeEnabled ? 1 : 0);
+            simulateMaterial.SetInt(
+                _LimitVelocitySeparateAxes,
+                limitVelocityOverLifetimeSeparateAxes ? 1 : 0);
+            simulateMaterial.SetInt(
+                _LimitVelocitySpace,
+                (int)limitVelocityOverLifetimeSpace);
+            simulateMaterial.SetFloat(
+                _LimitVelocityDampen,
+                Mathf.Clamp01(limitVelocityOverLifetimeDampen));
+            simulateMaterial.SetInt(
+                _LimitVelocityMultiplyDragBySize,
+                limitVelocityMultiplyDragBySize ? 1 : 0);
+            simulateMaterial.SetInt(
+                _LimitVelocityMultiplyDragByVelocity,
+                limitVelocityMultiplyDragByVelocity ? 1 : 0);
             simulateMaterial.SetInt(_ColorOverLifetimeMode, (int)colorOverLifetimeMode);
             simulateMaterial.SetInt(_ColorBySpeedEnabled, colorBySpeedEnabled ? 1 : 0);
             simulateMaterial.SetInt(_ColorBySpeedMode, (int)colorBySpeedMode);

@@ -39,6 +39,7 @@ Shader "Hidden/GPUParticles/SimulateMRT"
             TEXTURE2D(_RotationBySpeedLUT); SAMPLER(sampler_RotationBySpeedLUT);
             TEXTURE2D(_ForceOverLifetimeLUT); SAMPLER(sampler_ForceOverLifetimeLUT);
             TEXTURE2D(_VelocityOverLifetimeLUT); SAMPLER(sampler_VelocityOverLifetimeLUT);
+            TEXTURE2D(_LimitVelocityLUT); SAMPLER(sampler_LimitVelocityLUT);
 
             // --- Params ---
             CBUFFER_START(UnityPerMaterial)
@@ -78,6 +79,13 @@ Shader "Hidden/GPUParticles/SimulateMRT"
                 int     _ForceOverLifetimeRandomized;
                 int     _VelocityOverLifetimeEnabled;
                 int     _VelocityOverLifetimeSpace;    // 0 Local, 1 World
+                int     _LimitVelocityEnabled;
+                int     _LimitVelocitySeparateAxes;
+                int     _LimitVelocitySpace;            // 0 Local, 1 World
+                float   _LimitVelocityDampen;
+                int     _LimitVelocityMultiplyDragBySize;
+                int     _LimitVelocityMultiplyDragByVelocity;
+                float   _LimitVelocityLUTInvWidth;
                 int     _ColorOverLifetimeMode;
                 int     _ColorBySpeedEnabled;
                 int     _ColorBySpeedMode;
@@ -416,6 +424,32 @@ Shader "Hidden/GPUParticles/SimulateMRT"
                 return value;
             }
 
+            float3 SimVectorToLimitAxisSpace(float3 value, int limitSpace)
+            {
+                // Separate-axis limits rotate their reference frame in the same
+                // direction used to bring additive module vectors into simulation.
+                return ModuleVectorToSimSpace(value, limitSpace);
+            }
+
+            float3 LimitAxisVectorToSimSpace(float3 value, int limitSpace)
+            {
+                if (limitSpace == 1) // Limit axes are world-space.
+                {
+                    if (_SimulationSpace == 0)
+                    {
+                        return mul(_EmitterLocalToWorld, float4(value, 0.0)).xyz;
+                    }
+                    return value;
+                }
+
+                // Limit axes are emitter-local.
+                if (_SimulationSpace == 1)
+                {
+                    return mul(_EmitterWorldToLocal, float4(value, 0.0)).xyz;
+                }
+                return value;
+            }
+
             float LUTPosition(float position, float inverseWidth)
             {
                 return saturate(position) * (1.0 - inverseWidth) +
@@ -452,6 +486,102 @@ Shader "Hidden/GPUParticles/SimulateMRT"
                 return ModuleVectorToSimSpace(
                     lerp(minimum, maximum, randomValue),
                     _VelocityOverLifetimeSpace);
+            }
+
+            float4 LimitVelocityParameters(uint id, float normalizedAge)
+            {
+                float lutPosition = LUTPosition(
+                    normalizedAge, _LimitVelocityLUTInvWidth);
+                float4 minimum = SAMPLE_TEXTURE2D_LOD(
+                    _LimitVelocityLUT, sampler_LimitVelocityLUT,
+                    float2(lutPosition, 0.25), 0);
+                float4 maximum = SAMPLE_TEXTURE2D_LOD(
+                    _LimitVelocityLUT, sampler_LimitVelocityLUT,
+                    float2(lutPosition, 0.75), 0);
+                float3 randomLimit = Hash03(
+                    id * 3266489917u + 0x85EBCA6Bu);
+                float randomDrag = Hash01(id ^ 0xC2B2AE35u);
+                return max(
+                    0.0,
+                    lerp(
+                        minimum,
+                        maximum,
+                        float4(randomLimit, randomDrag)));
+            }
+
+            float DampenedAxis(float value, float limit, float dampenFactor)
+            {
+                float magnitude = abs(value);
+                if (magnitude <= limit)
+                {
+                    return value;
+                }
+                float dampenedMagnitude = limit +
+                    (magnitude - limit) * dampenFactor;
+                return value < 0.0 ? -dampenedMagnitude : dampenedMagnitude;
+            }
+
+            float3 ApplyLimitVelocity(
+                uint id,
+                float3 velocity,
+                float particleSize,
+                float normalizedAge,
+                float stepDt)
+            {
+                float4 parameters = LimitVelocityParameters(id, normalizedAge);
+                float dampen = saturate(_LimitVelocityDampen);
+                float dampenFactor = dampen >= 1.0
+                    ? 0.0
+                    : pow(1.0 - dampen, stepDt * 30.0);
+
+                if (_LimitVelocitySeparateAxes != 0)
+                {
+                    // Shuriken rotates the separate-axis reference frame in the
+                    // additive-module direction, rather than using a conventional
+                    // coordinate conversion. These helpers preserve that 2022.3 behavior.
+                    float3 moduleVelocity = SimVectorToLimitAxisSpace(
+                        velocity, _LimitVelocitySpace);
+                    moduleVelocity.x = DampenedAxis(
+                        moduleVelocity.x, parameters.x, dampenFactor);
+                    moduleVelocity.y = DampenedAxis(
+                        moduleVelocity.y, parameters.y, dampenFactor);
+                    moduleVelocity.z = DampenedAxis(
+                        moduleVelocity.z, parameters.z, dampenFactor);
+                    velocity = LimitAxisVectorToSimSpace(
+                        moduleVelocity, _LimitVelocitySpace);
+                }
+                else
+                {
+                    float speed = length(velocity);
+                    if (speed > parameters.x && speed > 1e-6)
+                    {
+                        float dampenedSpeed = parameters.x +
+                            (speed - parameters.x) * dampenFactor;
+                        velocity *= dampenedSpeed / speed;
+                    }
+                }
+
+                float speedAfterLimit = length(velocity);
+                if (parameters.a > 0.0 && speedAfterLimit > 1e-6)
+                {
+                    float drag = parameters.a;
+                    if (_LimitVelocityMultiplyDragBySize != 0)
+                    {
+                        float nonNegativeSize = max(0.0, particleSize);
+                        drag *= 0.78539816339 *
+                                nonNegativeSize * nonNegativeSize;
+                    }
+                    if (_LimitVelocityMultiplyDragByVelocity != 0)
+                    {
+                        drag *= speedAfterLimit * speedAfterLimit;
+                    }
+
+                    float draggedSpeed = max(
+                        0.0, speedAfterLimit - drag * stepDt);
+                    velocity *= draggedSpeed / speedAfterLimit;
+                }
+
+                return velocity;
             }
 
             float4 ColorOverLifetime(uint id, float normalizedAge)
@@ -974,6 +1104,15 @@ Shader "Hidden/GPUParticles/SimulateMRT"
                             vel += velocityAfterStep - VelocityOverLifetime(
                                 id, normalizedAgeBeforeStep);
                         }
+                    }
+                    if (_LimitVelocityEnabled != 0)
+                    {
+                        vel = ApplyLimitVelocity(
+                            id,
+                            vel,
+                            size,
+                            normalizedAgeAfterStep,
+                            stepDt);
                     }
                     pos += vel * stepDt;
 

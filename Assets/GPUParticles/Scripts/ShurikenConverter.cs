@@ -34,6 +34,7 @@ namespace GPUParticles
 
             ApplyForceOverLifetime(ps, gpu, owner);
             ApplyVelocityOverLifetime(ps, gpu, owner);
+            ApplyLimitVelocityOverLifetime(ps, gpu);
 
             ApplyEmission(ps, gpu, owner);
             ApplyColorAndSizeOverLifetime(ps, gpu, owner);
@@ -269,6 +270,7 @@ namespace GPUParticles
 
             ApplyForceOverLifetime(particleSystem, gpu, gpuChild);
             ApplyVelocityOverLifetime(particleSystem, gpu, gpuChild);
+            ApplyLimitVelocityOverLifetime(particleSystem, gpu);
 
             ApplyEmission(particleSystem, gpu, gpuChild);
             ApplyColorAndSizeOverLifetime(particleSystem, gpu, gpuChild);
@@ -734,6 +736,30 @@ namespace GPUParticles
                     "Velocity over Lifetime Speed Modifier is not supported yet; Linear XYZ was mapped.",
                     context);
             }
+        }
+
+        static void ApplyLimitVelocityOverLifetime(
+            ParticleSystem particleSystem,
+            GPUParticleSystem gpu)
+        {
+            var limit = particleSystem.limitVelocityOverLifetime;
+            gpu.limitVelocityOverLifetimeEnabled = limit.enabled;
+            gpu.limitVelocityOverLifetimeSeparateAxes = limit.separateAxes;
+            gpu.limitVelocityOverLifetimeSpace =
+                limit.space == ParticleSystemSimulationSpace.World
+                    ? SimulationSpace.World
+                    : SimulationSpace.Local;
+            gpu.limitVelocityOverLifetimeDampen = Mathf.Clamp01(limit.dampen);
+            gpu.limitVelocityMultiplyDragBySize =
+                limit.multiplyDragByParticleSize;
+            gpu.limitVelocityMultiplyDragByVelocity =
+                limit.multiplyDragByParticleVelocity;
+            gpu.limitVelocityOverLifetimeLUT = limit.enabled
+                ? LimitVelocityLUTBuilder.Build(
+                    limit,
+                    saveAsAsset: true,
+                    assetName: "LimitVelocityOverLifetime_LUT")
+                : LimitVelocityLUTBuilder.GetDefaultZeroLUT();
         }
 
         static void ApplyEmission(
