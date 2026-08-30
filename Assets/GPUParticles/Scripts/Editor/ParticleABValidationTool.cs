@@ -652,6 +652,27 @@ namespace GPUParticles.Editor
             StartShapeCaptureMenu(ParticleABValidationProfile.ShapeBoxEdgePoint);
         }
 
+        [MenuItem("Tools/GPU Particles/Run Shape Random Direction A-B RT Capture")]
+        public static void RunShapeRandomDirectionCaptureMenu()
+        {
+            StartShapeCaptureMenu(
+                ParticleABValidationProfile.ShapeRandomDirectionPoint);
+        }
+
+        [MenuItem("Tools/GPU Particles/Run Shape Spherical Direction A-B RT Capture")]
+        public static void RunShapeSphericalDirectionCaptureMenu()
+        {
+            StartShapeCaptureMenu(
+                ParticleABValidationProfile.ShapeSphericalDirectionPoint);
+        }
+
+        [MenuItem("Tools/GPU Particles/Run Shape Random Position A-B RT Capture")]
+        public static void RunShapeRandomPositionCaptureMenu()
+        {
+            StartShapeCaptureMenu(
+                ParticleABValidationProfile.ShapeRandomPositionPoint);
+        }
+
         static void StartShapeCaptureMenu(ParticleABValidationProfile profile)
         {
             if (EditorApplication.isPlaying)
@@ -1134,6 +1155,30 @@ namespace GPUParticles.Editor
             StartCapture(true, ParticleABValidationProfile.ShapeBoxEdgePoint);
         }
 
+        public static void RunBatchShapeRandomDirectionCapture()
+        {
+            ValidateCommonFeatureMapping();
+            StartCapture(
+                true,
+                ParticleABValidationProfile.ShapeRandomDirectionPoint);
+        }
+
+        public static void RunBatchShapeSphericalDirectionCapture()
+        {
+            ValidateCommonFeatureMapping();
+            StartCapture(
+                true,
+                ParticleABValidationProfile.ShapeSphericalDirectionPoint);
+        }
+
+        public static void RunBatchShapeRandomPositionCapture()
+        {
+            ValidateCommonFeatureMapping();
+            StartCapture(
+                true,
+                ParticleABValidationProfile.ShapeRandomPositionPoint);
+        }
+
         public static void RunBatchTextureSheetLifetimeCapture()
         {
             ValidateCommonFeatureMapping();
@@ -1369,6 +1414,9 @@ namespace GPUParticles.Editor
                 case ParticleABValidationProfile.ShapeEdgePoint:
                 case ParticleABValidationProfile.ShapeRectanglePoint:
                 case ParticleABValidationProfile.ShapeBoxEdgePoint:
+                case ParticleABValidationProfile.ShapeRandomDirectionPoint:
+                case ParticleABValidationProfile.ShapeSphericalDirectionPoint:
+                case ParticleABValidationProfile.ShapeRandomPositionPoint:
                     return 2.5f;
                 case ParticleABValidationProfile.TextureSheetLifetimePoint:
                 case ParticleABValidationProfile.TextureSheetSpeedPoint:
@@ -1422,6 +1470,15 @@ namespace GPUParticles.Editor
                     ParticleABValidationProfile.CullingAlwaysSimulatePoint)
             {
                 return 30f;
+            }
+            if (profile ==
+                    ParticleABValidationProfile.ShapeRandomDirectionPoint ||
+                profile ==
+                    ParticleABValidationProfile.ShapeSphericalDirectionPoint ||
+                profile ==
+                    ParticleABValidationProfile.ShapeRandomPositionPoint)
+            {
+                return 20f;
             }
 
             return profile == ParticleABValidationProfile.EmissionBurstPoint ||
@@ -1569,6 +1626,12 @@ namespace GPUParticles.Editor
                     return "TestResults/ParticleShapeRectangle";
                 case ParticleABValidationProfile.ShapeBoxEdgePoint:
                     return "TestResults/ParticleShapeBoxEdge";
+                case ParticleABValidationProfile.ShapeRandomDirectionPoint:
+                    return "TestResults/ParticleShapeRandomDirection";
+                case ParticleABValidationProfile.ShapeSphericalDirectionPoint:
+                    return "TestResults/ParticleShapeSphericalDirection";
+                case ParticleABValidationProfile.ShapeRandomPositionPoint:
+                    return "TestResults/ParticleShapeRandomPosition";
                 case ParticleABValidationProfile.TextureSheetLifetimePoint:
                     return "TestResults/ParticleTextureSheetLifetime";
                 case ParticleABValidationProfile.TextureSheetSpeedPoint:
@@ -1769,6 +1832,9 @@ namespace GPUParticles.Editor
                 emission.SetBursts(new[] { validationBurst });
 
                 var shape = shuriken.shape;
+                shape.randomDirectionAmount = 0.25f;
+                shape.sphericalDirectionAmount = 0.5f;
+                shape.randomPositionAmount = 0.75f;
                 shape.enabled = false;
 
                 var force = shuriken.forceOverLifetime;
@@ -2177,6 +2243,18 @@ namespace GPUParticles.Editor
                 RequireApproximately(mappedBurst.repeatInterval, 0.5f, "Burst interval");
                 RequireApproximately(mappedBurst.probability, 0.75f, "Burst probability");
                 Require(gpu.shapeType == ShapeTypeGPU.Point, "Disabled Shape was not mapped to Point.");
+                RequireApproximately(
+                    gpu.shapeRandomDirectionAmount,
+                    0.25f,
+                    "Shape Randomize Direction");
+                RequireApproximately(
+                    gpu.shapeSphericalDirectionAmount,
+                    0.5f,
+                    "Shape Spherize Direction");
+                RequireApproximately(
+                    gpu.shapeRandomPositionAmount,
+                    0.75f,
+                    "Shape Randomize Position");
                 Require(gpu.forceOverLifetimeEnabled, "Force over Lifetime enabled state was not mapped.");
                 Require(gpu.forceOverLifetimeSpace == SimulationSpace.World,
                     "Force over Lifetime space was not mapped.");

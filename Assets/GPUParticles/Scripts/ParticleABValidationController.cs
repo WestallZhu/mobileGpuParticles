@@ -45,6 +45,9 @@ namespace GPUParticles
         ShapeEdgePoint,
         ShapeRectanglePoint,
         ShapeBoxEdgePoint,
+        ShapeRandomDirectionPoint,
+        ShapeSphericalDirectionPoint,
+        ShapeRandomPositionPoint,
         TextureSheetLifetimePoint,
         TextureSheetSpeedPoint,
         TextureSheetFPSPoint,
@@ -367,6 +370,12 @@ namespace GPUParticles
         ObservedRange gpuShapeSpawnXRange;
         ObservedRange gpuShapeSpawnYRange;
         ObservedRange gpuShapeSpawnZRange;
+        ObservedRange shurikenShapeDirectionXRange;
+        ObservedRange shurikenShapeDirectionYRange;
+        ObservedRange shurikenShapeDirectionZRange;
+        ObservedRange gpuShapeDirectionXRange;
+        ObservedRange gpuShapeDirectionYRange;
+        ObservedRange gpuShapeDirectionZRange;
         ObservedRange shurikenLifetimeColorBlendRange;
         ObservedRange gpuLifetimeColorBlendRange;
         ObservedRange shurikenLifetimeSizeBlendRange;
@@ -992,6 +1001,9 @@ namespace GPUParticles
 
             var shape = shuriken.shape;
             shape.enabled = false;
+            shape.randomDirectionAmount = 0f;
+            shape.sphericalDirectionAmount = 0f;
+            shape.randomPositionAmount = 0f;
 
             var colorOverLifetime = shuriken.colorOverLifetime;
             colorOverLifetime.enabled = false;
@@ -1051,6 +1063,9 @@ namespace GPUParticles
             gpuParticles.shapeType = ShapeTypeGPU.Point;
             gpuParticles.shapeEmitFrom = ShapeEmitFromGPU.Base;
             gpuParticles.alignToDirection = false;
+            gpuParticles.shapeRandomDirectionAmount = 0f;
+            gpuParticles.shapeSphericalDirectionAmount = 0f;
+            gpuParticles.shapeRandomPositionAmount = 0f;
             gpuParticles.shapeLocalPosition = Vector3.zero;
             gpuParticles.shapeLocalRotationEuler = Vector3.zero;
             gpuParticles.shapeLocalScale = Vector3.one;
@@ -2863,6 +2878,9 @@ namespace GPUParticles
             gpuParticles.shapeRadiusThickness = 1f;
             gpuParticles.shapeConeArcDeg = 360f;
             gpuParticles.alignToDirection = true;
+            gpuParticles.shapeRandomDirectionAmount = 0f;
+            gpuParticles.shapeSphericalDirectionAmount = 0f;
+            gpuParticles.shapeRandomPositionAmount = 0f;
 
             switch (validationProfile)
             {
@@ -2915,6 +2933,45 @@ namespace GPUParticles
                     gpuParticles.shapeBoxSize = Vector3.one;
                     gpuParticles.shapeLocalScale = shape.scale;
                     break;
+
+                case ParticleABValidationProfile.ShapeRandomDirectionPoint:
+                    shape.shapeType = ParticleSystemShapeType.Box;
+                    shape.scale = Vector3.one * 2f;
+                    shape.randomDirectionAmount = 1f;
+                    shape.alignToDirection = false;
+                    gpuParticles.shapeType = ShapeTypeGPU.Box;
+                    gpuParticles.shapeEmitFrom = ShapeEmitFromGPU.Volume;
+                    gpuParticles.shapeBoxSize = Vector3.one;
+                    gpuParticles.shapeLocalScale = shape.scale;
+                    gpuParticles.shapeRandomDirectionAmount = 1f;
+                    gpuParticles.alignToDirection = false;
+                    break;
+
+                case ParticleABValidationProfile.ShapeSphericalDirectionPoint:
+                    shape.shapeType = ParticleSystemShapeType.Box;
+                    shape.scale = new Vector3(2f, 4f, 6f);
+                    shape.sphericalDirectionAmount = 1f;
+                    shape.alignToDirection = false;
+                    gpuParticles.shapeType = ShapeTypeGPU.Box;
+                    gpuParticles.shapeEmitFrom = ShapeEmitFromGPU.Volume;
+                    gpuParticles.shapeBoxSize = Vector3.one;
+                    gpuParticles.shapeLocalScale = shape.scale;
+                    gpuParticles.shapeSphericalDirectionAmount = 1f;
+                    gpuParticles.alignToDirection = false;
+                    break;
+
+                case ParticleABValidationProfile.ShapeRandomPositionPoint:
+                    shape.shapeType = ParticleSystemShapeType.Box;
+                    shape.scale = new Vector3(1f, 2f, 4f);
+                    shape.randomPositionAmount = 1f;
+                    shape.alignToDirection = false;
+                    gpuParticles.shapeType = ShapeTypeGPU.Box;
+                    gpuParticles.shapeEmitFrom = ShapeEmitFromGPU.Volume;
+                    gpuParticles.shapeBoxSize = Vector3.one;
+                    gpuParticles.shapeLocalScale = shape.scale;
+                    gpuParticles.shapeRandomPositionAmount = 1f;
+                    gpuParticles.alignToDirection = false;
+                    break;
             }
         }
 
@@ -2928,6 +2985,9 @@ namespace GPUParticles
                 case ParticleABValidationProfile.ShapeEdgePoint:
                 case ParticleABValidationProfile.ShapeRectanglePoint:
                 case ParticleABValidationProfile.ShapeBoxEdgePoint:
+                case ParticleABValidationProfile.ShapeRandomDirectionPoint:
+                case ParticleABValidationProfile.ShapeSphericalDirectionPoint:
+                case ParticleABValidationProfile.ShapeRandomPositionPoint:
                     return true;
                 default:
                     return false;
@@ -4203,6 +4263,12 @@ namespace GPUParticles
             gpuShapeSpawnXRange.Reset();
             gpuShapeSpawnYRange.Reset();
             gpuShapeSpawnZRange.Reset();
+            shurikenShapeDirectionXRange.Reset();
+            shurikenShapeDirectionYRange.Reset();
+            shurikenShapeDirectionZRange.Reset();
+            gpuShapeDirectionXRange.Reset();
+            gpuShapeDirectionYRange.Reset();
+            gpuShapeDirectionZRange.Reset();
             shurikenLifetimeColorBlendRange.Reset();
             gpuLifetimeColorBlendRange.Reset();
             shurikenLifetimeSizeBlendRange.Reset();
@@ -6066,6 +6132,22 @@ namespace GPUParticles
                 shurikenShapeSpawnZRange.Observe(spawnPosition.z);
             }
 
+            Vector3 normalizedVelocity = velocity.sqrMagnitude > 1e-8f
+                ? velocity.normalized
+                : Vector3.zero;
+            if (gpuSample)
+            {
+                gpuShapeDirectionXRange.Observe(normalizedVelocity.x);
+                gpuShapeDirectionYRange.Observe(normalizedVelocity.y);
+                gpuShapeDirectionZRange.Observe(normalizedVelocity.z);
+            }
+            else
+            {
+                shurikenShapeDirectionXRange.Observe(normalizedVelocity.x);
+                shurikenShapeDirectionYRange.Observe(normalizedVelocity.y);
+                shurikenShapeDirectionZRange.Observe(normalizedVelocity.z);
+            }
+
             Vector3 expectedDirection = Vector3.zero;
             float geometryError = 0f;
             switch (validationProfile)
@@ -6151,10 +6233,33 @@ namespace GPUParticles
                                             zBoundaryError));
                     break;
                 }
+
+                case ParticleABValidationProfile.ShapeRandomDirectionPoint:
+                    geometryError = BoxBoundsError(
+                        spawnPosition,
+                        Vector3.one);
+                    break;
+
+                case ParticleABValidationProfile.ShapeSphericalDirectionPoint:
+                    geometryError = BoxBoundsError(
+                        spawnPosition,
+                        new Vector3(1f, 2f, 3f));
+                    if (spawnPosition.sqrMagnitude > 1e-8f)
+                    {
+                        expectedDirection = spawnPosition.normalized;
+                    }
+                    break;
+
+                case ParticleABValidationProfile.ShapeRandomPositionPoint:
+                    expectedDirection = Vector3.forward;
+                    geometryError = BoxBoundsError(
+                        spawnPosition,
+                        new Vector3(1.5f, 3f, 6f));
+                    break;
             }
 
             float directionError = expectedDirection.sqrMagnitude > 1e-8f
-                ? (velocity - expectedDirection).magnitude
+                ? (normalizedVelocity - expectedDirection).magnitude
                 : 0f;
             if (gpuSample)
             {
@@ -6170,6 +6275,19 @@ namespace GPUParticles
                 maximumShurikenShapeGeometryError = Mathf.Max(
                     maximumShurikenShapeGeometryError, geometryError);
             }
+        }
+
+        static float BoxBoundsError(
+            Vector3 position,
+            Vector3 halfExtents)
+        {
+            Vector3 excess = new Vector3(
+                Mathf.Abs(position.x) - halfExtents.x,
+                Mathf.Abs(position.y) - halfExtents.y,
+                Mathf.Abs(position.z) - halfExtents.z);
+            return Mathf.Max(
+                0f,
+                Mathf.Max(excess.x, Mathf.Max(excess.y, excess.z)));
         }
 
         bool ShapeSpawnRangesPass()
@@ -6209,6 +6327,21 @@ namespace GPUParticles
                     yRange = new Vector2(-1f, 1f);
                     zRange = new Vector2(-0.5f, 0.5f);
                     break;
+                case ParticleABValidationProfile.ShapeRandomDirectionPoint:
+                    xRange = new Vector2(-1f, 1f);
+                    yRange = new Vector2(-1f, 1f);
+                    zRange = new Vector2(-1f, 1f);
+                    break;
+                case ParticleABValidationProfile.ShapeSphericalDirectionPoint:
+                    xRange = new Vector2(-1f, 1f);
+                    yRange = new Vector2(-2f, 2f);
+                    zRange = new Vector2(-3f, 3f);
+                    break;
+                case ParticleABValidationProfile.ShapeRandomPositionPoint:
+                    xRange = new Vector2(-1.5f, 1.5f);
+                    yRange = new Vector2(-3f, 3f);
+                    zRange = new Vector2(-6f, 6f);
+                    break;
                 default:
                     return false;
             }
@@ -6219,6 +6352,18 @@ namespace GPUParticles
                    gpuShapeSpawnXRange.Covers(xRange.x, xRange.y) &&
                    gpuShapeSpawnYRange.Covers(yRange.x, yRange.y) &&
                    gpuShapeSpawnZRange.Covers(zRange.x, zRange.y);
+        }
+
+        bool ShapeDirectionRangesPass()
+        {
+            const float minimum = -1f;
+            const float maximum = 1f;
+            return shurikenShapeDirectionXRange.Covers(minimum, maximum) &&
+                   shurikenShapeDirectionYRange.Covers(minimum, maximum) &&
+                   shurikenShapeDirectionZRange.Covers(minimum, maximum) &&
+                   gpuShapeDirectionXRange.Covers(minimum, maximum) &&
+                   gpuShapeDirectionYRange.Covers(minimum, maximum) &&
+                   gpuShapeDirectionZRange.Covers(minimum, maximum);
         }
 
         float ConeRelationError(Vector3 position, Vector3 velocity, float age)
@@ -6919,6 +7064,28 @@ namespace GPUParticles
                                             ShapeSpawnRangesPass();
                     break;
 
+                case ParticleABValidationProfile.ShapeRandomDirectionPoint:
+                    profileSpecificPassed = maximumMeanSpeedError <= 0.001f &&
+                                            maximumShurikenParticleCount > 0 &&
+                                            maximumGPUParticleCount > 0 &&
+                                            maximumShurikenShapeGeometryError <= 0.002f &&
+                                            maximumGPUShapeGeometryError <= 0.002f &&
+                                            ShapeSpawnRangesPass() &&
+                                            ShapeDirectionRangesPass();
+                    break;
+
+                case ParticleABValidationProfile.ShapeSphericalDirectionPoint:
+                case ParticleABValidationProfile.ShapeRandomPositionPoint:
+                    profileSpecificPassed = maximumMeanSpeedError <= 0.001f &&
+                                            maximumShurikenParticleCount > 0 &&
+                                            maximumGPUParticleCount > 0 &&
+                                            maximumShurikenShapeDirectionError <= 0.003f &&
+                                            maximumGPUShapeDirectionError <= 0.003f &&
+                                            maximumShurikenShapeGeometryError <= 0.002f &&
+                                            maximumGPUShapeGeometryError <= 0.002f &&
+                                            ShapeSpawnRangesPass();
+                    break;
+
                 case ParticleABValidationProfile.TextureSheetLifetimePoint:
                 case ParticleABValidationProfile.TextureSheetSpeedPoint:
                 case ParticleABValidationProfile.TextureSheetFPSPoint:
@@ -7205,6 +7372,14 @@ namespace GPUParticles
                 $"({FormatRange(gpuShapeSpawnXRange)}," +
                 $"{FormatRange(gpuShapeSpawnYRange)}," +
                 $"{FormatRange(gpuShapeSpawnZRange)}); " +
+                $"shurikenShapeDirectionRanges=" +
+                $"({FormatRange(shurikenShapeDirectionXRange)}," +
+                $"{FormatRange(shurikenShapeDirectionYRange)}," +
+                $"{FormatRange(shurikenShapeDirectionZRange)}); " +
+                $"gpuShapeDirectionRanges=" +
+                $"({FormatRange(gpuShapeDirectionXRange)}," +
+                $"{FormatRange(gpuShapeDirectionYRange)}," +
+                $"{FormatRange(gpuShapeDirectionZRange)}); " +
                 $"shurikenLifetimeColorBlendRange={FormatRange(shurikenLifetimeColorBlendRange)}; " +
                 $"gpuLifetimeColorBlendRange={FormatRange(gpuLifetimeColorBlendRange)}; " +
                 $"shurikenLifetimeSizeBlendRange={FormatRange(shurikenLifetimeSizeBlendRange)}; " +

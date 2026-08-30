@@ -59,6 +59,10 @@ namespace GPUParticles
             gpu.shapeLocalPosition = shape.position;
             gpu.shapeLocalRotationEuler = shape.rotation;
             gpu.shapeLocalScale = shape.scale;
+            gpu.shapeRandomDirectionAmount = shape.randomDirectionAmount;
+            gpu.shapeSphericalDirectionAmount =
+                shape.sphericalDirectionAmount;
+            gpu.shapeRandomPositionAmount = shape.randomPositionAmount;
 
             // ---- Shape mapping ----
             gpu.shapeType = ShapeTypeGPU.Cone; // 默认使用Cone
@@ -320,6 +324,10 @@ namespace GPUParticles
             gpu.shapeLocalPosition = shape.position;
             gpu.shapeLocalRotationEuler = shape.rotation;
             gpu.shapeLocalScale = shape.scale;
+            gpu.shapeRandomDirectionAmount = shape.randomDirectionAmount;
+            gpu.shapeSphericalDirectionAmount =
+                shape.sphericalDirectionAmount;
+            gpu.shapeRandomPositionAmount = shape.randomPositionAmount;
 
             // ---- Shape mapping ----
             gpu.shapeType = ShapeTypeGPU.Cone; // 默认使用Cone

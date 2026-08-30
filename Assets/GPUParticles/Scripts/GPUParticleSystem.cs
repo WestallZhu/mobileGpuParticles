@@ -219,6 +219,9 @@ namespace GPUParticles
         public ShapeTypeGPU shapeType = ShapeTypeGPU.Cone;
         public ShapeEmitFromGPU shapeEmitFrom = ShapeEmitFromGPU.Volume;
         public bool alignToDirection = false; // default false (match Shuriken)
+        [Range(0f, 1f)] public float shapeRandomDirectionAmount;
+        [Range(0f, 1f)] public float shapeSphericalDirectionAmount;
+        [Min(0f)] public float shapeRandomPositionAmount;
 
         // Sphere/Hemisphere
         public float shapeSphereRadius = 0.5f;
@@ -535,6 +538,12 @@ namespace GPUParticles
         static readonly int _ShapeType = Shader.PropertyToID("_ShapeType");
         static readonly int _ShapeEmitFrom = Shader.PropertyToID("_ShapeEmitFrom");
         static readonly int _AlignToDirection = Shader.PropertyToID("_AlignToDirection");
+        static readonly int _ShapeRandomDirectionAmount =
+            Shader.PropertyToID("_ShapeRandomDirectionAmount");
+        static readonly int _ShapeSphericalDirectionAmount =
+            Shader.PropertyToID("_ShapeSphericalDirectionAmount");
+        static readonly int _ShapeRandomPositionScale =
+            Shader.PropertyToID("_ShapeRandomPositionScale");
         static readonly int _ShapeConeAngleRad = Shader.PropertyToID("_ShapeConeAngleRad");
         static readonly int _ShapeConeRadius = Shader.PropertyToID("_ShapeConeRadius");
         static readonly int _ShapeConeLength = Shader.PropertyToID("_ShapeConeLength");
@@ -667,6 +676,13 @@ namespace GPUParticles
             emissionStartDelayMin = Mathf.Max(0f, emissionStartDelayMin);
             emissionStartDelay = Mathf.Max(0f, emissionStartDelay);
             flipRotation = Mathf.Clamp01(flipRotation);
+            shapeRandomDirectionAmount = Mathf.Clamp01(
+                shapeRandomDirectionAmount);
+            shapeSphericalDirectionAmount = Mathf.Clamp01(
+                shapeSphericalDirectionAmount);
+            shapeRandomPositionAmount = Mathf.Max(
+                0f,
+                shapeRandomPositionAmount);
             Vector3 cullingSize = localCullingBounds.size;
             localCullingBounds.size = new Vector3(
                 Mathf.Max(0.0002f, Mathf.Abs(cullingSize.x)),
@@ -3004,6 +3020,21 @@ namespace GPUParticles
             simulateProperties.SetInt(_ShapeType, (int)shapeType);
             simulateProperties.SetInt(_ShapeEmitFrom, (int)shapeEmitFrom);
             simulateProperties.SetInt(_AlignToDirection, alignToDirection ? 1 : 0);
+            simulateProperties.SetFloat(
+                _ShapeRandomDirectionAmount,
+                Mathf.Clamp01(shapeRandomDirectionAmount));
+            simulateProperties.SetFloat(
+                _ShapeSphericalDirectionAmount,
+                Mathf.Clamp01(shapeSphericalDirectionAmount));
+            Vector3 randomPositionScale = shapeLocalScale *
+                Mathf.Max(0f, shapeRandomPositionAmount);
+            simulateProperties.SetVector(
+                _ShapeRandomPositionScale,
+                new Vector4(
+                    randomPositionScale.x,
+                    randomPositionScale.y,
+                    randomPositionScale.z,
+                    0f));
             simulateProperties.SetFloat(_ShapeRadiusThickness, Mathf.Clamp01(shapeRadiusThickness));
             simulateProperties.SetFloat(_ShapeConeArcRad,
                 Mathf.Clamp(shapeConeArcDeg, 0f, 360f) * Mathf.Deg2Rad);

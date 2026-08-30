@@ -62,6 +62,9 @@ namespace GPUParticles
         private float cachedShapeDonutRadius;
         private bool cachedShapeEnabled;
         private bool cachedShapeAlignToDirection;
+        private float cachedShapeRandomDirectionAmount;
+        private float cachedShapeSphericalDirectionAmount;
+        private float cachedShapeRandomPositionAmount;
 
         // Renderer缓存
         private ParticleSystemRenderMode cachedRenderMode;
@@ -235,6 +238,10 @@ namespace GPUParticles
             cachedShapeDonutRadius = shape.donutRadius;
             cachedShapeEnabled = shape.enabled;
             cachedShapeAlignToDirection = shape.alignToDirection;
+            cachedShapeRandomDirectionAmount = shape.randomDirectionAmount;
+            cachedShapeSphericalDirectionAmount =
+                shape.sphericalDirectionAmount;
+            cachedShapeRandomPositionAmount = shape.randomPositionAmount;
 
             if (sourceRenderer != null)
             {
@@ -700,6 +707,33 @@ namespace GPUParticles
                 shapeChanged = true;
             }
 
+            if (force || Mathf.Abs(
+                    shape.randomDirectionAmount -
+                    cachedShapeRandomDirectionAmount) > 0.001f)
+            {
+                cachedShapeRandomDirectionAmount =
+                    shape.randomDirectionAmount;
+                shapeChanged = true;
+            }
+
+            if (force || Mathf.Abs(
+                    shape.sphericalDirectionAmount -
+                    cachedShapeSphericalDirectionAmount) > 0.001f)
+            {
+                cachedShapeSphericalDirectionAmount =
+                    shape.sphericalDirectionAmount;
+                shapeChanged = true;
+            }
+
+            if (force || Mathf.Abs(
+                    shape.randomPositionAmount -
+                    cachedShapeRandomPositionAmount) > 0.001f)
+            {
+                cachedShapeRandomPositionAmount =
+                    shape.randomPositionAmount;
+                shapeChanged = true;
+            }
+
             // Shape Type
             if (force || shape.shapeType != cachedShapeType)
             {
@@ -786,6 +820,13 @@ namespace GPUParticles
 
         void ApplyShapeMapping(ParticleSystem.ShapeModule shape)
         {
+            targetGPUParticleSystem.shapeRandomDirectionAmount =
+                shape.randomDirectionAmount;
+            targetGPUParticleSystem.shapeSphericalDirectionAmount =
+                shape.sphericalDirectionAmount;
+            targetGPUParticleSystem.shapeRandomPositionAmount =
+                shape.randomPositionAmount;
+
             if (!shape.enabled)
             {
                 targetGPUParticleSystem.shapeType = ShapeTypeGPU.Point;

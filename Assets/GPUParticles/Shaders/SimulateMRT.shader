@@ -151,6 +151,9 @@ Shader "Hidden/GPUParticles/SimulateMRT"
                 int     _ShapeType;          // 0..7 shapes, 8 point emitter (Shape disabled)
                 int     _ShapeEmitFrom;      // 0 Volume, 1 Surface, 2 Base, 3 Edge
                 int     _AlignToDirection;   // orientation metadata; not velocity
+                float   _ShapeRandomDirectionAmount;
+                float   _ShapeSphericalDirectionAmount;
+                float3  _ShapeRandomPositionScale;
 
                 // Cone
                 float   _ShapeConeAngleRad;
@@ -1582,6 +1585,54 @@ Shader "Hidden/GPUParticles/SimulateMRT"
                             float3 dirL = BuildConeVelocity(d, _ShapeConeRadius, right, up, fwd, _ShapeConeAngleRad);
                             velL = dirL * particleStartSpeed;
                         }
+                    }
+
+                    if (_ShapeType != 8)
+                    {
+                        float3 right = normalize(_ShapeRightL);
+                        float3 up = normalize(_ShapeUpL);
+                        float3 fwd = normalize(_ShapeFwdL);
+                        float3 defaultDirection = fwd;
+                        if (abs(particleStartSpeed) > 1e-6)
+                        {
+                            defaultDirection = velL / particleStartSpeed;
+                        }
+
+                        float3 randomDirection = SampleSphereDir(Hash02(
+                            id * 0xA511E9B3u + 0x63D83595u));
+                        float3 direction = lerp(
+                            defaultDirection,
+                            randomDirection,
+                            saturate(_ShapeRandomDirectionAmount));
+
+                        // Shuriken spherizes from the Shape origin using the
+                        // sampled position before Randomize Position runs.
+                        float3 sphericalOffset = posL - _ShapePosL;
+                        float sphericalLength = length(sphericalOffset);
+                        float3 sphericalDirection = sphericalLength > 1e-6
+                            ? sphericalOffset / sphericalLength
+                            : defaultDirection;
+                        direction = lerp(
+                            direction,
+                            sphericalDirection,
+                            saturate(_ShapeSphericalDirectionAmount));
+                        float directionLength = length(direction);
+                        direction = directionLength > 1e-6
+                            ? direction / directionLength
+                            : defaultDirection;
+                        velL = direction * particleStartSpeed;
+
+                        float3 randomPositionDirection = SampleSphereDir(Hash02(
+                            id * 0xC2B2AE35u + 0x27D4EB2Fu));
+                        posL += right *
+                                    (randomPositionDirection.x *
+                                     _ShapeRandomPositionScale.x) +
+                                up *
+                                    (randomPositionDirection.y *
+                                     _ShapeRandomPositionScale.y) +
+                                fwd *
+                                    (randomPositionDirection.z *
+                                     _ShapeRandomPositionScale.z);
                     }
 
                     // finalize spawn in sim space
