@@ -76,6 +76,9 @@ Shader "GPUParticles/UnlitBillboardURP"
                 int   _RandomizeStartLifetime;
                 int   _StartLifetimeMode;
                 float _StartLifetimeLUTInvWidth;
+                int   _RingBufferMode;
+                float2 _RingBufferLoopRange;
+                float _padRingBuffer;
                 float _EmissionTimeAfterStep;
                 float _EmissionStartDelay;
                 float _EmissionDuration;
@@ -207,6 +210,38 @@ Shader "GPUParticles/UnlitBillboardURP"
             {
                 return saturate(normalizedPosition) * (1.0 - inverseWidth) +
                        0.5 * inverseWidth;
+            }
+
+            float RingBufferParticleAge(
+                float totalAge,
+                float particleStartLifetime)
+            {
+                float lifetime = max(0.001, particleStartLifetime);
+                totalAge = max(0.0, totalAge);
+                if (_RingBufferMode == 1)
+                {
+                    return min(totalAge, lifetime);
+                }
+                if (_RingBufferMode != 2)
+                {
+                    return totalAge;
+                }
+
+                float2 loopRange = saturate(_RingBufferLoopRange);
+                float loopStart = min(loopRange.x, loopRange.y) * lifetime;
+                float loopEnd = max(loopRange.x, loopRange.y) * lifetime;
+                float loopLength = loopEnd - loopStart;
+                if (totalAge < loopEnd)
+                {
+                    return totalAge;
+                }
+                if (loopLength <= 1e-6)
+                {
+                    return loopStart;
+                }
+                return loopStart + fmod(
+                    max(0.0, totalAge - loopStart),
+                    loopLength);
             }
 
             float BirthSystemTime(float particleAge)
@@ -450,7 +485,7 @@ Shader "GPUParticles/UnlitBillboardURP"
 
             float2 BillboardSize(
                 uint id,
-                float particleAge,
+                float totalParticleAge,
                 float normalizedAge,
                 float particleSpeed,
                 float currentSizeX)
@@ -460,9 +495,9 @@ Shader "GPUParticles/UnlitBillboardURP"
                     return currentSizeX.xx;
                 }
 
-                float sizeX = StartSizeXAtBirth(id, particleAge) *
+                float sizeX = StartSizeXAtBirth(id, totalParticleAge) *
                     SizeOverLifetimeX(id, normalizedAge);
-                float sizeY = StartSizeYAtBirth(id, particleAge) *
+                float sizeY = StartSizeYAtBirth(id, totalParticleAge) *
                     SizeOverLifetimeY(id, normalizedAge);
                 if (_SizeBySpeedEnabled != 0)
                 {
@@ -488,6 +523,98 @@ Shader "GPUParticles/UnlitBillboardURP"
                     sampler_RotationOverLifetimeIntegralLUT,
                     float2(x, 0.75), 0).r;
                 return lerp(minimum, maximum, Hash01(id ^ 0xD3A2646Cu));
+            }
+
+            float SampleRotationAngularVelocity(
+                uint id,
+                float normalizedAge)
+            {
+                float sampleStep = max(
+                    _RotationOverLifetimeIntegralLUTInvWidth,
+                    1.0 / 1024.0);
+                float lowerAge = max(0.0, normalizedAge - sampleStep);
+                float upperAge = min(1.0, normalizedAge + sampleStep);
+                float ageWidth = max(1e-6, upperAge - lowerAge);
+                return (SampleRotationIntegral(id, upperAge) -
+                        SampleRotationIntegral(id, lowerAge)) / ageWidth;
+            }
+
+            float RotationOverLifetimeAngle(
+                uint id,
+                float totalParticleAge,
+                float particleStartLifetime)
+            {
+                float lifetime = max(0.001, particleStartLifetime);
+                float totalAge = max(0.0, totalParticleAge);
+                float normalizedTotalAge = totalAge / lifetime;
+                if (_RingBufferMode == 0)
+                {
+                    return SampleRotationIntegral(
+                        id,
+                        saturate(normalizedTotalAge)) * lifetime;
+                }
+
+                if (_RingBufferMode == 1)
+                {
+                    if (totalAge <= lifetime)
+                    {
+                        return SampleRotationIntegral(
+                            id,
+                            saturate(normalizedTotalAge)) * lifetime;
+                    }
+
+                    float endIntegral =
+                        SampleRotationIntegral(id, 1.0) * lifetime;
+                    float endAngularVelocity = RandomRange(
+                        id,
+                        0xD3A2646Cu,
+                        _RandomizeRotationOverLifetime,
+                        _RotationOverLifetimeMin,
+                        _RotationOverLifetime);
+                    return endIntegral +
+                           (totalAge - lifetime) * endAngularVelocity;
+                }
+
+                float2 loopRange = saturate(_RingBufferLoopRange);
+                float loopStart = min(loopRange.x, loopRange.y);
+                float loopEnd = max(loopRange.x, loopRange.y);
+                if (normalizedTotalAge < loopEnd)
+                {
+                    return SampleRotationIntegral(
+                        id,
+                        saturate(normalizedTotalAge)) * lifetime;
+                }
+
+                float loopLength = loopEnd - loopStart;
+                if (loopLength <= 1e-6)
+                {
+                    float heldIntegral =
+                        SampleRotationIntegral(id, loopStart) * lifetime;
+                    float heldAngularVelocity =
+                        SampleRotationAngularVelocity(id, loopStart);
+                    return heldIntegral +
+                           max(0.0, totalAge - loopStart * lifetime) *
+                               heldAngularVelocity;
+                }
+
+                float elapsedLoopTime = max(
+                    0.0,
+                    normalizedTotalAge - loopStart);
+                float completedLoops = floor(
+                    elapsedLoopTime / loopLength);
+                float loopRemainder = elapsedLoopTime -
+                    completedLoops * loopLength;
+                float loopIntegral =
+                    SampleRotationIntegral(id, loopEnd) -
+                    SampleRotationIntegral(id, loopStart);
+                float partialIntegral =
+                    SampleRotationIntegral(
+                        id,
+                        loopStart + loopRemainder) -
+                    SampleRotationIntegral(id, loopStart);
+                return (SampleRotationIntegral(id, loopStart) +
+                        completedLoops * loopIntegral +
+                        partialIntegral) * lifetime;
             }
 
             float LifetimeByEmitterSpeedMultiplier(
@@ -919,23 +1046,28 @@ Shader "GPUParticles/UnlitBillboardURP"
                     return o;
                 }
 
-                bool startLifetimeUsesAgeState =
-                    _StartLifetimeMode == 1 || _StartLifetimeMode == 2;
-                float particleAge = startLifetimeUsesAgeState
+                bool lifetimeUsesAgeState =
+                    _StartLifetimeMode == 1 ||
+                    _StartLifetimeMode == 2 ||
+                    _RingBufferMode != 0;
+                float totalParticleAge = lifetimeUsesAgeState
                     ? max(0.0, posLife.w - 1.0)
                     : 0.0;
                 float particleStartLifetime = StartLifetimeAtBirth(
                     quadId,
-                    particleAge) *
+                    totalParticleAge) *
                     LifetimeByEmitterSpeedMultiplier(
                         quadId,
                         moduleState.gba);
-                if (!startLifetimeUsesAgeState)
+                if (!lifetimeUsesAgeState)
                 {
-                    particleAge = max(
+                    totalParticleAge = max(
                         0.0,
                         particleStartLifetime - posLife.w);
                 }
+                float particleAge = RingBufferParticleAge(
+                    totalParticleAge,
+                    particleStartLifetime);
                 float normalizedAge = saturate(
                     particleAge / max(1e-6, particleStartLifetime));
 
@@ -983,7 +1115,7 @@ Shader "GPUParticles/UnlitBillboardURP"
                 // size (W/L) & pivot
                 float2 sizeXY = BillboardSize(
                     quadId,
-                    particleAge,
+                    totalParticleAge,
                     normalizedAge,
                     length(velWS),
                     velSize.w);
@@ -1036,7 +1168,7 @@ Shader "GPUParticles/UnlitBillboardURP"
                 {
                     float particleStartRotation = StartRotationAtBirth(
                         quadId,
-                        particleAge);
+                        totalParticleAge);
                     float particleRotationOverLifetime = RandomRange(
                         quadId, 0xD3A2646Cu, _RandomizeRotationOverLifetime,
                         _RotationOverLifetimeMin, _RotationOverLifetime);
@@ -1044,13 +1176,16 @@ Shader "GPUParticles/UnlitBillboardURP"
                     if (_UseRotationOverLifetimeIntegralLUT != 0)
                     {
                         angle = particleStartRotation +
-                                SampleRotationIntegral(quadId, normalizedAge) *
-                                particleStartLifetime;
+                                RotationOverLifetimeAngle(
+                                    quadId,
+                                    totalParticleAge,
+                                    particleStartLifetime);
                     }
                     else
                     {
                         angle = particleStartRotation +
-                                particleRotationOverLifetime * particleAge;
+                                particleRotationOverLifetime *
+                                    totalParticleAge;
                     }
                     angle += rotationBySpeedPhase;
                     float rotationDirection =

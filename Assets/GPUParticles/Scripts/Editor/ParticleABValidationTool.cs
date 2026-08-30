@@ -261,6 +261,20 @@ namespace GPUParticles.Editor
                 ParticleABValidationProfile.PlaybackLifecyclePoint);
         }
 
+        [MenuItem("Tools/GPU Particles/Run Ring Buffer Pause A-B RT Capture")]
+        public static void RunRingBufferPauseCaptureMenu()
+        {
+            StartStartSizeCapture(
+                ParticleABValidationProfile.RingBufferPausePoint);
+        }
+
+        [MenuItem("Tools/GPU Particles/Run Ring Buffer Loop A-B RT Capture")]
+        public static void RunRingBufferLoopCaptureMenu()
+        {
+            StartStartSizeCapture(
+                ParticleABValidationProfile.RingBufferLoopPoint);
+        }
+
         [MenuItem("Tools/GPU Particles/Run Stop Action A-B RT Capture")]
         public static void RunStopActionCaptureMenu()
         {
@@ -1073,6 +1087,22 @@ namespace GPUParticles.Editor
                 ParticleABValidationProfile.PlaybackLifecyclePoint);
         }
 
+        public static void RunBatchRingBufferPauseCapture()
+        {
+            ValidateCommonFeatureMapping();
+            StartCapture(
+                true,
+                ParticleABValidationProfile.RingBufferPausePoint);
+        }
+
+        public static void RunBatchRingBufferLoopCapture()
+        {
+            ValidateCommonFeatureMapping();
+            StartCapture(
+                true,
+                ParticleABValidationProfile.RingBufferLoopPoint);
+        }
+
         public static void RunBatchStopActionCapture()
         {
             ValidateCommonFeatureMapping();
@@ -1643,6 +1673,9 @@ namespace GPUParticles.Editor
                     return 1.5f;
                 case ParticleABValidationProfile.PlaybackLifecyclePoint:
                     return 4.7f;
+                case ParticleABValidationProfile.RingBufferPausePoint:
+                case ParticleABValidationProfile.RingBufferLoopPoint:
+                    return 2.6f;
                 case ParticleABValidationProfile.StopActionCallbackPoint:
                     return 2.6f;
                 case ParticleABValidationProfile.PrewarmPoint:
@@ -1724,6 +1757,11 @@ namespace GPUParticles.Editor
             if (profile == ParticleABValidationProfile.PlaybackLifecyclePoint)
             {
                 return 10f;
+            }
+            if (profile == ParticleABValidationProfile.RingBufferPausePoint ||
+                profile == ParticleABValidationProfile.RingBufferLoopPoint)
+            {
+                return 20f;
             }
             if (profile ==
                 ParticleABValidationProfile.StopActionCallbackPoint)
@@ -1863,6 +1901,10 @@ namespace GPUParticles.Editor
                     return "TestResults/ParticleScalingShape";
                 case ParticleABValidationProfile.PlaybackLifecyclePoint:
                     return "TestResults/ParticlePlaybackLifecycle";
+                case ParticleABValidationProfile.RingBufferPausePoint:
+                    return "TestResults/ParticleRingBufferPause";
+                case ParticleABValidationProfile.RingBufferLoopPoint:
+                    return "TestResults/ParticleRingBufferLoop";
                 case ParticleABValidationProfile.StopActionCallbackPoint:
                     return "TestResults/ParticleStopAction";
                 case ParticleABValidationProfile.PrewarmPoint:
@@ -2064,6 +2106,9 @@ namespace GPUParticles.Editor
                 main.playOnAwake = false;
                 main.prewarm = true;
                 main.stopAction = ParticleSystemStopAction.Destroy;
+                main.ringBufferMode =
+                    ParticleSystemRingBufferMode.LoopUntilReplaced;
+                main.ringBufferLoopRange = new Vector2(0.2f, 0.8f);
                 main.flipRotation = 0.65f;
                 main.gravitySource = ParticleSystemGravitySource.Physics2D;
                 main.scalingMode = ParticleSystemScalingMode.Local;
@@ -2326,6 +2371,18 @@ namespace GPUParticles.Editor
                 Require(
                     gpu.stopActionTarget == null,
                     "Same-GameObject Stop Action should use the GPU owner.");
+                Require(
+                    gpu.ringBufferMode ==
+                        ParticleSystemRingBufferMode.LoopUntilReplaced,
+                    "Main Ring Buffer Loop mode was not mapped.");
+                RequireApproximately(
+                    gpu.ringBufferLoopRange.x,
+                    0.2f,
+                    "Main Ring Buffer Loop Range minimum");
+                RequireApproximately(
+                    gpu.ringBufferLoopRange.y,
+                    0.8f,
+                    "Main Ring Buffer Loop Range maximum");
                 RequireApproximately(
                     gpu.flipRotation,
                     0.65f,
@@ -3222,6 +3279,9 @@ namespace GPUParticles.Editor
                 shape.arcSpeed = 0.75f;
                 main.useUnscaledTime = false;
                 main.scalingMode = ParticleSystemScalingMode.Shape;
+                main.ringBufferMode =
+                    ParticleSystemRingBufferMode.PauseUntilReplaced;
+                main.ringBufferLoopRange = new Vector2(0.1f, 0.9f);
                 shurikenRenderer.minParticleSize = 0.125f;
                 shurikenRenderer.maxParticleSize = 0.45f;
                 ShurikenConverter.Convert(owner);
@@ -3232,6 +3292,18 @@ namespace GPUParticles.Editor
                 Require(
                     gpu.scalingMode == ParticleSystemScalingMode.Shape,
                     "Updated Main Scaling Mode Shape was not mapped.");
+                Require(
+                    gpu.ringBufferMode ==
+                        ParticleSystemRingBufferMode.PauseUntilReplaced,
+                    "Updated Main Ring Buffer Pause mode was not mapped.");
+                RequireApproximately(
+                    gpu.ringBufferLoopRange.x,
+                    0.1f,
+                    "Updated Main Ring Buffer Loop Range minimum");
+                RequireApproximately(
+                    gpu.ringBufferLoopRange.y,
+                    0.9f,
+                    "Updated Main Ring Buffer Loop Range maximum");
                 RequireApproximately(gpu.shapeCircleRadius, 3f,
                     "Circle radius must remain unscaled before GPU Shape TRS");
                 Require(gpu.shapeLocalScale == shape.scale, "Shape scale was not preserved.");

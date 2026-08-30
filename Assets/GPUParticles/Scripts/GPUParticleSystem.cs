@@ -99,6 +99,9 @@ namespace GPUParticles
         public bool prewarm;
         public ParticleSystemStopAction stopAction =
             ParticleSystemStopAction.None;
+        public ParticleSystemRingBufferMode ringBufferMode =
+            ParticleSystemRingBufferMode.Disabled;
+        public Vector2 ringBufferLoopRange = new Vector2(0f, 1f);
         [Tooltip("Optional GameObject that receives Main Stop Action. " +
                  "Leave empty to use this GPU particle GameObject.")]
         public GameObject stopActionTarget;
@@ -438,6 +441,10 @@ namespace GPUParticles
             Shader.PropertyToID("_StartLifetimeLUT");
         static readonly int _StartLifetimeLUTInvWidth =
             Shader.PropertyToID("_StartLifetimeLUTInvWidth");
+        static readonly int _RingBufferMode =
+            Shader.PropertyToID("_RingBufferMode");
+        static readonly int _RingBufferLoopRange =
+            Shader.PropertyToID("_RingBufferLoopRange");
         static readonly int _StartSpeed = Shader.PropertyToID("_StartSpeed");
         static readonly int _StartSpeedMin = Shader.PropertyToID("_StartSpeedMin");
         static readonly int _RandomizeStartSpeed = Shader.PropertyToID("_RandomizeStartSpeed");
@@ -840,6 +847,7 @@ namespace GPUParticles
             emissionDuration = Mathf.Max(0.05f, emissionDuration);
             emissionStartDelayMin = Mathf.Max(0f, emissionStartDelayMin);
             emissionStartDelay = Mathf.Max(0f, emissionStartDelay);
+            ringBufferLoopRange = Ordered01Range(ringBufferLoopRange);
             flipRotation = Mathf.Clamp01(flipRotation);
             shapeRandomDirectionAmount = Mathf.Clamp01(
                 shapeRandomDirectionAmount);
@@ -1425,6 +1433,11 @@ namespace GPUParticles
             lifetimeByEmitterSpeedRange = OrderedRange(range);
         }
 
+        public void SetRingBufferLoopRange(Vector2 range)
+        {
+            ringBufferLoopRange = Ordered01Range(range);
+        }
+
         public void SetTextureSheetSpeedRange(Vector2 range)
         {
             textureSheetSpeedRange = OrderedRange(range);
@@ -1435,6 +1448,14 @@ namespace GPUParticles
             return new Vector2(
                 Mathf.Min(range.x, range.y),
                 Mathf.Max(range.x, range.y));
+        }
+
+        static Vector2 Ordered01Range(Vector2 range)
+        {
+            Vector2 ordered = OrderedRange(range);
+            return new Vector2(
+                Mathf.Clamp01(ordered.x),
+                Mathf.Clamp01(ordered.y));
         }
 
         static float InverseTextureWidth(Texture2D texture)
@@ -1654,26 +1675,84 @@ namespace GPUParticles
             out float particleAge,
             out float remainingLifetime)
         {
-            if (IsStartLifetimeCurveMode())
+            ResolveParticleLifetimeStateDetailed(
+                particleId,
+                lifetimeState,
+                birthEmitterVelocityWS,
+                out particleStartLifetime,
+                out _,
+                out particleAge,
+                out remainingLifetime);
+        }
+
+        void ResolveParticleLifetimeStateDetailed(
+            int particleId,
+            float lifetimeState,
+            Vector3 birthEmitterVelocityWS,
+            out float particleStartLifetime,
+            out float totalParticleAge,
+            out float particleAge,
+            out float remainingLifetime)
+        {
+            if (UsesParticleAgeLifetimeState())
             {
-                particleAge = Mathf.Max(0f, lifetimeState - 1f);
+                totalParticleAge = Mathf.Max(0f, lifetimeState - 1f);
                 particleStartLifetime = ResolveStartLifetime(
                     particleId,
-                    particleAge,
+                    totalParticleAge,
                     birthEmitterVelocityWS);
-                remainingLifetime = Mathf.Max(
+            }
+            else
+            {
+                particleStartLifetime = ResolveStartLifetime(
+                    particleId,
+                    birthEmitterVelocityWS);
+                totalParticleAge = Mathf.Max(
                     0f,
-                    particleStartLifetime - particleAge);
-                return;
+                    particleStartLifetime - Mathf.Max(0f, lifetimeState));
             }
 
-            particleStartLifetime = ResolveStartLifetime(
-                particleId,
-                birthEmitterVelocityWS);
-            remainingLifetime = Mathf.Max(0f, lifetimeState);
-            particleAge = Mathf.Max(
+            particleAge = ResolveRingBufferParticleAge(
+                totalParticleAge,
+                particleStartLifetime);
+            remainingLifetime = Mathf.Max(
                 0f,
-                particleStartLifetime - remainingLifetime);
+                particleStartLifetime - particleAge);
+        }
+
+        float ResolveRingBufferParticleAge(
+            float totalParticleAge,
+            float particleStartLifetime)
+        {
+            float lifetime = Mathf.Max(0.001f, particleStartLifetime);
+            float totalAge = Mathf.Max(0f, totalParticleAge);
+            if (ringBufferMode ==
+                ParticleSystemRingBufferMode.PauseUntilReplaced)
+            {
+                return Mathf.Min(totalAge, lifetime);
+            }
+
+            if (ringBufferMode !=
+                ParticleSystemRingBufferMode.LoopUntilReplaced)
+            {
+                return totalAge;
+            }
+
+            Vector2 loopRange = Ordered01Range(ringBufferLoopRange);
+            float loopStart = loopRange.x * lifetime;
+            float loopEnd = loopRange.y * lifetime;
+            float loopLength = loopEnd - loopStart;
+            if (totalAge < loopEnd)
+            {
+                return totalAge;
+            }
+            if (loopLength <= 1e-6f)
+            {
+                return loopStart;
+            }
+            return loopStart + Mathf.Repeat(
+                totalAge - loopStart,
+                loopLength);
         }
 
         internal float ResolveParticleRotationRadians(
@@ -1683,16 +1762,17 @@ namespace GPUParticles
             Vector3 birthEmitterVelocityWS = default)
         {
             uint id = (uint)particleId;
-            ResolveParticleLifetimeState(
+            ResolveParticleLifetimeStateDetailed(
                 particleId,
                 lifetimeState,
                 birthEmitterVelocityWS,
                 out float particleStartLifetime,
-                out float age,
+                out float totalParticleAge,
+                out _,
                 out _);
             float particleStartRotation = ResolveStartRotation(
                 id,
-                age);
+                totalParticleAge);
             float rotationDirection = ResolveRotationDirection(id);
 
             if (rotationOverLifetimeIntegralLUT == null)
@@ -1704,22 +1784,131 @@ namespace GPUParticles
                     id,
                     0xD3A2646Cu);
                 return rotationDirection *
-                       (particleStartRotation + angularVelocity * age +
+                       (particleStartRotation +
+                        angularVelocity * totalParticleAge +
                         rotationBySpeedPhase);
             }
 
-            float normalizedAge = particleStartLifetime > 1e-6f
-                ? Mathf.Clamp01(age / particleStartLifetime)
-                : 0f;
-            float minimumIntegral = SampleLUTRow(
-                rotationOverLifetimeIntegralLUT, normalizedAge, 0);
-            float maximumIntegral = SampleLUTRow(
-                rotationOverLifetimeIntegralLUT, normalizedAge, 1);
-            float blend = Hash01(id ^ 0xD3A2646Cu);
-            float integral = Mathf.LerpUnclamped(minimumIntegral, maximumIntegral, blend);
+            float integral = ResolveRotationOverLifetimeAngle(
+                id,
+                totalParticleAge,
+                particleStartLifetime);
             return rotationDirection *
-                   (particleStartRotation + integral * particleStartLifetime +
-                    rotationBySpeedPhase);
+                   (particleStartRotation + integral + rotationBySpeedPhase);
+        }
+
+        float ResolveRotationOverLifetimeAngle(
+            uint particleId,
+            float totalParticleAge,
+            float particleStartLifetime)
+        {
+            float lifetime = Mathf.Max(0.001f, particleStartLifetime);
+            float totalAge = Mathf.Max(0f, totalParticleAge);
+            float normalizedTotalAge = totalAge / lifetime;
+            if (ringBufferMode == ParticleSystemRingBufferMode.Disabled)
+            {
+                return SampleRotationIntegral(
+                           particleId,
+                           Mathf.Clamp01(normalizedTotalAge)) *
+                       lifetime;
+            }
+
+            if (ringBufferMode ==
+                ParticleSystemRingBufferMode.PauseUntilReplaced)
+            {
+                if (totalAge <= lifetime)
+                {
+                    return SampleRotationIntegral(
+                               particleId,
+                               Mathf.Clamp01(normalizedTotalAge)) *
+                           lifetime;
+                }
+
+                float endIntegral =
+                    SampleRotationIntegral(particleId, 1f) * lifetime;
+                float endAngularVelocity = ResolveRandomRange(
+                    randomizeRotationOverLifetime,
+                    rotationOverLifetimeMin,
+                    rotationOverLifetime,
+                    particleId,
+                    0xD3A2646Cu);
+                return endIntegral +
+                       (totalAge - lifetime) * endAngularVelocity;
+            }
+
+            Vector2 loopRange = Ordered01Range(ringBufferLoopRange);
+            float loopStart = loopRange.x;
+            float loopEnd = loopRange.y;
+            if (normalizedTotalAge < loopEnd)
+            {
+                return SampleRotationIntegral(
+                           particleId,
+                           Mathf.Clamp01(normalizedTotalAge)) *
+                       lifetime;
+            }
+
+            float loopLength = loopEnd - loopStart;
+            if (loopLength <= 1e-6f)
+            {
+                float heldIntegral =
+                    SampleRotationIntegral(particleId, loopStart) * lifetime;
+                float heldAngularVelocity =
+                    SampleRotationAngularVelocity(particleId, loopStart);
+                return heldIntegral +
+                       Mathf.Max(0f, totalAge - loopStart * lifetime) *
+                           heldAngularVelocity;
+            }
+
+            float elapsedLoopTime = Mathf.Max(
+                0f,
+                normalizedTotalAge - loopStart);
+            float completedLoops = Mathf.Floor(
+                elapsedLoopTime / loopLength);
+            float loopRemainder = elapsedLoopTime -
+                completedLoops * loopLength;
+            float loopIntegral =
+                SampleRotationIntegral(particleId, loopEnd) -
+                SampleRotationIntegral(particleId, loopStart);
+            float partialIntegral =
+                SampleRotationIntegral(
+                    particleId,
+                    loopStart + loopRemainder) -
+                SampleRotationIntegral(particleId, loopStart);
+            return (SampleRotationIntegral(particleId, loopStart) +
+                    completedLoops * loopIntegral + partialIntegral) *
+                   lifetime;
+        }
+
+        float SampleRotationIntegral(uint particleId, float normalizedAge)
+        {
+            float minimumIntegral = SampleLUTRow(
+                rotationOverLifetimeIntegralLUT,
+                normalizedAge,
+                0);
+            float maximumIntegral = SampleLUTRow(
+                rotationOverLifetimeIntegralLUT,
+                normalizedAge,
+                1);
+            float blend = Hash01(particleId ^ 0xD3A2646Cu);
+            return Mathf.LerpUnclamped(
+                minimumIntegral,
+                maximumIntegral,
+                blend);
+        }
+
+        float SampleRotationAngularVelocity(
+            uint particleId,
+            float normalizedAge)
+        {
+            float sampleStep = Mathf.Max(
+                1f / Mathf.Max(2, rotationOverLifetimeIntegralLUT.width),
+                1f / 1024f);
+            float lowerAge = Mathf.Max(0f, normalizedAge - sampleStep);
+            float upperAge = Mathf.Min(1f, normalizedAge + sampleStep);
+            float ageWidth = Mathf.Max(1e-6f, upperAge - lowerAge);
+            return (SampleRotationIntegral(particleId, upperAge) -
+                    SampleRotationIntegral(particleId, lowerAge)) /
+                   ageWidth;
         }
 
         float ResolveRotationDirection(uint particleId)
@@ -1746,11 +1935,12 @@ namespace GPUParticles
                 return new Vector2(currentSizeX, currentSizeX);
             }
 
-            ResolveParticleLifetimeState(
+            ResolveParticleLifetimeStateDetailed(
                 particleId,
                 lifetimeState,
                 birthEmitterVelocityWS,
                 out float particleStartLifetime,
+                out float totalParticleAge,
                 out float particleAge,
                 out _);
             float normalizedAge = particleStartLifetime > 1e-6f
@@ -1760,7 +1950,7 @@ namespace GPUParticles
 
             float startY = ResolveStartSizeAxis(
                 id,
-                particleAge,
+                totalParticleAge,
                 startSize3D ? EffectiveStartSizeYMode() : EffectiveStartSizeMode(),
                 startSize3D ? startSizeYMin : startSizeMin,
                 startSize3D ? startSizeY : startSize,
@@ -1886,6 +2076,13 @@ namespace GPUParticles
             ParticleSystemCurveMode mode = EffectiveStartLifetimeMode();
             return mode == ParticleSystemCurveMode.Curve ||
                    mode == ParticleSystemCurveMode.TwoCurves;
+        }
+
+        internal bool UsesParticleAgeLifetimeState()
+        {
+            return IsStartLifetimeCurveMode() ||
+                   ringBufferMode !=
+                       ParticleSystemRingBufferMode.Disabled;
         }
 
         internal float ResolveStartRotation(uint particleId, float particleAge)
@@ -2552,6 +2749,16 @@ namespace GPUParticles
         {
             if (emissionLooping) return false;
 
+            // Ring-buffer particles intentionally remain alive after their
+            // lifetime. A one-shot system can only drain naturally when it did
+            // not create any particles; otherwise replacement or an explicit
+            // StopEmittingAndClear call owns their removal.
+            if (ringBufferMode != ParticleSystemRingBufferMode.Disabled &&
+                particleBirthObserved)
+            {
+                return false;
+            }
+
             float emissionEnd = ResolveEmissionStartDelay() +
                                 Mathf.Max(0.05f, emissionDuration);
             float drainEnd = particleBirthObserved
@@ -3114,6 +3321,18 @@ namespace GPUParticles
             simulateProperties.SetInt(
                 _StartLifetimeMode,
                 (int)EffectiveStartLifetimeMode());
+            simulateProperties.SetInt(
+                _RingBufferMode,
+                (int)ringBufferMode);
+            Vector2 selectedRingBufferLoopRange =
+                Ordered01Range(ringBufferLoopRange);
+            simulateProperties.SetVector(
+                _RingBufferLoopRange,
+                new Vector4(
+                    selectedRingBufferLoopRange.x,
+                    selectedRingBufferLoopRange.y,
+                    0f,
+                    0f));
             simulateProperties.SetFloat(_StartSpeed, startSpeed);
             simulateProperties.SetFloat(_StartSpeedMin, startSpeedMin);
             simulateProperties.SetInt(_RandomizeStartSpeed, randomizeStartSpeed ? 1 : 0);
@@ -3552,6 +3771,18 @@ namespace GPUParticles
             renderMaterial.SetInt(
                 _StartLifetimeMode,
                 (int)EffectiveStartLifetimeMode());
+            renderMaterial.SetInt(
+                _RingBufferMode,
+                (int)ringBufferMode);
+            Vector2 selectedRingBufferLoopRange =
+                Ordered01Range(ringBufferLoopRange);
+            renderMaterial.SetVector(
+                _RingBufferLoopRange,
+                new Vector4(
+                    selectedRingBufferLoopRange.x,
+                    selectedRingBufferLoopRange.y,
+                    0f,
+                    0f));
             renderMaterial.SetFloat(_EmissionTimeAfterStep, emissionTime);
             renderMaterial.SetFloat(
                 _EmissionStartDelay,

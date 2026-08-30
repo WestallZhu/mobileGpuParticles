@@ -43,6 +43,8 @@ namespace GPUParticles
         private bool cachedPlayOnAwake;
         private bool cachedPrewarm;
         private ParticleSystemStopAction cachedStopAction;
+        private ParticleSystemRingBufferMode cachedRingBufferMode;
+        private Vector2 cachedRingBufferLoopRange;
         private float cachedStartRotation;
         private float cachedFlipRotation;
         private float cachedRotationOverLifetime;
@@ -237,6 +239,8 @@ namespace GPUParticles
             cachedPlayOnAwake = main.playOnAwake;
             cachedPrewarm = main.prewarm;
             cachedStopAction = main.stopAction;
+            cachedRingBufferMode = main.ringBufferMode;
+            cachedRingBufferLoopRange = main.ringBufferLoopRange;
             cachedStartRotation = main.startRotation.mode == ParticleSystemCurveMode.Constant ? main.startRotation.constant : cachedStartRotation;
             cachedFlipRotation = main.flipRotation;
             cachedEmissionEnabled = emission.enabled;
@@ -409,6 +413,20 @@ namespace GPUParticles
                 targetGPUParticleSystem.stopActionTarget =
                     sourceParticleSystem.gameObject;
                 cachedStopAction = main.stopAction;
+            }
+
+            Vector2 ringBufferLoopRange = main.ringBufferLoopRange;
+            if (force ||
+                main.ringBufferMode != cachedRingBufferMode ||
+                (ringBufferLoopRange - cachedRingBufferLoopRange)
+                    .sqrMagnitude > 1e-8f)
+            {
+                targetGPUParticleSystem.ringBufferMode =
+                    main.ringBufferMode;
+                targetGPUParticleSystem.SetRingBufferLoopRange(
+                    ringBufferLoopRange);
+                cachedRingBufferMode = main.ringBufferMode;
+                cachedRingBufferLoopRange = ringBufferLoopRange;
             }
 
             ParticleSystem.MinMaxCurve startLifetime = main.startLifetime;
@@ -1767,8 +1785,8 @@ namespace GPUParticles
 
             ParticleSystem.MinMaxCurve curve = rotationOverLifetime.z;
             targetGPUParticleSystem.SetRotationOverLifetimeRange(
-                curve.Evaluate(0f, 0f),
-                curve.Evaluate(0f, 1f));
+                curve.Evaluate(1f, 0f),
+                curve.Evaluate(1f, 1f));
             generatedRotationLUT = CurveLUTBuilder.BuildIntegral(curve);
             targetGPUParticleSystem.rotationOverLifetimeIntegralLUT =
                 generatedRotationLUT;

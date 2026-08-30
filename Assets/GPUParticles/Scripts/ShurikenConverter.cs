@@ -42,6 +42,8 @@ namespace GPUParticles
             gpu.prewarm = main.prewarm;
             gpu.stopAction = main.stopAction;
             gpu.stopActionTarget = null;
+            gpu.ringBufferMode = main.ringBufferMode;
+            gpu.SetRingBufferLoopRange(main.ringBufferLoopRange);
 
             ApplyForceOverLifetime(ps, gpu, owner);
             ApplyVelocityOverLifetime(ps, gpu, owner);
@@ -288,6 +290,8 @@ namespace GPUParticles
             gpu.prewarm = main.prewarm;
             gpu.stopAction = main.stopAction;
             gpu.stopActionTarget = originalOwner;
+            gpu.ringBufferMode = main.ringBufferMode;
+            gpu.SetRingBufferLoopRange(main.ringBufferLoopRange);
 
             ApplyForceOverLifetime(particleSystem, gpu, gpuChild);
             ApplyVelocityOverLifetime(particleSystem, gpu, gpuChild);
@@ -827,8 +831,8 @@ namespace GPUParticles
                 }
                 ParticleSystem.MinMaxCurve rotationCurve = rotationOverLifetime.z;
                 gpu.SetRotationOverLifetimeRange(
-                    rotationCurve.Evaluate(0f, 0f),
-                    rotationCurve.Evaluate(0f, 1f));
+                    rotationCurve.Evaluate(1f, 0f),
+                    rotationCurve.Evaluate(1f, 1f));
                 gpu.rotationOverLifetimeIntegralLUT = CurveLUTBuilder.BuildIntegral(
                     rotationCurve,
                     saveAsAsset: true,

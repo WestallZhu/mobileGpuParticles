@@ -72,6 +72,9 @@ Shader "Hidden/GPUParticles/SimulateMRT"
                 int     _RandomizeStartLifetime;
                 int     _StartLifetimeMode;
                 float   _StartLifetimeLUTInvWidth;
+                int     _RingBufferMode;     // 0 Disabled, 1 Pause, 2 Loop
+                float2  _RingBufferLoopRange;
+                float   _PadRingBuffer;
                 float   _StartSpeed;
                 float   _StartSpeedMin;
                 int     _RandomizeStartSpeed;
@@ -366,6 +369,49 @@ Shader "Hidden/GPUParticles/SimulateMRT"
                 }
 
                 return frac(activeTime / duration);
+            }
+
+            float RingBufferParticleAge(
+                float totalAge,
+                float particleStartLifetime)
+            {
+                float lifetime = max(0.001, particleStartLifetime);
+                totalAge = max(0.0, totalAge);
+                if (_RingBufferMode == 1) // Pause Until Replaced
+                {
+                    return min(totalAge, lifetime);
+                }
+                if (_RingBufferMode != 2) // Disabled
+                {
+                    return totalAge;
+                }
+
+                float2 loopRange = saturate(_RingBufferLoopRange);
+                float loopStart = min(loopRange.x, loopRange.y) * lifetime;
+                float loopEnd = max(loopRange.x, loopRange.y) * lifetime;
+                float loopLength = loopEnd - loopStart;
+                if (totalAge < loopEnd)
+                {
+                    return totalAge;
+                }
+                if (loopLength <= 1e-6)
+                {
+                    return loopStart;
+                }
+                return loopStart + fmod(
+                    max(0.0, totalAge - loopStart),
+                    loopLength);
+            }
+
+            float RingBufferNormalizedAge(
+                float totalAge,
+                float particleStartLifetime)
+            {
+                return saturate(
+                    RingBufferParticleAge(
+                        totalAge,
+                        particleStartLifetime) /
+                    max(0.001, particleStartLifetime));
             }
 
             float StartColorSystemTime(float particleAge)
@@ -1158,7 +1204,7 @@ Shader "Hidden/GPUParticles/SimulateMRT"
                 inout float3 velocity,
                 float particleSize,
                 float particleStartLifetime,
-                bool startLifetimeUsesAgeState,
+                bool lifetimeUsesAgeState,
                 inout float life,
                 inout float normalizedAge,
                 float stepDt)
@@ -1209,17 +1255,20 @@ Shader "Hidden/GPUParticles/SimulateMRT"
                             {
                                 float lifetimeLoss = parameters.z *
                                     particleStartLifetime;
-                                if (startLifetimeUsesAgeState)
+                                if (lifetimeUsesAgeState)
                                 {
-                                    float particleAge = max(0.0, life - 1.0) +
+                                    float totalParticleAge =
+                                        max(0.0, life - 1.0) +
                                         lifetimeLoss;
-                                    life = particleAge + 1e-4 >=
-                                           particleStartLifetime
+                                    life = _RingBufferMode == 0 &&
+                                           totalParticleAge + 1e-4 >=
+                                               particleStartLifetime
                                         ? 0.0
-                                        : particleAge + 1.0;
-                                    normalizedAge = saturate(
-                                        particleAge /
-                                        max(1e-5, particleStartLifetime));
+                                        : totalParticleAge + 1.0;
+                                    normalizedAge =
+                                        RingBufferNormalizedAge(
+                                            totalParticleAge,
+                                            particleStartLifetime);
                                 }
                                 else
                                 {
@@ -1808,8 +1857,10 @@ Shader "Hidden/GPUParticles/SimulateMRT"
                 float rotationPhase = curModuleState.x;
                 float3 birthEmitterVelocityWS = curModuleState.yzw;
 
-                bool startLifetimeUsesAgeState =
-                    _StartLifetimeMode == 1 || _StartLifetimeMode == 2;
+                bool lifetimeUsesAgeState =
+                    _StartLifetimeMode == 1 ||
+                    _StartLifetimeMode == 2 ||
+                    _RingBufferMode != 0;
                 float baseParticleStartLifetime = StartLifetimeAtBirth(id, 0.0);
                 float particleStartLifetime = baseParticleStartLifetime *
                     LifetimeByEmitterSpeedMultiplier(
@@ -2221,7 +2272,7 @@ Shader "Hidden/GPUParticles/SimulateMRT"
                         LifetimeByEmitterSpeedMultiplier(
                             id,
                             birthEmitterVelocityWS);
-                    life = startLifetimeUsesAgeState
+                    life = lifetimeUsesAgeState
                         ? 1.0
                         : particleStartLifetime;
                     
@@ -2267,35 +2318,48 @@ Shader "Hidden/GPUParticles/SimulateMRT"
                         stepDt = _DeltaTime;
                     }
 
+                    float totalParticleAgeBeforeStep;
+                    float totalParticleAgeAfterStep;
                     float particleAgeBeforeStep;
                     float particleAgeAfterStep;
                     float normalizedAgeBeforeStep;
                     float normalizedAgeAfterStep;
-                    if (startLifetimeUsesAgeState)
+                    if (lifetimeUsesAgeState)
                     {
-                        particleAgeBeforeStep = max(0.0, life - 1.0);
-                        particleAgeAfterStep =
-                            particleAgeBeforeStep + stepDt;
+                        totalParticleAgeBeforeStep =
+                            max(0.0, life - 1.0);
+                        totalParticleAgeAfterStep =
+                            totalParticleAgeBeforeStep + stepDt;
                         baseParticleStartLifetime = StartLifetimeAtBirth(
                             id,
-                            particleAgeAfterStep);
+                            totalParticleAgeAfterStep);
                         particleStartLifetime = baseParticleStartLifetime *
                             LifetimeByEmitterSpeedMultiplier(
                                 id,
                                 birthEmitterVelocityWS);
+                        particleAgeBeforeStep = RingBufferParticleAge(
+                            totalParticleAgeBeforeStep,
+                            particleStartLifetime);
+                        particleAgeAfterStep = RingBufferParticleAge(
+                            totalParticleAgeAfterStep,
+                            particleStartLifetime);
                         normalizedAgeBeforeStep = saturate(
                             particleAgeBeforeStep /
                             max(particleStartLifetime, 1e-5));
                         normalizedAgeAfterStep = saturate(
                             particleAgeAfterStep /
                             max(particleStartLifetime, 1e-5));
-                        life = particleAgeAfterStep + 1e-4 >=
-                               particleStartLifetime
+                        life = _RingBufferMode == 0 &&
+                               totalParticleAgeAfterStep + 1e-4 >=
+                                   particleStartLifetime
                             ? 0.0
-                            : particleAgeAfterStep + 1.0;
+                            : totalParticleAgeAfterStep + 1.0;
                     }
                     else
                     {
+                        particleAgeBeforeStep = max(
+                            0.0,
+                            particleStartLifetime - life);
                         normalizedAgeBeforeStep = saturate(
                             1.0 -
                             (life / max(particleStartLifetime, 1e-5)));
@@ -2313,11 +2377,15 @@ Shader "Hidden/GPUParticles/SimulateMRT"
                         particleAgeAfterStep = max(
                             0.0,
                             particleStartLifetime - life);
+                        totalParticleAgeBeforeStep =
+                            particleAgeBeforeStep;
+                        totalParticleAgeAfterStep =
+                            particleAgeAfterStep;
                     }
                     particleStartColor = StartColorAtBirth(
-                        id, particleAgeAfterStep);
+                        id, totalParticleAgeAfterStep);
                     particleStartSize = StartSizeAtBirth(
-                        id, particleAgeAfterStep);
+                        id, totalParticleAgeAfterStep);
                     float3 positionBeforeStep = pos;
                     float speedBeforeStep = length(vel);
                     float3 particleNoiseValue = 0.0;
@@ -2516,7 +2584,7 @@ Shader "Hidden/GPUParticles/SimulateMRT"
                             vel,
                             collisionSize,
                             particleStartLifetime,
-                            startLifetimeUsesAgeState,
+                            lifetimeUsesAgeState,
                             life,
                             normalizedAgeAfterStep,
                             stepDt);
