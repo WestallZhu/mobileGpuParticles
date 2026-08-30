@@ -271,6 +271,8 @@ namespace GPUParticles
         public bool materialZWrite;
         public bool materialAlphaClip;
         [Range(0f, 1f)] public float materialAlphaCutoff = 0.5f;
+        public bool materialSoftParticles;
+        public Vector2 materialSoftParticleFadeParams;
         [Range(0,1)] public float minAlphaCull = 0.001f;
         public bool renderEnabled = true;
 
@@ -781,6 +783,10 @@ namespace GPUParticles
             Shader.PropertyToID("_AlphaClip");
         static readonly int _MaterialAlphaCutoff =
             Shader.PropertyToID("_Cutoff");
+        static readonly int _MaterialSoftParticles =
+            Shader.PropertyToID("_SoftParticlesEnabled");
+        static readonly int _MaterialSoftParticleFadeParams =
+            Shader.PropertyToID("_SoftParticleFadeParams");
         static readonly int _TextureSheetFrameLUTInvWidth =
             Shader.PropertyToID("_TextureSheetFrameLUTInvWidth");
         static readonly int _TextureSheetStartLUTInvWidth =
@@ -3501,6 +3507,16 @@ namespace GPUParticles
             renderMaterial.SetFloat(
                 _MaterialAlphaCutoff,
                 Mathf.Clamp01(materialAlphaCutoff));
+            renderMaterial.SetInt(
+                _MaterialSoftParticles,
+                materialSoftParticles ? 1 : 0);
+            renderMaterial.SetVector(
+                _MaterialSoftParticleFadeParams,
+                new Vector4(
+                    materialSoftParticleFadeParams.x,
+                    materialSoftParticleFadeParams.y,
+                    0f,
+                    0f));
 
             renderMaterial.SetInt(_GridSize, gridSize);
             renderMaterial.SetInt(_MaxParticles, maxParticles);

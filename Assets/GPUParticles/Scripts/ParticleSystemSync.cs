@@ -25,6 +25,8 @@ namespace GPUParticles
         private bool cachedMaterialZWrite;
         private bool cachedMaterialAlphaClip;
         private float cachedMaterialAlphaCutoff;
+        private bool cachedMaterialSoftParticles;
+        private Vector2 cachedMaterialSoftParticleFadeParams;
         private bool cachedTextureSheetFrameBlending;
 
         // 缓存上次的值以检测变化
@@ -1902,6 +1904,30 @@ namespace GPUParticles
             {
                 targetGPUParticleSystem.materialAlphaCutoff = alphaCutoff;
                 cachedMaterialAlphaCutoff = alphaCutoff;
+            }
+
+            bool softParticles =
+                ShurikenConverter.UsesSoftParticles(material);
+            if (force ||
+                softParticles != cachedMaterialSoftParticles)
+            {
+                targetGPUParticleSystem.materialSoftParticles =
+                    softParticles;
+                cachedMaterialSoftParticles = softParticles;
+            }
+
+            Vector2 softParticleFadeParams =
+                ShurikenConverter.GetMaterialSoftParticleFadeParams(
+                    material);
+            if (force ||
+                (softParticleFadeParams -
+                 cachedMaterialSoftParticleFadeParams).sqrMagnitude >
+                0.00000001f)
+            {
+                targetGPUParticleSystem.materialSoftParticleFadeParams =
+                    softParticleFadeParams;
+                cachedMaterialSoftParticleFadeParams =
+                    softParticleFadeParams;
             }
 
             bool frameBlending =

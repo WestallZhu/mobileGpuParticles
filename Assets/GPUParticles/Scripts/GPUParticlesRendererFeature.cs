@@ -16,6 +16,13 @@ namespace GPUParticles
             RTHandle m_CameraColor;
             RTHandle m_CameraDepth;
 
+            public void SetRequiresDepthTexture(bool required)
+            {
+                ConfigureInput(required
+                    ? ScriptableRenderPassInput.Depth
+                    : ScriptableRenderPassInput.None);
+            }
+
             public override void OnCameraSetup(CommandBuffer cmd, ref RenderingData renderingData)
             {
                 // URP 14: use RTHandles for camera targets
@@ -70,6 +77,18 @@ namespace GPUParticles
 
         public override void AddRenderPasses(ScriptableRenderer renderer, ref RenderingData renderingData)
         {
+            bool requiresDepthTexture = false;
+            foreach (var system in GPUParticleSystem.Active)
+            {
+                if (system != null &&
+                    system.isActiveAndEnabled &&
+                    system.materialSoftParticles)
+                {
+                    requiresDepthTexture = true;
+                    break;
+                }
+            }
+            m_Pass.SetRequiresDepthTexture(requiresDepthTexture);
             renderer.EnqueuePass(m_Pass);
         }
     }

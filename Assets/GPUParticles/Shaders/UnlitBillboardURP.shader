@@ -14,6 +14,8 @@ Shader "GPUParticles/UnlitBillboardURP"
         [Toggle] _ZWrite("Z Write", Float) = 0
         [Toggle] _AlphaClip("Alpha Clip", Float) = 0
         _Cutoff("Alpha Cutoff", Range(0,1)) = 0.5
+        [Toggle] _SoftParticlesEnabled("Soft Particles", Float) = 0
+        [HideInInspector] _SoftParticleFadeParams("Soft Particle Fade Params", Vector) = (0,0,0,0)
         _MinAlphaCull("MinAlphaCull", Range(0,1)) = 0.001
     }
     SubShader
@@ -32,6 +34,9 @@ Shader "GPUParticles/UnlitBillboardURP"
             #pragma fragment Frag
             #include "Packages/com.unity.render-pipelines.universal/ShaderLibrary/Core.hlsl"
             #include "Packages/com.unity.render-pipelines.core/ShaderLibrary/Color.hlsl"
+            #include_with_pragmas "Packages/com.unity.render-pipelines.core/ShaderLibrary/FoveatedRenderingKeywords.hlsl"
+            #include "Packages/com.unity.render-pipelines.core/ShaderLibrary/FoveatedRendering.hlsl"
+            #include "Packages/com.unity.render-pipelines.universal/ShaderLibrary/DeclareDepthTexture.hlsl"
 
             // MRT state from simulation
             TEXTURE2D(_CurPosLife); SAMPLER(sampler_CurPosLife);
@@ -128,6 +133,9 @@ Shader "GPUParticles/UnlitBillboardURP"
                 int   _AlphaModulate;
                 int   _AlphaClip;
                 float _Cutoff;
+                int   _SoftParticlesEnabled;
+                float2 _SoftParticleFadeParams;
+                float _padMaterialSoftParticles;
 
                 // emitter transforms (for LS->WS)
                 float4x4 _EmitterLocalToWorld;
@@ -168,6 +176,7 @@ Shader "GPUParticles/UnlitBillboardURP"
                 float2 uv : TEXCOORD0;
                 float2 uvNext : TEXCOORD1;
                 float frameBlend : TEXCOORD2;
+                float4 projectedPosition : TEXCOORD3;
                 float4 col : COLOR;
             };
 
@@ -877,6 +886,7 @@ Shader "GPUParticles/UnlitBillboardURP"
                     o.uv = 0;
                     o.uvNext = 0;
                     o.frameBlend = 0;
+                    o.projectedPosition = 0;
                     o.col = 0;
                     return o;
                 }
@@ -899,6 +909,7 @@ Shader "GPUParticles/UnlitBillboardURP"
                     o.uv = 0;
                     o.uvNext = 0;
                     o.frameBlend = 0;
+                    o.projectedPosition = 0;
                     o.col = 0;
                     return o;
                 }
@@ -1051,6 +1062,7 @@ Shader "GPUParticles/UnlitBillboardURP"
                     posWS + RenderRight * local.x + RenderUp * local.y;
 
                 o.posHCS = TransformWorldToHClip(wpos);
+                o.projectedPosition = ComputeScreenPos(o.posHCS);
                 TextureSheetUVs(
                     quadId,
                     quadUV[corner],
@@ -1112,6 +1124,53 @@ Shader "GPUParticles/UnlitBillboardURP"
                 return baseColor * particleColor;
             }
 
+            float SoftParticleFade(float4 projectedPosition)
+            {
+                float nearFade = _SoftParticleFadeParams.x;
+                float inverseFadeDistance =
+                    _SoftParticleFadeParams.y;
+                if (nearFade <= 0.0 && inverseFadeDistance <= 0.0)
+                {
+                    return 1.0;
+                }
+
+                float2 screenUV = UnityStereoTransformScreenSpaceTex(
+                    projectedPosition.xy / projectedPosition.w);
+                screenUV = FoveatedRemapLinearToNonUniform(screenUV);
+                float rawDepth = SAMPLE_TEXTURE2D_X(
+                    _CameraDepthTexture,
+                    sampler_CameraDepthTexture,
+                    screenUV).r;
+                float sceneDepth = unity_OrthoParams.w == 0
+                    ? LinearEyeDepth(rawDepth, _ZBufferParams)
+                    : LinearDepthToEyeDepth(rawDepth);
+                float particleDepth = LinearEyeDepth(
+                    projectedPosition.z / projectedPosition.w,
+                    _ZBufferParams);
+                return saturate(
+                    inverseFadeDistance *
+                    ((sceneDepth - nearFade) - particleDepth));
+            }
+
+            float4 ApplySoftParticleFade(
+                float4 color,
+                float fade)
+            {
+                if (_AlphaPremultiply != 0)
+                {
+                    return color * fade;
+                }
+                if (_AlphaModulate != 0)
+                {
+                    float fadedAlpha = color.a * fade;
+                    return float4(
+                        lerp(1.0.xxx, color.rgb, fadedAlpha),
+                        fadedAlpha);
+                }
+                color.a *= fade;
+                return color;
+            }
+
             half4 Frag(VOut i) : SV_Target
             {
                 float4 baseCol = SAMPLE_TEXTURE2D(_BaseMap, sampler_BaseMap, i.uv);
@@ -1134,6 +1193,12 @@ Shader "GPUParticles/UnlitBillboardURP"
                 else if (_AlphaPremultiply != 0)
                 {
                     result.rgb *= result.a;
+                }
+                if (_SoftParticlesEnabled != 0)
+                {
+                    result = ApplySoftParticleFade(
+                        result,
+                        SoftParticleFade(i.projectedPosition));
                 }
                 return result;
             }

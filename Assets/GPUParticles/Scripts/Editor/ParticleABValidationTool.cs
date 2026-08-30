@@ -713,6 +713,13 @@ namespace GPUParticles.Editor
                 ParticleABValidationProfile.MaterialAlphaClipPoint);
         }
 
+        [MenuItem("Tools/GPU Particles/Run Material Soft Particles A-B RT Capture")]
+        public static void RunMaterialSoftParticlesCaptureMenu()
+        {
+            StartTextureSheetCaptureMenu(
+                ParticleABValidationProfile.MaterialSoftParticlesPoint);
+        }
+
         [MenuItem("Tools/GPU Particles/Run Shape Sphere A-B RT Capture")]
         public static void RunShapeSphereCaptureMenu()
         {
@@ -1449,6 +1456,14 @@ namespace GPUParticles.Editor
                 ParticleABValidationProfile.MaterialAlphaClipPoint);
         }
 
+        public static void RunBatchMaterialSoftParticlesCapture()
+        {
+            ValidateCommonFeatureMapping();
+            StartCapture(
+                true,
+                ParticleABValidationProfile.MaterialSoftParticlesPoint);
+        }
+
         public static void RunBatchRotationOverLifetimeCapture()
         {
             ValidateCommonFeatureMapping();
@@ -1672,6 +1687,8 @@ namespace GPUParticles.Editor
                     return 2.4f;
                 case ParticleABValidationProfile.MaterialAlphaClipPoint:
                     return 2.4f;
+                case ParticleABValidationProfile.MaterialSoftParticlesPoint:
+                    return 2.4f;
                 case ParticleABValidationProfile.RotationOverLifetimeCurvePoint: return 2.5f;
                 case ParticleABValidationProfile.RotationBySpeedCurvePoint: return 2.5f;
                 case ParticleABValidationProfile.ColorSizeOverLifetimeRandomizedPoint: return 2f;
@@ -1774,9 +1791,10 @@ namespace GPUParticles.Editor
                    profile == ParticleABValidationProfile.TextureSheetBlendLifetimePoint ||
                    profile == ParticleABValidationProfile.TextureSheetBlendSpeedPoint ||
                    profile == ParticleABValidationProfile.TextureSheetBlendFPSPoint ||
-                   profile == ParticleABValidationProfile.MaterialColorModesPoint ||
-                   profile == ParticleABValidationProfile.MaterialBlendModesPoint ||
-                   profile == ParticleABValidationProfile.MaterialAlphaClipPoint
+                    profile == ParticleABValidationProfile.MaterialColorModesPoint ||
+                    profile == ParticleABValidationProfile.MaterialBlendModesPoint ||
+                    profile == ParticleABValidationProfile.MaterialAlphaClipPoint ||
+                    profile == ParticleABValidationProfile.MaterialSoftParticlesPoint
                 ? 20f
                 : 5f;
         }
@@ -1931,6 +1949,8 @@ namespace GPUParticles.Editor
                     return "TestResults/ParticleMaterialBlendModes";
                 case ParticleABValidationProfile.MaterialAlphaClipPoint:
                     return "TestResults/ParticleMaterialAlphaClip";
+                case ParticleABValidationProfile.MaterialSoftParticlesPoint:
+                    return "TestResults/ParticleMaterialSoftParticles";
                 case ParticleABValidationProfile.RotationOverLifetimeCurvePoint:
                     return "TestResults/ParticleRotationOverLifetime";
                 case ParticleABValidationProfile.RotationBySpeedCurvePoint:
@@ -3471,6 +3491,7 @@ namespace GPUParticles.Editor
                 ValidateMaterialColorMapping();
                 ValidateMaterialBlendMapping();
                 ValidateMaterialAlphaClipMapping();
+                ValidateMaterialSoftParticleMapping();
                 Debug.Log("PARTICLE_COMMON_FEATURE_MAPPING_RESULT:PASS");
             }
             finally
@@ -4451,6 +4472,77 @@ namespace GPUParticles.Editor
                     gpu.materialAlphaCutoff,
                     0.17f,
                     "Updated Material Alpha Cutoff");
+            }
+            finally
+            {
+                Object.DestroyImmediate(owner);
+                Object.DestroyImmediate(material);
+            }
+        }
+
+        static void ValidateMaterialSoftParticleMapping()
+        {
+            var owner = new GameObject(
+                "ParticleMaterialSoftParticleMappingValidation");
+            owner.SetActive(false);
+            Material material = null;
+            try
+            {
+                var shuriken = owner.AddComponent<ParticleSystem>();
+                ParticleSystem.MainModule main = shuriken.main;
+                main.playOnAwake = false;
+                var renderer = owner.GetComponent<ParticleSystemRenderer>();
+
+                Shader shader = Shader.Find(
+                    "Universal Render Pipeline/Particles/Unlit");
+                Require(shader != null,
+                    "URP particle shader was not found for soft particle mapping.");
+                material = new Material(shader);
+                material.SetFloat(
+                    "_Surface",
+                    (float)BaseShaderGUI.SurfaceType.Transparent);
+                material.SetFloat(
+                    "_Blend", (float)BaseShaderGUI.BlendMode.Alpha);
+                BaseShaderGUI.SetupMaterialBlendMode(material);
+                material.SetFloat("_SoftParticlesEnabled", 1f);
+                material.SetFloat("_SoftParticlesNearFadeDistance", 0.2f);
+                material.SetFloat("_SoftParticlesFarFadeDistance", 1.4f);
+                material.SetVector(
+                    "_SoftParticleFadeParams",
+                    new Vector4(0.2f, 1f / 1.2f, 0f, 0f));
+                material.EnableKeyword("_SOFTPARTICLES_ON");
+                renderer.sharedMaterial = material;
+
+                ShurikenConverter.Convert(owner);
+                var gpu = owner.GetComponent<GPUParticleSystem>();
+                Require(gpu != null,
+                    "Soft particle conversion did not create a GPU system.");
+                Require(gpu.materialSoftParticles,
+                    "Enabled Soft Particles was not mapped.");
+                RequireApproximately(
+                    gpu.materialSoftParticleFadeParams.x,
+                    0.2f,
+                    "Soft Particle Near Fade");
+                RequireApproximately(
+                    gpu.materialSoftParticleFadeParams.y,
+                    1f / 1.2f,
+                    "Soft Particle Inverse Fade Distance");
+
+                material.SetFloat("_SoftParticlesEnabled", 0f);
+                material.SetVector(
+                    "_SoftParticleFadeParams", Vector4.zero);
+                material.DisableKeyword("_SOFTPARTICLES_ON");
+                ShurikenConverter.ApplyMaterialParameters(renderer, gpu);
+                Require(!gpu.materialSoftParticles,
+                    "Disabled Soft Particles was not remapped.");
+                RequireApproximately(
+                    gpu.materialSoftParticleFadeParams.x,
+                    0f,
+                    "Disabled Soft Particle Near Fade");
+                RequireApproximately(
+                    gpu.materialSoftParticleFadeParams.y,
+                    0f,
+                    "Disabled Soft Particle Inverse Fade Distance");
             }
             finally
             {
