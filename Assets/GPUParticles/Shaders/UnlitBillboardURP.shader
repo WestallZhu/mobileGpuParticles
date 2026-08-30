@@ -162,6 +162,7 @@ Shader "GPUParticles/UnlitBillboardURP"
                 float _NormalDirection;     // 0..1
 
                 float2 _Pivot;
+                float3 _RendererFlip;
                 float  _LenScale;
                 float  _VelScale;
                 float  _CamVelScale;
@@ -851,6 +852,20 @@ Shader "GPUParticles/UnlitBillboardURP"
                 frameBlend = frac(sequencePosition);
             }
 
+            float2 ParticleFlippedUV(uint id, float2 baseUV)
+            {
+                if (Hash01(id ^ 0x7F4A7C15u) < saturate(_RendererFlip.x))
+                {
+                    baseUV.x = 1.0 - baseUV.x;
+                }
+                if (Hash01(id ^ 0xBF58476Du) < saturate(_RendererFlip.y))
+                {
+                    baseUV.y = 1.0 - baseUV.y;
+                }
+
+                return baseUV;
+            }
+
             float3 Ortho(float3 v){ return normalize( any(abs(v) > 0.0) ? (abs(v.z)<0.999?cross(v,float3(0,0,1)):cross(v,float3(0,1,0))) : float3(1,0,0) ); }
 
             float2 IndexToUV(uint idx, int grid)
@@ -1203,9 +1218,11 @@ Shader "GPUParticles/UnlitBillboardURP"
 
                 o.posHCS = TransformWorldToHClip(wpos);
                 o.projectedPosition = ComputeScreenPos(o.posHCS);
+                float2 particleUV = ParticleFlippedUV(
+                    quadId, quadUV[corner]);
                 TextureSheetUVs(
                     quadId,
-                    quadUV[corner],
+                    particleUV,
                     normalizedAge,
                     particleAge,
                     length(velSize.xyz),

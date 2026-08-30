@@ -222,6 +222,7 @@ namespace GPUParticles
                 gpu.allowRoll = psr.allowRoll;
                 gpu.pivot = new Vector2(psr.pivot.x, psr.pivot.y);
                 gpu.normalDirection = psr.normalDirection;
+                gpu.rendererFlip = Clamp01(psr.flip);
                 gpu.screenSpaceSizeClampEnabled = true;
                 gpu.minParticleSize = psr.minParticleSize;
                 gpu.maxParticleSize = psr.maxParticleSize;
@@ -469,6 +470,7 @@ namespace GPUParticles
                 gpu.allowRoll = psr.allowRoll;
                 gpu.pivot = new Vector2(psr.pivot.x, psr.pivot.y);
                 gpu.normalDirection = psr.normalDirection;
+                gpu.rendererFlip = Clamp01(psr.flip);
                 gpu.screenSpaceSizeClampEnabled = true;
                 gpu.minParticleSize = psr.minParticleSize;
                 gpu.maxParticleSize = psr.maxParticleSize;
@@ -1322,6 +1324,14 @@ namespace GPUParticles
                 resolution: 2,
                 saveAsAsset: true,
                 assetName: "TextureSheetStartFrame_LUT");
+        }
+
+        static Vector3 Clamp01(Vector3 value)
+        {
+            return new Vector3(
+                Mathf.Clamp01(value.x),
+                Mathf.Clamp01(value.y),
+                Mathf.Clamp01(value.z));
         }
 
         static void ApplyEmission(

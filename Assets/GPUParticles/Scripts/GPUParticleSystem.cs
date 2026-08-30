@@ -337,6 +337,11 @@ namespace GPUParticles
         public bool allowRoll = true;
         [Range(0,1)] public float normalDirection = 1.0f; // billboard only
         public Vector2 pivot = Vector2.zero;
+        [Tooltip("Per-axis probability of flipping each particle. Shuriken " +
+                 "Texture Sheet flipU/flipV alias Renderer Flip X/Y. Billboard " +
+                 "rendering consumes X/Y as horizontal/vertical UV flips; Z " +
+                 "is retained for mapping but has no billboard effect.")]
+        public Vector3 rendererFlip;
         public bool screenSpaceSizeClampEnabled;
         [Range(0f, 1f)] public float minParticleSize;
         [Range(0f, 1f)] public float maxParticleSize = 0.5f;
@@ -729,6 +734,7 @@ namespace GPUParticles
         static readonly int _AllowRoll = Shader.PropertyToID("_AllowRoll");
         static readonly int _NormalDirection = Shader.PropertyToID("_NormalDirection");
         static readonly int _Pivot = Shader.PropertyToID("_Pivot");
+        static readonly int _RendererFlip = Shader.PropertyToID("_RendererFlip");
         static readonly int _ScreenSpaceSizeClampEnabled =
             Shader.PropertyToID("_ScreenSpaceSizeClampEnabled");
         static readonly int _MinParticleSize =
@@ -887,6 +893,10 @@ namespace GPUParticles
             textureSheetCycleCount = Mathf.Max(1, textureSheetCycleCount);
             textureSheetFps = Mathf.Max(0f, textureSheetFps);
             textureSheetSpeedRange = OrderedRange(textureSheetSpeedRange);
+            rendererFlip = new Vector3(
+                Mathf.Clamp01(rendererFlip.x),
+                Mathf.Clamp01(rendererFlip.y),
+                Mathf.Clamp01(rendererFlip.z));
             if (emissionBursts == null) emissionBursts = System.Array.Empty<GPUEmissionBurst>();
             EnsureMaterials();
             RecreateTargetsIfNeeded(false);
@@ -4031,6 +4041,13 @@ namespace GPUParticles
             renderMaterial.SetInt(_AllowRoll, allowRoll ? 1 : 0);
             renderMaterial.SetFloat(_NormalDirection, normalDirection);
             renderMaterial.SetVector(_Pivot, pivot);
+            renderMaterial.SetVector(
+                _RendererFlip,
+                new Vector4(
+                    Mathf.Clamp01(rendererFlip.x),
+                    Mathf.Clamp01(rendererFlip.y),
+                    Mathf.Clamp01(rendererFlip.z),
+                    0f));
             renderMaterial.SetInt(
                 _ScreenSpaceSizeClampEnabled,
                 screenSpaceSizeClampEnabled ? 1 : 0);

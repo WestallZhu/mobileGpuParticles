@@ -92,6 +92,7 @@ namespace GPUParticles
         private ParticleSystemRenderSpace cachedAlignment;
         private bool cachedAllowRoll;
         private Vector3 cachedPivot;
+        private Vector3 cachedRendererFlip;
         private float cachedNormalDirection;
         private float cachedMinParticleSize;
         private float cachedMaxParticleSize;
@@ -1656,6 +1657,7 @@ namespace GPUParticles
             bool rendererValuesChanged =
                 sourceRenderer.allowRoll != cachedAllowRoll ||
                 sourceRenderer.pivot != cachedPivot ||
+                sourceRenderer.flip != cachedRendererFlip ||
                 !Mathf.Approximately(
                     sourceRenderer.normalDirection,
                     cachedNormalDirection) ||
@@ -1732,6 +1734,11 @@ namespace GPUParticles
                 targetGPUParticleSystem.allowRoll = sourceRenderer.allowRoll;
                 targetGPUParticleSystem.pivot = new Vector2(sourceRenderer.pivot.x, sourceRenderer.pivot.y);
                 targetGPUParticleSystem.normalDirection = sourceRenderer.normalDirection;
+                Vector3 rendererFlip = sourceRenderer.flip;
+                targetGPUParticleSystem.rendererFlip = new Vector3(
+                    Mathf.Clamp01(rendererFlip.x),
+                    Mathf.Clamp01(rendererFlip.y),
+                    Mathf.Clamp01(rendererFlip.z));
                 targetGPUParticleSystem.screenSpaceSizeClampEnabled = true;
                 targetGPUParticleSystem.minParticleSize =
                     sourceRenderer.minParticleSize;
@@ -1754,6 +1761,7 @@ namespace GPUParticles
 
             cachedAllowRoll = sourceRenderer.allowRoll;
             cachedPivot = sourceRenderer.pivot;
+            cachedRendererFlip = sourceRenderer.flip;
             cachedNormalDirection = sourceRenderer.normalDirection;
             cachedMinParticleSize = sourceRenderer.minParticleSize;
             cachedMaxParticleSize = sourceRenderer.maxParticleSize;

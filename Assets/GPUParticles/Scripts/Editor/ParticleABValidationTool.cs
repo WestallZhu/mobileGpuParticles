@@ -685,6 +685,13 @@ namespace GPUParticles.Editor
                 ParticleABValidationProfile.TextureSheetSingleRowPoint);
         }
 
+        [MenuItem("Tools/GPU Particles/Run Renderer Texture UV Flip A-B RT Capture")]
+        public static void RunRendererTextureUVFlipCaptureMenu()
+        {
+            StartTextureSheetCaptureMenu(
+                ParticleABValidationProfile.RendererTextureUVFlipPoint);
+        }
+
         [MenuItem("Tools/GPU Particles/Run Texture Sheet Blend Lifetime A-B RT Capture")]
         public static void RunTextureSheetBlendLifetimeCaptureMenu()
         {
@@ -1445,6 +1452,14 @@ namespace GPUParticles.Editor
                 ParticleABValidationProfile.TextureSheetSingleRowPoint);
         }
 
+        public static void RunBatchRendererTextureUVFlipCapture()
+        {
+            ValidateCommonFeatureMapping();
+            StartCapture(
+                true,
+                ParticleABValidationProfile.RendererTextureUVFlipPoint);
+        }
+
         public static void RunBatchTextureSheetBlendLifetimeCapture()
         {
             ValidateCommonFeatureMapping();
@@ -1725,6 +1740,7 @@ namespace GPUParticles.Editor
                 case ParticleABValidationProfile.TextureSheetSpeedPoint:
                 case ParticleABValidationProfile.TextureSheetFPSPoint:
                 case ParticleABValidationProfile.TextureSheetSingleRowPoint:
+                case ParticleABValidationProfile.RendererTextureUVFlipPoint:
                 case ParticleABValidationProfile.TextureSheetBlendLifetimePoint:
                 case ParticleABValidationProfile.TextureSheetBlendSpeedPoint:
                 case ParticleABValidationProfile.TextureSheetBlendFPSPoint:
@@ -1843,6 +1859,7 @@ namespace GPUParticles.Editor
                    profile == ParticleABValidationProfile.TextureSheetSpeedPoint ||
                    profile == ParticleABValidationProfile.TextureSheetFPSPoint ||
                    profile == ParticleABValidationProfile.TextureSheetSingleRowPoint ||
+                   profile == ParticleABValidationProfile.RendererTextureUVFlipPoint ||
                    profile == ParticleABValidationProfile.TextureSheetBlendLifetimePoint ||
                    profile == ParticleABValidationProfile.TextureSheetBlendSpeedPoint ||
                    profile == ParticleABValidationProfile.TextureSheetBlendFPSPoint ||
@@ -1997,6 +2014,8 @@ namespace GPUParticles.Editor
                     return "TestResults/ParticleTextureSheetFPS";
                 case ParticleABValidationProfile.TextureSheetSingleRowPoint:
                     return "TestResults/ParticleTextureSheetSingleRow";
+                case ParticleABValidationProfile.RendererTextureUVFlipPoint:
+                    return "TestResults/ParticleRendererTextureUVFlip";
                 case ParticleABValidationProfile.TextureSheetBlendLifetimePoint:
                     return "TestResults/ParticleTextureSheetBlendLifetime";
                 case ParticleABValidationProfile.TextureSheetBlendSpeedPoint:
@@ -3580,6 +3599,7 @@ namespace GPUParticles.Editor
                 ValidateNoiseMapping();
                 ValidateCollisionMapping();
                 ValidateTextureSheetFrameBlendingMapping();
+                ValidateRendererTextureUVFlipMapping();
                 ValidateMaterialColorMapping();
                 ValidateMaterialBlendMapping();
                 ValidateMaterialAlphaClipMapping();
@@ -4311,6 +4331,63 @@ namespace GPUParticles.Editor
             }
         }
 
+        static void ValidateRendererTextureUVFlipMapping()
+        {
+            var owner = new GameObject(
+                "ParticleRendererTextureUVFlipMappingValidation");
+            owner.SetActive(false);
+            var generatedTextures = new Texture2D[4];
+            try
+            {
+                var shuriken = owner.AddComponent<ParticleSystem>();
+                ParticleSystem.MainModule main = shuriken.main;
+                main.playOnAwake = false;
+
+                ParticleSystemRenderer renderer =
+                    owner.GetComponent<ParticleSystemRenderer>();
+                renderer.flip = new Vector3(0.25f, 0.5f, 0.75f);
+
+                ParticleSystem.TextureSheetAnimationModule textureSheet =
+                    shuriken.textureSheetAnimation;
+                textureSheet.enabled = true;
+                textureSheet.mode = ParticleSystemAnimationMode.Grid;
+                textureSheet.numTilesX = 1;
+                textureSheet.numTilesY = 1;
+                textureSheet.flipU = 0.375f;
+                textureSheet.flipV = 0.625f;
+
+                ShurikenConverter.Convert(owner);
+                var gpu = owner.GetComponent<GPUParticleSystem>();
+                Require(gpu != null,
+                    "Renderer/Texture UV Flip conversion did not create a GPU system.");
+                generatedTextures[0] = gpu.textureSheetFrameOverTimeLUT;
+                generatedTextures[1] = gpu.textureSheetStartFrameLUT;
+                RequireVectorApproximately(
+                    gpu.rendererFlip,
+                    new Vector3(0.375f, 0.625f, 0.75f),
+                    "Shared Renderer/Texture Sheet Flip was not mapped.");
+
+                renderer.flip = new Vector3(1f, 0f, 0.125f);
+                textureSheet.flipU = 0f;
+                textureSheet.flipV = 1f;
+                ShurikenConverter.Convert(owner);
+                generatedTextures[2] = gpu.textureSheetFrameOverTimeLUT;
+                generatedTextures[3] = gpu.textureSheetStartFrameLUT;
+                RequireVectorApproximately(
+                    gpu.rendererFlip,
+                    new Vector3(0f, 1f, 0.125f),
+                    "Changed shared Renderer/Texture Sheet Flip was not remapped.");
+            }
+            finally
+            {
+                Object.DestroyImmediate(owner);
+                for (int i = 0; i < generatedTextures.Length; i++)
+                {
+                    CleanupGeneratedValidationTexture(generatedTextures[i]);
+                }
+            }
+        }
+
         static void ValidateMaterialColorMapping()
         {
             var owner = new GameObject(
@@ -4855,6 +4932,18 @@ namespace GPUParticles.Editor
             {
                 throw new InvalidOperationException(
                     $"{label} mismatch. Expected {expected:R}, got {actual:R}.");
+            }
+        }
+
+        static void RequireVectorApproximately(
+            Vector3 actual,
+            Vector3 expected,
+            string label)
+        {
+            if ((actual - expected).sqrMagnitude > 0.0001f)
+            {
+                throw new InvalidOperationException(
+                    $"{label} mismatch. Expected {expected}, got {actual}.");
             }
         }
 
