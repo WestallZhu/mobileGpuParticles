@@ -615,6 +615,7 @@ namespace GPUParticles
                     saveAsAsset: true,
                     assetName: "StartRotation_LUT")
                 : CurveLUTBuilder.GetDefaultZeroLUT();
+            gpu.flipRotation = Mathf.Clamp01(main.flipRotation);
 
             var rotationOverLifetime = particleSystem.rotationOverLifetime;
             if (!rotationOverLifetime.enabled)

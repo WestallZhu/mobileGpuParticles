@@ -87,6 +87,7 @@ namespace GPUParticles
         public ParticleSystemCurveMode startRotationMode =
             ParticleSystemCurveMode.Constant;
         public Texture2D startRotationLUT;
+        [Range(0f, 1f)] public float flipRotation;
         public float rotationOverLifetime = 0.0f;
         public SimulationSpace simulationSpace = SimulationSpace.Local;
 
@@ -370,6 +371,7 @@ namespace GPUParticles
             Shader.PropertyToID("_StartRotationLUT");
         static readonly int _StartRotationLUTInvWidth =
             Shader.PropertyToID("_StartRotationLUTInvWidth");
+        static readonly int _FlipRotation = Shader.PropertyToID("_FlipRotation");
         static readonly int _RotationOverLifetime = Shader.PropertyToID("_RotationOverLifetime");
         static readonly int _RotationOverLifetimeMin = Shader.PropertyToID("_RotationOverLifetimeMin");
         static readonly int _RandomizeRotationOverLifetime = Shader.PropertyToID("_RandomizeRotationOverLifetime");
@@ -614,6 +616,7 @@ namespace GPUParticles
             emissionDuration = Mathf.Max(0.05f, emissionDuration);
             emissionStartDelayMin = Mathf.Max(0f, emissionStartDelayMin);
             emissionStartDelay = Mathf.Max(0f, emissionStartDelay);
+            flipRotation = Mathf.Clamp01(flipRotation);
             colorBySpeedRange = OrderedRange(colorBySpeedRange);
             sizeBySpeedRange = OrderedRange(sizeBySpeedRange);
             rotationBySpeedRange = OrderedRange(rotationBySpeedRange);
@@ -1351,6 +1354,7 @@ namespace GPUParticles
             float particleStartRotation = ResolveStartRotation(
                 id,
                 age);
+            float rotationDirection = ResolveRotationDirection(id);
 
             if (rotationOverLifetimeIntegralLUT == null)
             {
@@ -1360,7 +1364,9 @@ namespace GPUParticles
                     rotationOverLifetime,
                     id,
                     0xD3A2646Cu);
-                return particleStartRotation + angularVelocity * age + rotationBySpeedPhase;
+                return rotationDirection *
+                       (particleStartRotation + angularVelocity * age +
+                        rotationBySpeedPhase);
             }
 
             float normalizedAge = particleStartLifetime > 1e-6f
@@ -1372,8 +1378,17 @@ namespace GPUParticles
                 rotationOverLifetimeIntegralLUT, normalizedAge, 1);
             float blend = Hash01(id ^ 0xD3A2646Cu);
             float integral = Mathf.LerpUnclamped(minimumIntegral, maximumIntegral, blend);
-            return particleStartRotation + integral * particleStartLifetime +
-                   rotationBySpeedPhase;
+            return rotationDirection *
+                   (particleStartRotation + integral * particleStartLifetime +
+                    rotationBySpeedPhase);
+        }
+
+        float ResolveRotationDirection(uint particleId)
+        {
+            return Hash01(particleId ^ 0xF1357AEAu) <
+                   Mathf.Clamp01(flipRotation)
+                ? -1f
+                : 1f;
         }
 
         internal Vector2 ResolveParticleBillboardSize(
@@ -2793,6 +2808,7 @@ namespace GPUParticles
             renderMaterial.SetInt(
                 _StartRotationMode,
                 (int)EffectiveStartRotationMode());
+            renderMaterial.SetFloat(_FlipRotation, Mathf.Clamp01(flipRotation));
             renderMaterial.SetFloat(_RotationOverLifetime, rotationOverLifetime);
             renderMaterial.SetFloat(_RotationOverLifetimeMin, rotationOverLifetimeMin);
             renderMaterial.SetInt(_RandomizeRotationOverLifetime,

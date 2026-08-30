@@ -87,6 +87,7 @@ Shader "GPUParticles/UnlitBillboardURP"
                 int   _RandomizeStartRotation;
                 int   _StartRotationMode;
                 float _StartRotationLUTInvWidth;
+                float _FlipRotation;
                 float _RotationOverLifetime;
                 float _RotationOverLifetimeMin;
                 int   _RandomizeRotationOverLifetime;
@@ -905,6 +906,11 @@ Shader "GPUParticles/UnlitBillboardURP"
                                 particleRotationOverLifetime * particleAge;
                     }
                     angle += rotationBySpeedPhase;
+                    float rotationDirection =
+                        Hash01(quadId ^ 0xF1357AEAu) < saturate(_FlipRotation)
+                            ? -1.0
+                            : 1.0;
+                    angle *= rotationDirection;
                     float s = sin(angle);
                     float c = cos(angle);
                     local = float2(local.x * c - local.y * s, local.x * s + local.y * c);

@@ -25,6 +25,7 @@ namespace GPUParticles
         private bool cachedPlayOnAwake;
         private bool cachedPrewarm;
         private float cachedStartRotation;
+        private float cachedFlipRotation;
         private float cachedRotationOverLifetime;
         private bool cachedEmissionEnabled;
         private int cachedMaxParticles;
@@ -196,6 +197,7 @@ namespace GPUParticles
             cachedPlayOnAwake = main.playOnAwake;
             cachedPrewarm = main.prewarm;
             cachedStartRotation = main.startRotation.mode == ParticleSystemCurveMode.Constant ? main.startRotation.constant : cachedStartRotation;
+            cachedFlipRotation = main.flipRotation;
             cachedEmissionEnabled = emission.enabled;
             cachedMaxParticles = main.maxParticles;
             cachedSimulationSpace = main.simulationSpace;
@@ -495,6 +497,14 @@ namespace GPUParticles
                         CurveLUTBuilder.GetDefaultZeroLUT();
                 }
                 lastStartRotationLUTUpdate = Time.realtimeSinceStartup;
+            }
+
+            if (force ||
+                Mathf.Abs(main.flipRotation - cachedFlipRotation) > 0.0001f)
+            {
+                targetGPUParticleSystem.flipRotation =
+                    Mathf.Clamp01(main.flipRotation);
+                cachedFlipRotation = main.flipRotation;
             }
         }
 
