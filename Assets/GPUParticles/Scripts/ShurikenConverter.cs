@@ -113,8 +113,11 @@ namespace GPUParticles
                     gpu.shapeType = ShapeTypeGPU.Donut;
                     gpu.shapeDonutRadius = Mathf.Max(0f, shape.radius);
                     gpu.shapeDonutThickness = Mathf.Max(0f, shape.donutRadius);
+                    gpu.shapeRadiusThickness = shape.radiusThickness;
                     gpu.shapeConeArcDeg = shape.arc;
-                    gpu.shapeEmitFrom = ShapeEmitFromGPU.Volume; // Donut默认从体积发射
+                    gpu.shapeEmitFrom = shape.radiusThickness <= 0.001f
+                        ? ShapeEmitFromGPU.Surface
+                        : ShapeEmitFromGPU.Volume;
                     break;
 
                 // 5. Box
@@ -122,7 +125,12 @@ namespace GPUParticles
                 case ParticleSystemShapeType.BoxShell:
                 case ParticleSystemShapeType.BoxEdge:
                     gpu.shapeType = ShapeTypeGPU.Box;
-                    gpu.shapeEmitFrom = (shape.shapeType == ParticleSystemShapeType.Box) ? ShapeEmitFromGPU.Volume : ShapeEmitFromGPU.Surface;
+                    gpu.shapeEmitFrom =
+                        shape.shapeType == ParticleSystemShapeType.Box
+                            ? ShapeEmitFromGPU.Volume
+                            : shape.shapeType == ParticleSystemShapeType.BoxEdge
+                                ? ShapeEmitFromGPU.Edge
+                                : ShapeEmitFromGPU.Surface;
                     gpu.shapeBoxSize = Vector3.one;
                     break;
 
@@ -137,35 +145,34 @@ namespace GPUParticles
                         : ShapeEmitFromGPU.Volume;
                     break;
 
-                // 7. Edge (Unity中可能不存在，但我们可以支持)
-                // 注意：Unity的ParticleSystemShapeType可能没有Edge枚举值
-                // 如果需要支持，可以通过其他方式实现
-                // case ParticleSystemShapeType.Edge:
-                //     gpu.shapeType = ShapeTypeGPU.Edge;
-                //     {
-                //         float avg = (shape.scale.x + shape.scale.y + shape.scale.z) / 3f;
-                //         gpu.shapeEdgeLength = Mathf.Max(0f, shape.length * avg);
-                //     }
-                //     gpu.shapeEmitFrom = ShapeEmitFromGPU.Volume;
-                //     break;
+                case ParticleSystemShapeType.SingleSidedEdge:
+                    gpu.shapeType = ShapeTypeGPU.Edge;
+                    gpu.shapeEmitFrom = ShapeEmitFromGPU.Edge;
+                    gpu.shapeEdgeLength = Mathf.Max(0f, 2f * shape.radius);
+                    break;
 
-                // 8. Rectangle (Unity中可能不存在，但我们可以支持)
-                // 注意：Unity的ParticleSystemShapeType可能没有Rectangle枚举值
-                // 如果需要支持，可以通过其他方式实现
-                // case ParticleSystemShapeType.Rectangle:
-                //     gpu.shapeType = ShapeTypeGPU.Rectangle;
-                //     {
-                //         gpu.shapeRectangleSize = new Vector2(shape.scale.x, shape.scale.y);
-                //     }
-                //     gpu.shapeEmitFrom = ShapeEmitFromGPU.Volume;
-                //     break;
-                // case ParticleSystemShapeType.RectangleEdge:
-                //     gpu.shapeType = ShapeTypeGPU.Rectangle;
-                //     {
-                //         gpu.shapeRectangleSize = new Vector2(shape.scale.x, shape.scale.y);
-                //     }
-                //     gpu.shapeEmitFrom = ShapeEmitFromGPU.Surface;
-                //     break;
+                case ParticleSystemShapeType.Rectangle:
+                    gpu.shapeType = ShapeTypeGPU.Rectangle;
+                    gpu.shapeEmitFrom = ShapeEmitFromGPU.Volume;
+                    gpu.shapeRectangleSize = Vector2.one;
+                    break;
+
+                default:
+                    gpu.shapeType = ShapeTypeGPU.Point;
+                    gpu.shapeEmitFrom = ShapeEmitFromGPU.Base;
+                    Debug.LogWarning(
+                        $"Shape type {shape.shapeType} is not supported; using Point emission.",
+                        gpu);
+                    break;
+            }
+
+            if (shape.enabled && shape.alignToDirection)
+            {
+                Debug.LogWarning(
+                    "Shape Align to Direction changes particle orientation only. " +
+                    "Emission position and velocity were mapped, but 3D shape-aligned " +
+                    "billboard orientation is not supported.",
+                    gpu);
             }
 
             // ---- Renderer Module mapping ----
@@ -352,8 +359,11 @@ namespace GPUParticles
                     gpu.shapeType = ShapeTypeGPU.Donut;
                     gpu.shapeDonutRadius = Mathf.Max(0f, shape.radius);
                     gpu.shapeDonutThickness = Mathf.Max(0f, shape.donutRadius);
+                    gpu.shapeRadiusThickness = shape.radiusThickness;
                     gpu.shapeConeArcDeg = shape.arc;
-                    gpu.shapeEmitFrom = ShapeEmitFromGPU.Volume; // Donut默认从体积发射
+                    gpu.shapeEmitFrom = shape.radiusThickness <= 0.001f
+                        ? ShapeEmitFromGPU.Surface
+                        : ShapeEmitFromGPU.Volume;
                     break;
 
                 // 5. Box
@@ -361,7 +371,12 @@ namespace GPUParticles
                 case ParticleSystemShapeType.BoxShell:
                 case ParticleSystemShapeType.BoxEdge:
                     gpu.shapeType = ShapeTypeGPU.Box;
-                    gpu.shapeEmitFrom = (shape.shapeType == ParticleSystemShapeType.Box) ? ShapeEmitFromGPU.Volume : ShapeEmitFromGPU.Surface;
+                    gpu.shapeEmitFrom =
+                        shape.shapeType == ParticleSystemShapeType.Box
+                            ? ShapeEmitFromGPU.Volume
+                            : shape.shapeType == ParticleSystemShapeType.BoxEdge
+                                ? ShapeEmitFromGPU.Edge
+                                : ShapeEmitFromGPU.Surface;
                     gpu.shapeBoxSize = Vector3.one;
                     break;
 
@@ -376,35 +391,34 @@ namespace GPUParticles
                         : ShapeEmitFromGPU.Volume;
                     break;
 
-                // 7. Edge (Unity中可能不存在，但我们可以支持)
-                // 注意：Unity的ParticleSystemShapeType可能没有Edge枚举值
-                // 如果需要支持，可以通过其他方式实现
-                // case ParticleSystemShapeType.Edge:
-                //     gpu.shapeType = ShapeTypeGPU.Edge;
-                //     {
-                //         float avg = (shape.scale.x + shape.scale.y + shape.scale.z) / 3f;
-                //         gpu.shapeEdgeLength = Mathf.Max(0f, shape.length * avg);
-                //     }
-                //     gpu.shapeEmitFrom = ShapeEmitFromGPU.Volume;
-                //     break;
+                case ParticleSystemShapeType.SingleSidedEdge:
+                    gpu.shapeType = ShapeTypeGPU.Edge;
+                    gpu.shapeEmitFrom = ShapeEmitFromGPU.Edge;
+                    gpu.shapeEdgeLength = Mathf.Max(0f, 2f * shape.radius);
+                    break;
 
-                // 8. Rectangle (Unity中可能不存在，但我们可以支持)
-                // 注意：Unity的ParticleSystemShapeType可能没有Rectangle枚举值
-                // 如果需要支持，可以通过其他方式实现
-                // case ParticleSystemShapeType.Rectangle:
-                //     gpu.shapeType = ShapeTypeGPU.Rectangle;
-                //     {
-                //         gpu.shapeRectangleSize = new Vector2(shape.scale.x, shape.scale.y);
-                //     }
-                //     gpu.shapeEmitFrom = ShapeEmitFromGPU.Volume;
-                //     break;
-                // case ParticleSystemShapeType.RectangleEdge:
-                //     gpu.shapeType = ShapeTypeGPU.Rectangle;
-                //     {
-                //         gpu.shapeRectangleSize = new Vector2(shape.scale.x, shape.scale.y);
-                //     }
-                //     gpu.shapeEmitFrom = ShapeEmitFromGPU.Surface;
-                //     break;
+                case ParticleSystemShapeType.Rectangle:
+                    gpu.shapeType = ShapeTypeGPU.Rectangle;
+                    gpu.shapeEmitFrom = ShapeEmitFromGPU.Volume;
+                    gpu.shapeRectangleSize = Vector2.one;
+                    break;
+
+                default:
+                    gpu.shapeType = ShapeTypeGPU.Point;
+                    gpu.shapeEmitFrom = ShapeEmitFromGPU.Base;
+                    Debug.LogWarning(
+                        $"Shape type {shape.shapeType} is not supported; using Point emission.",
+                        gpu);
+                    break;
+            }
+
+            if (shape.enabled && shape.alignToDirection)
+            {
+                Debug.LogWarning(
+                    "Shape Align to Direction changes particle orientation only. " +
+                    "Emission position and velocity were mapped, but 3D shape-aligned " +
+                    "billboard orientation is not supported.",
+                    gpu);
             }
 
             // ---- Renderer Module mapping ----

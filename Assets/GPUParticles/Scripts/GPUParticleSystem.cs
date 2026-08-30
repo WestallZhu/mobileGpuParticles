@@ -8,7 +8,13 @@ namespace GPUParticles
     public enum SimulationSpace { Local = 0, World = 1 }
 
     public enum ShapeTypeGPU { Sphere = 0, Hemisphere = 1, Cone = 2, Donut = 3, Box = 4, Circle = 5, Edge = 6, Rectangle = 7, Point = 8 }
-    public enum ShapeEmitFromGPU { Volume = 0, Surface = 1, Base = 2 } // Base for Cone
+    public enum ShapeEmitFromGPU
+    {
+        Volume = 0,
+        Surface = 1,
+        Base = 2,
+        Edge = 3
+    }
 
     public enum GPURenderMode { Billboard = 0, HorizontalBillboard = 1, VerticalBillboard = 2, StretchedBillboard = 3 }
     public enum GPUAlignment  { View = 0, Facing = 1, World = 2, Local = 3, Velocity = 4 }
@@ -1601,7 +1607,9 @@ namespace GPUParticles
                     break;
 
                 case ShapeTypeGPU.Edge:
-                    simulateMaterial.SetFloat(_ShapeEdgeLength, Mathf.Max(0f, shapeEdgeLength * avgScale));
+                    simulateMaterial.SetFloat(
+                        _ShapeEdgeLength,
+                        Mathf.Max(0f, shapeEdgeLength * shapeLocalScale.x));
                     break;
 
                 case ShapeTypeGPU.Rectangle:

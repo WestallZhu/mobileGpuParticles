@@ -226,6 +226,59 @@ namespace GPUParticles.Editor
                 ParticleABValidationProfile.TextureSheetSingleRowPoint);
         }
 
+        [MenuItem("Tools/GPU Particles/Run Shape Sphere A-B RT Capture")]
+        public static void RunShapeSphereCaptureMenu()
+        {
+            StartShapeCaptureMenu(ParticleABValidationProfile.ShapeSpherePoint);
+        }
+
+        [MenuItem("Tools/GPU Particles/Run Shape Circle A-B RT Capture")]
+        public static void RunShapeCircleCaptureMenu()
+        {
+            StartShapeCaptureMenu(ParticleABValidationProfile.ShapeCirclePoint);
+        }
+
+        [MenuItem("Tools/GPU Particles/Run Shape Donut A-B RT Capture")]
+        public static void RunShapeDonutCaptureMenu()
+        {
+            StartShapeCaptureMenu(ParticleABValidationProfile.ShapeDonutPoint);
+        }
+
+        [MenuItem("Tools/GPU Particles/Run Shape Edge A-B RT Capture")]
+        public static void RunShapeEdgeCaptureMenu()
+        {
+            StartShapeCaptureMenu(ParticleABValidationProfile.ShapeEdgePoint);
+        }
+
+        [MenuItem("Tools/GPU Particles/Run Shape Rectangle A-B RT Capture")]
+        public static void RunShapeRectangleCaptureMenu()
+        {
+            StartShapeCaptureMenu(
+                ParticleABValidationProfile.ShapeRectanglePoint);
+        }
+
+        [MenuItem("Tools/GPU Particles/Run Shape Box Edge A-B RT Capture")]
+        public static void RunShapeBoxEdgeCaptureMenu()
+        {
+            StartShapeCaptureMenu(ParticleABValidationProfile.ShapeBoxEdgePoint);
+        }
+
+        static void StartShapeCaptureMenu(ParticleABValidationProfile profile)
+        {
+            if (EditorApplication.isPlaying)
+            {
+                Debug.LogWarning(
+                    "Stop Play Mode before starting a deterministic A/B capture.");
+                return;
+            }
+
+            if (!EditorSceneManager.SaveCurrentModifiedScenesIfUserWantsTo())
+            {
+                return;
+            }
+            StartCapture(false, profile);
+        }
+
         static void StartTextureSheetCaptureMenu(
             ParticleABValidationProfile profile)
         {
@@ -388,6 +441,42 @@ namespace GPUParticles.Editor
             StartCapture(
                 true,
                 ParticleABValidationProfile.LifetimeByEmitterSpeedPoint);
+        }
+
+        public static void RunBatchShapeSphereCapture()
+        {
+            ValidateCommonFeatureMapping();
+            StartCapture(true, ParticleABValidationProfile.ShapeSpherePoint);
+        }
+
+        public static void RunBatchShapeCircleCapture()
+        {
+            ValidateCommonFeatureMapping();
+            StartCapture(true, ParticleABValidationProfile.ShapeCirclePoint);
+        }
+
+        public static void RunBatchShapeDonutCapture()
+        {
+            ValidateCommonFeatureMapping();
+            StartCapture(true, ParticleABValidationProfile.ShapeDonutPoint);
+        }
+
+        public static void RunBatchShapeEdgeCapture()
+        {
+            ValidateCommonFeatureMapping();
+            StartCapture(true, ParticleABValidationProfile.ShapeEdgePoint);
+        }
+
+        public static void RunBatchShapeRectangleCapture()
+        {
+            ValidateCommonFeatureMapping();
+            StartCapture(true, ParticleABValidationProfile.ShapeRectanglePoint);
+        }
+
+        public static void RunBatchShapeBoxEdgeCapture()
+        {
+            ValidateCommonFeatureMapping();
+            StartCapture(true, ParticleABValidationProfile.ShapeBoxEdgePoint);
         }
 
         public static void RunBatchTextureSheetLifetimeCapture()
@@ -557,6 +646,13 @@ namespace GPUParticles.Editor
                 case ParticleABValidationProfile.InheritVelocityInitialPoint: return 3.2f;
                 case ParticleABValidationProfile.InheritVelocityCurrentPoint: return 3.2f;
                 case ParticleABValidationProfile.LifetimeByEmitterSpeedPoint: return 4.2f;
+                case ParticleABValidationProfile.ShapeSpherePoint:
+                case ParticleABValidationProfile.ShapeCirclePoint:
+                case ParticleABValidationProfile.ShapeDonutPoint:
+                case ParticleABValidationProfile.ShapeEdgePoint:
+                case ParticleABValidationProfile.ShapeRectanglePoint:
+                case ParticleABValidationProfile.ShapeBoxEdgePoint:
+                    return 2.5f;
                 case ParticleABValidationProfile.TextureSheetLifetimePoint:
                 case ParticleABValidationProfile.TextureSheetSpeedPoint:
                 case ParticleABValidationProfile.TextureSheetFPSPoint:
@@ -614,6 +710,18 @@ namespace GPUParticles.Editor
                     return "TestResults/ParticleInheritVelocityCurrent";
                 case ParticleABValidationProfile.LifetimeByEmitterSpeedPoint:
                     return "TestResults/ParticleLifetimeByEmitterSpeed";
+                case ParticleABValidationProfile.ShapeSpherePoint:
+                    return "TestResults/ParticleShapeSphere";
+                case ParticleABValidationProfile.ShapeCirclePoint:
+                    return "TestResults/ParticleShapeCircle";
+                case ParticleABValidationProfile.ShapeDonutPoint:
+                    return "TestResults/ParticleShapeDonut";
+                case ParticleABValidationProfile.ShapeEdgePoint:
+                    return "TestResults/ParticleShapeEdge";
+                case ParticleABValidationProfile.ShapeRectanglePoint:
+                    return "TestResults/ParticleShapeRectangle";
+                case ParticleABValidationProfile.ShapeBoxEdgePoint:
+                    return "TestResults/ParticleShapeBoxEdge";
                 case ParticleABValidationProfile.TextureSheetLifetimePoint:
                     return "TestResults/ParticleTextureSheetLifetime";
                 case ParticleABValidationProfile.TextureSheetSpeedPoint:
@@ -1527,6 +1635,7 @@ namespace GPUParticles.Editor
                     gpu.sizeBySpeedLUT = null;
                 }
 
+                ValidateShapeMappings();
                 Debug.Log("PARTICLE_COMMON_FEATURE_MAPPING_RESULT:PASS");
             }
             finally
@@ -1720,6 +1829,89 @@ namespace GPUParticles.Editor
                 {
                     AssetDatabase.DeleteAsset(secondSizeBySpeedAssetPath);
                 }
+            }
+        }
+
+        static void ValidateShapeMappings()
+        {
+            var owner = new GameObject("ParticleShapeMappingValidation");
+            owner.SetActive(false);
+            try
+            {
+                var particleSystem = owner.AddComponent<ParticleSystem>();
+                var main = particleSystem.main;
+                main.playOnAwake = false;
+                main.startLifetime = 2f;
+                main.startSpeed = 1f;
+
+                var emission = particleSystem.emission;
+                emission.enabled = false;
+
+                var shape = particleSystem.shape;
+                shape.enabled = true;
+                shape.position = Vector3.zero;
+                shape.rotation = Vector3.zero;
+                shape.scale = Vector3.one;
+                shape.radius = 2f;
+                shape.radiusThickness = 1f;
+                shape.arc = 360f;
+                shape.alignToDirection = false;
+
+                shape.shapeType = ParticleSystemShapeType.Donut;
+                shape.donutRadius = 0.5f;
+                shape.radiusThickness = 0f;
+                ShurikenConverter.Convert(owner);
+                var gpu = owner.GetComponent<GPUParticleSystem>();
+                Require(gpu != null, "Shape mapping did not create a GPU system.");
+                Require(gpu.shapeType == ShapeTypeGPU.Donut,
+                    "Donut Shape was not mapped.");
+                Require(gpu.shapeEmitFrom == ShapeEmitFromGPU.Surface,
+                    "Donut shell was not mapped to Surface emission.");
+                RequireApproximately(gpu.shapeDonutRadius, 2f,
+                    "Donut major radius");
+                RequireApproximately(gpu.shapeDonutThickness, 0.5f,
+                    "Donut cross-section radius");
+
+                shape.shapeType = ParticleSystemShapeType.SingleSidedEdge;
+                shape.radius = 2f;
+                shape.radiusThickness = 1f;
+                shape.scale = new Vector3(3f, 1f, 1f);
+                shape.alignToDirection = true;
+                ShurikenConverter.Convert(owner);
+                Require(gpu.shapeType == ShapeTypeGPU.Edge,
+                    "SingleSidedEdge Shape was not mapped to Edge.");
+                Require(gpu.shapeEmitFrom == ShapeEmitFromGPU.Edge,
+                    "SingleSidedEdge emission mode was not mapped.");
+                RequireApproximately(gpu.shapeEdgeLength, 4f,
+                    "Unscaled Edge length");
+                Require(gpu.shapeLocalScale == shape.scale,
+                    "Edge Shape scale was not preserved.");
+                Require(gpu.alignToDirection,
+                    "Shape Align to Direction metadata was not preserved.");
+
+                shape.shapeType = ParticleSystemShapeType.Rectangle;
+                shape.scale = new Vector3(4f, 2f, 1f);
+                shape.alignToDirection = false;
+                ShurikenConverter.Convert(owner);
+                Require(gpu.shapeType == ShapeTypeGPU.Rectangle,
+                    "Rectangle Shape was not mapped.");
+                Require(gpu.shapeEmitFrom == ShapeEmitFromGPU.Volume,
+                    "Rectangle Shape was not mapped to area emission.");
+                Require(gpu.shapeRectangleSize == Vector2.one,
+                    "Rectangle base size must remain unscaled before Shape TRS.");
+                Require(gpu.shapeLocalScale == shape.scale,
+                    "Rectangle Shape scale was not preserved.");
+
+                shape.shapeType = ParticleSystemShapeType.BoxEdge;
+                ShurikenConverter.Convert(owner);
+                Require(gpu.shapeType == ShapeTypeGPU.Box,
+                    "BoxEdge Shape was not mapped to Box.");
+                Require(gpu.shapeEmitFrom == ShapeEmitFromGPU.Edge,
+                    "BoxEdge Shape was not mapped to edge emission.");
+            }
+            finally
+            {
+                Object.DestroyImmediate(owner);
             }
         }
 

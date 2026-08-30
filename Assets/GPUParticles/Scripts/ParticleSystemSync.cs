@@ -38,6 +38,7 @@ namespace GPUParticles
         private float cachedShapeArc;
         private float cachedShapeDonutRadius;
         private bool cachedShapeEnabled;
+        private bool cachedShapeAlignToDirection;
 
         // Renderer缓存
         private ParticleSystemRenderMode cachedRenderMode;
@@ -162,6 +163,7 @@ namespace GPUParticles
             cachedShapeArc = shape.arc;
             cachedShapeDonutRadius = shape.donutRadius;
             cachedShapeEnabled = shape.enabled;
+            cachedShapeAlignToDirection = shape.alignToDirection;
 
             if (sourceRenderer != null)
             {
@@ -293,6 +295,13 @@ namespace GPUParticles
                 shapeChanged = true;
             }
 
+            if (force ||
+                shape.alignToDirection != cachedShapeAlignToDirection)
+            {
+                cachedShapeAlignToDirection = shape.alignToDirection;
+                shapeChanged = true;
+            }
+
             // Shape Type
             if (force || shape.shapeType != cachedShapeType)
             {
@@ -397,20 +406,24 @@ namespace GPUParticles
             {
                 case ParticleSystemShapeType.Sphere:
                     targetGPUParticleSystem.shapeType = ShapeTypeGPU.Sphere;
-                    targetGPUParticleSystem.shapeEmitFrom = shape.radiusThickness <= 0.001f
+                    targetGPUParticleSystem.shapeEmitFrom =
+                        shape.radiusThickness <= 0.001f
                         ? ShapeEmitFromGPU.Surface
                         : ShapeEmitFromGPU.Volume;
                     targetGPUParticleSystem.shapeSphereRadius = shape.radius;
-                    targetGPUParticleSystem.shapeRadiusThickness = shape.radiusThickness;
+                    targetGPUParticleSystem.shapeRadiusThickness =
+                        shape.radiusThickness;
                     break;
 
                 case ParticleSystemShapeType.Hemisphere:
                     targetGPUParticleSystem.shapeType = ShapeTypeGPU.Hemisphere;
-                    targetGPUParticleSystem.shapeEmitFrom = shape.radiusThickness <= 0.001f
+                    targetGPUParticleSystem.shapeEmitFrom =
+                        shape.radiusThickness <= 0.001f
                         ? ShapeEmitFromGPU.Surface
                         : ShapeEmitFromGPU.Volume;
                     targetGPUParticleSystem.shapeSphereRadius = shape.radius;
-                    targetGPUParticleSystem.shapeRadiusThickness = shape.radiusThickness;
+                    targetGPUParticleSystem.shapeRadiusThickness =
+                        shape.radiusThickness;
                     break;
 
                 case ParticleSystemShapeType.Cone:
@@ -419,7 +432,8 @@ namespace GPUParticles
                     targetGPUParticleSystem.shapeConeRadius = shape.radius;
                     targetGPUParticleSystem.shapeConeLength = shape.length > 0f ? shape.length : 1f;
                     targetGPUParticleSystem.shapeConeAngle = shape.angle;
-                    targetGPUParticleSystem.shapeRadiusThickness = shape.radiusThickness;
+                    targetGPUParticleSystem.shapeRadiusThickness =
+                        shape.radiusThickness;
                     targetGPUParticleSystem.shapeConeArcDeg = shape.arc;
                     break;
 
@@ -429,15 +443,21 @@ namespace GPUParticles
                     targetGPUParticleSystem.shapeConeRadius = shape.radius;
                     targetGPUParticleSystem.shapeConeLength = shape.length > 0f ? shape.length : 1f;
                     targetGPUParticleSystem.shapeConeAngle = shape.angle;
-                    targetGPUParticleSystem.shapeRadiusThickness = shape.radiusThickness;
+                    targetGPUParticleSystem.shapeRadiusThickness =
+                        shape.radiusThickness;
                     targetGPUParticleSystem.shapeConeArcDeg = shape.arc;
                     break;
 
                 case ParticleSystemShapeType.Donut:
                     targetGPUParticleSystem.shapeType = ShapeTypeGPU.Donut;
-                    targetGPUParticleSystem.shapeEmitFrom = ShapeEmitFromGPU.Volume;
+                    targetGPUParticleSystem.shapeEmitFrom =
+                        shape.radiusThickness <= 0.001f
+                            ? ShapeEmitFromGPU.Surface
+                            : ShapeEmitFromGPU.Volume;
                     targetGPUParticleSystem.shapeDonutRadius = Mathf.Max(0f, shape.radius);
                     targetGPUParticleSystem.shapeDonutThickness = Mathf.Max(0f, shape.donutRadius);
+                    targetGPUParticleSystem.shapeRadiusThickness =
+                        shape.radiusThickness;
                     targetGPUParticleSystem.shapeConeArcDeg = shape.arc;
                     break;
 
@@ -446,18 +466,42 @@ namespace GPUParticles
                 case ParticleSystemShapeType.BoxEdge:
                     targetGPUParticleSystem.shapeType = ShapeTypeGPU.Box;
                     targetGPUParticleSystem.shapeEmitFrom =
-                        shape.shapeType == ParticleSystemShapeType.Box ? ShapeEmitFromGPU.Volume : ShapeEmitFromGPU.Surface;
+                        shape.shapeType == ParticleSystemShapeType.Box
+                            ? ShapeEmitFromGPU.Volume
+                            : shape.shapeType == ParticleSystemShapeType.BoxEdge
+                                ? ShapeEmitFromGPU.Edge
+                                : ShapeEmitFromGPU.Surface;
                     targetGPUParticleSystem.shapeBoxSize = Vector3.one;
                     break;
 
                 case ParticleSystemShapeType.Circle:
                     targetGPUParticleSystem.shapeType = ShapeTypeGPU.Circle;
-                    targetGPUParticleSystem.shapeEmitFrom = shape.radiusThickness <= 0.001f
+                    targetGPUParticleSystem.shapeEmitFrom =
+                        shape.radiusThickness <= 0.001f
                         ? ShapeEmitFromGPU.Surface
                         : ShapeEmitFromGPU.Volume;
                     targetGPUParticleSystem.shapeCircleRadius = Mathf.Max(0f, shape.radius);
                     targetGPUParticleSystem.shapeConeArcDeg = shape.arc;
-                    targetGPUParticleSystem.shapeRadiusThickness = shape.radiusThickness;
+                    targetGPUParticleSystem.shapeRadiusThickness =
+                        shape.radiusThickness;
+                    break;
+
+                case ParticleSystemShapeType.SingleSidedEdge:
+                    targetGPUParticleSystem.shapeType = ShapeTypeGPU.Edge;
+                    targetGPUParticleSystem.shapeEmitFrom = ShapeEmitFromGPU.Edge;
+                    targetGPUParticleSystem.shapeEdgeLength =
+                        Mathf.Max(0f, 2f * shape.radius);
+                    break;
+
+                case ParticleSystemShapeType.Rectangle:
+                    targetGPUParticleSystem.shapeType = ShapeTypeGPU.Rectangle;
+                    targetGPUParticleSystem.shapeEmitFrom = ShapeEmitFromGPU.Volume;
+                    targetGPUParticleSystem.shapeRectangleSize = Vector2.one;
+                    break;
+
+                default:
+                    targetGPUParticleSystem.shapeType = ShapeTypeGPU.Point;
+                    targetGPUParticleSystem.shapeEmitFrom = ShapeEmitFromGPU.Base;
                     break;
             }
         }

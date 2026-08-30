@@ -117,8 +117,8 @@ Shader "Hidden/GPUParticles/SimulateMRT"
 
                 // ----- Shape (generic) -----
                 int     _ShapeType;          // 0..7 shapes, 8 point emitter (Shape disabled)
-                int     _ShapeEmitFrom;      // 0 Volume, 1 Surface, 2 Base (for Cone)
-                int     _AlignToDirection;   // bool
+                int     _ShapeEmitFrom;      // 0 Volume, 1 Surface, 2 Base, 3 Edge
+                int     _AlignToDirection;   // orientation metadata; not velocity
 
                 // Cone
                 float   _ShapeConeAngleRad;
@@ -354,6 +354,47 @@ Shader "Hidden/GPUParticles/SimulateMRT"
                 float y = (frac(uv.x * 2.0) - 0.5) * size.y;
                 nLocal = float3(0,0,pos?1:-1);
                 return float3(x, y, pos?half.z:-half.z);
+            }
+
+            // Sample the 12 box edges, weighted by edge length.
+            float3 SampleBoxEdge(float u, float3 size)
+            {
+                float3 half = 0.5 * size;
+                float xGroup = 4.0 * size.x;
+                float yGroup = 4.0 * size.y;
+                float zGroup = 4.0 * size.z;
+                float total = max(1e-6, xGroup + yGroup + zGroup);
+                float edgePosition = u * total;
+
+                if (edgePosition < xGroup && size.x > 1e-6)
+                {
+                    float edge = edgePosition / size.x;
+                    int edgeIndex = min(3, (int)floor(edge));
+                    float x = (frac(edge) - 0.5) * size.x;
+                    float y = (edgeIndex & 1) != 0 ? half.y : -half.y;
+                    float z = (edgeIndex & 2) != 0 ? half.z : -half.z;
+                    return float3(x, y, z);
+                }
+
+                edgePosition -= xGroup;
+                if (edgePosition < yGroup && size.y > 1e-6)
+                {
+                    float edge = edgePosition / size.y;
+                    int edgeIndex = min(3, (int)floor(edge));
+                    float x = (edgeIndex & 1) != 0 ? half.x : -half.x;
+                    float y = (frac(edge) - 0.5) * size.y;
+                    float z = (edgeIndex & 2) != 0 ? half.z : -half.z;
+                    return float3(x, y, z);
+                }
+
+                edgePosition -= yGroup;
+                float safeSizeZ = max(1e-6, size.z);
+                float edge = edgePosition / safeSizeZ;
+                int edgeIndex = min(3, (int)floor(edge));
+                float x = (edgeIndex & 1) != 0 ? half.x : -half.x;
+                float y = (edgeIndex & 2) != 0 ? half.y : -half.y;
+                float z = (frac(edge) - 0.5) * size.z;
+                return float3(x, y, z);
             }
 
             // Uniform direction on unit sphere
@@ -832,7 +873,7 @@ Shader "Hidden/GPUParticles/SimulateMRT"
                         float R = _ShapeSphereRadius;
                         float3 dirL = SampleSphereDir(u2a);
                         float r;
-                        if (_ShapeEmitFrom == 1) // Surface (SphereShell)
+                        if (_ShapeEmitFrom == 1) // Surface shell
                         {
                             r = R; // 固定半径，表面发射
                         }
@@ -845,7 +886,7 @@ Shader "Hidden/GPUParticles/SimulateMRT"
                         float3 pL = dirTransformed * r;
                         posL = _ShapePosL + pL;
 
-                        float3 vdirL = (_AlignToDirection != 0) ? normalize(pL) : fwd;
+                        float3 vdirL = dirTransformed;
                         velL = vdirL * particleStartSpeed;
                     }
                     // 1. Hemisphere
@@ -858,7 +899,7 @@ Shader "Hidden/GPUParticles/SimulateMRT"
                         float R = _ShapeSphereRadius;
                         float3 dirL = SampleHemisphereDir(u2a); // z>=0
                         float r;
-                        if (_ShapeEmitFrom == 1) // Surface (HemisphereShell)
+                        if (_ShapeEmitFrom == 1) // Surface shell
                         {
                             r = R; // 固定半径，表面发射
                         }
@@ -871,7 +912,7 @@ Shader "Hidden/GPUParticles/SimulateMRT"
                         float3 pL = dirTransformed * r;
                         posL = _ShapePosL + pL;
 
-                        float3 vdirL = (_AlignToDirection != 0) ? normalize(pL) : fwd;
+                        float3 vdirL = dirTransformed;
                         velL = vdirL * particleStartSpeed;
                     }
                     // 2. Cone
@@ -914,36 +955,28 @@ Shader "Hidden/GPUParticles/SimulateMRT"
                         float3 right = normalize(_ShapeRightL);
                         float3 up    = normalize(_ShapeUpL);
                         float3 fwd   = normalize(_ShapeFwdL);
-                        
-                        // 在XY平面生成圆环（主圆环）
-                        float phi = clamp(_ShapeConeArcRad, 0.0, 6.28318530718) * urnd.x;
-                        float R = _ShapeDonutRadius;
-                        
-                        // 环的厚度采样
-                        float r;
-                        if (_ShapeEmitFrom == 1) // Surface
-                        {
-                            r = _ShapeDonutThickness * 0.5; // 表面：使用固定厚度
-                        }
-                        else // Volume
-                        {
-                            r = _ShapeDonutThickness * 0.5 * sqrt(urnd.y); // 体积：均匀分布
-                        }
-                        
-                        // 在圆环截面内采样
-                        float theta = 6.28318530718 * urnd.z; // 截面角度
-                        float2 offset = float2(r * cos(theta), r * sin(theta));
-                        
-                        // 主圆环中心位置
-                        float2 mainRing = float2(R * cos(phi), R * sin(phi));
-                        
-                        // 最终位置（在XY平面）
-                        float2 pos2D = mainRing + offset;
-                        posL = _ShapePosL + right * pos2D.x + up * pos2D.y;
-                        
-                        // 方向：从圆环中心指向粒子位置
-                        float3 vdirL = (_AlignToDirection != 0) ? normalize(right * pos2D.x + up * pos2D.y) : fwd;
-                        velL = vdirL * particleStartSpeed;
+
+                        float phi = clamp(
+                            _ShapeConeArcRad, 0.0, 6.28318530718) * urnd.x;
+                        float theta = 6.28318530718 * urnd.z;
+                        float outerRadius = max(0.0, _ShapeDonutThickness);
+                        float innerRadius = _ShapeEmitFrom == 1
+                            ? outerRadius
+                            : outerRadius * saturate(
+                                1.0 - _ShapeRadiusThickness);
+                        float crossRadius = sqrt(lerp(
+                            innerRadius * innerRadius,
+                            outerRadius * outerRadius,
+                            urnd.y));
+                        float3 ringDirection = normalize(
+                            right * cos(phi) + up * sin(phi));
+                        float3 crossDirection = normalize(
+                            ringDirection * cos(theta) + fwd * sin(theta));
+
+                        posL = _ShapePosL +
+                            ringDirection * _ShapeDonutRadius +
+                            crossDirection * crossRadius;
+                        velL = crossDirection * particleStartSpeed;
                     }
                     // 4. Box
                     else if (_ShapeType == 4)
@@ -953,14 +986,19 @@ Shader "Hidden/GPUParticles/SimulateMRT"
                         float3 fwd   = normalize(_ShapeFwdL);
                         float3 sizeB = _ShapeBoxSize;
 
-                        if (_ShapeEmitFrom == 1) // Surface
+                        if (_ShapeEmitFrom == 3) // Edge
+                        {
+                            float3 pB = SampleBoxEdge(urnd.x, sizeB);
+                            posL = _ShapePosL +
+                                right * pB.x + up * pB.y + fwd * pB.z;
+                            velL = fwd * particleStartSpeed;
+                        }
+                        else if (_ShapeEmitFrom == 1) // Surface
                         {
                             float3 nLocal;
                             float3 pB = SampleBoxSurface(urnd, sizeB, nLocal);
                             posL = _ShapePosL + right*pB.x + up*pB.y + fwd*pB.z;
-
-                            float3 dirL = (_AlignToDirection != 0) ? nLocal : fwd;
-                            velL = dirL * particleStartSpeed;
+                            velL = fwd * particleStartSpeed;
                         }
                         else // Volume
                         {
@@ -994,9 +1032,10 @@ Shader "Hidden/GPUParticles/SimulateMRT"
                         
                         float2 pos2D = float2(r * cos(phi), r * sin(phi));
                         posL = _ShapePosL + right * pos2D.x + up * pos2D.y;
-                        
-                        float3 vdirL = (_AlignToDirection != 0) ? normalize(right * pos2D.x + up * pos2D.y) : fwd;
-                        velL = vdirL * particleStartSpeed;
+
+                        float3 radialDirection = normalize(
+                            right * cos(phi) + up * sin(phi));
+                        velL = radialDirection * particleStartSpeed;
                     }
                     // 6. Edge
                     else if (_ShapeType == 6)
@@ -1011,8 +1050,7 @@ Shader "Hidden/GPUParticles/SimulateMRT"
                         
                         posL = _ShapePosL + right * pos1D;
                         
-                        float3 vdirL = (_AlignToDirection != 0) ? right : fwd;
-                        velL = vdirL * particleStartSpeed;
+                        velL = up * particleStartSpeed;
                     }
                     // 7. Rectangle
                     else if (_ShapeType == 7)
@@ -1058,9 +1096,8 @@ Shader "Hidden/GPUParticles/SimulateMRT"
                         }
                         
                         posL = _ShapePosL + right * pos2D.x + up * pos2D.y;
-                        
-                        float3 vdirL = (_AlignToDirection != 0) ? normalize(right * pos2D.x + up * pos2D.y) : fwd;
-                        velL = vdirL * particleStartSpeed;
+
+                        velL = fwd * particleStartSpeed;
                     }
                     // Fallback (默认使用Cone)
                     else
