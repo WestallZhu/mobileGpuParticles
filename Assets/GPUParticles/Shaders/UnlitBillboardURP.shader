@@ -26,6 +26,7 @@ Shader "GPUParticles/UnlitBillboardURP"
             TEXTURE2D(_CurColor);   SAMPLER(sampler_CurColor);
             TEXTURE2D(_CurRotationPhase); SAMPLER(sampler_CurRotationPhase);
             TEXTURE2D(_BaseMap);    SAMPLER(sampler_BaseMap);
+            TEXTURE2D(_StartLifetimeLUT);
             TEXTURE2D(_RotationOverLifetimeIntegralLUT);
             SAMPLER(sampler_RotationOverLifetimeIntegralLUT);
             TEXTURE2D(_LifetimeByEmitterSpeedLUT);
@@ -35,6 +36,10 @@ Shader "GPUParticles/UnlitBillboardURP"
             TEXTURE2D(_TextureSheetStartFrameLUT);
             SAMPLER(sampler_TextureSheetStartFrameLUT);
 
+            // Keep render-side lifetime reconstruction in the same measured
+            // Unity 2022.3 Shuriken tick phase as simulation.
+            static const float START_LIFETIME_CURVE_TICK_PHASE = 0.2;
+
             CBUFFER_START(UnityPerMaterial)
                 int   _GridSize;
                 int   _MaxParticles;
@@ -42,6 +47,13 @@ Shader "GPUParticles/UnlitBillboardURP"
                 float _StartLifetime;
                 float _StartLifetimeMin;
                 int   _RandomizeStartLifetime;
+                int   _StartLifetimeMode;
+                float _StartLifetimeLUTInvWidth;
+                float _EmissionTimeAfterStep;
+                float _EmissionStartDelay;
+                float _EmissionDuration;
+                int   _EmissionLooping;
+                float _DeltaTime;
                 int   _LifetimeByEmitterSpeedEnabled;
                 float2 _LifetimeByEmitterSpeedRange;
                 float _LifetimeByEmitterSpeedLUTInvWidth;
@@ -118,6 +130,58 @@ Shader "GPUParticles/UnlitBillboardURP"
             {
                 return saturate(normalizedPosition) * (1.0 - inverseWidth) +
                        0.5 * inverseWidth;
+            }
+
+            float StartLifetimeAtBirth(uint id, float particleAge)
+            {
+                if (_StartLifetimeMode == 0) // Constant
+                {
+                    return max(0.001, _StartLifetime);
+                }
+
+                float randomValue = Hash01(id ^ 0x68E31DA4u);
+                if (_StartLifetimeMode == 3) // TwoConstants
+                {
+                    return max(
+                        0.001,
+                        lerp(
+                            _StartLifetimeMin,
+                            _StartLifetime,
+                            randomValue));
+                }
+
+                float birthActiveTime = max(
+                    0.0,
+                    _EmissionTimeAfterStep - particleAge -
+                    _EmissionStartDelay);
+                float sampleDeltaTime = max(1e-6, _DeltaTime);
+                float sampledBirthTime =
+                    ceil(max(0.0, birthActiveTime - 1e-6) /
+                         sampleDeltaTime) * sampleDeltaTime +
+                    sampleDeltaTime * START_LIFETIME_CURVE_TICK_PHASE;
+                float duration = max(0.05, _EmissionDuration);
+                float systemTime = _EmissionLooping != 0
+                    ? frac(sampledBirthTime / duration)
+                    : saturate(sampledBirthTime / duration);
+                float x = LUTCoordinate(
+                    systemTime,
+                    _StartLifetimeLUTInvWidth);
+                float maximum = SAMPLE_TEXTURE2D_LOD(
+                    _StartLifetimeLUT,
+                    sampler_LifetimeByEmitterSpeedLUT,
+                    float2(x, 0.75), 0).r;
+                if (_StartLifetimeMode != 2) // Curve
+                {
+                    return max(0.001, maximum);
+                }
+
+                float minimum = SAMPLE_TEXTURE2D_LOD(
+                    _StartLifetimeLUT,
+                    sampler_LifetimeByEmitterSpeedLUT,
+                    float2(x, 0.25), 0).r;
+                return max(
+                    0.001,
+                    lerp(minimum, maximum, randomValue));
             }
 
             float SampleRotationIntegral(uint id, float normalizedAge)
@@ -413,13 +477,23 @@ Shader "GPUParticles/UnlitBillboardURP"
                     o.uv = 0; o.col = 0; return o;
                 }
 
-                float particleStartLifetime = RandomRange(
-                    quadId, 0x68E31DA4u, _RandomizeStartLifetime,
-                    _StartLifetimeMin, _StartLifetime) *
+                bool startLifetimeUsesAgeState =
+                    _StartLifetimeMode == 1 || _StartLifetimeMode == 2;
+                float particleAge = startLifetimeUsesAgeState
+                    ? max(0.0, posLife.w - 1.0)
+                    : 0.0;
+                float particleStartLifetime = StartLifetimeAtBirth(
+                    quadId,
+                    particleAge) *
                     LifetimeByEmitterSpeedMultiplier(
                         quadId,
                         moduleState.gba);
-                float particleAge = max(0.0, particleStartLifetime - posLife.w);
+                if (!startLifetimeUsesAgeState)
+                {
+                    particleAge = max(
+                        0.0,
+                        particleStartLifetime - posLife.w);
+                }
                 float normalizedAge = saturate(
                     particleAge / max(1e-6, particleStartLifetime));
 

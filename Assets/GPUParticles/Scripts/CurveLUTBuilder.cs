@@ -15,7 +15,27 @@ namespace GPUParticles
             string assetName = "SizeOverLife_LUT")
         {
             return BuildSampled(
-                curve, resolution, saveAsAsset, assetName, clampNonNegative: true);
+                curve,
+                resolution,
+                saveAsAsset,
+                assetName,
+                clampNonNegative: true,
+                TextureFormat.RHalf);
+        }
+
+        public static Texture2D BuildHighPrecision(
+            ParticleSystem.MinMaxCurve curve,
+            int resolution = 256,
+            bool saveAsAsset = false,
+            string assetName = "StartLifetime_LUT")
+        {
+            return BuildSampled(
+                curve,
+                resolution,
+                saveAsAsset,
+                assetName,
+                clampNonNegative: true,
+                TextureFormat.RFloat);
         }
 
         public static Texture2D BuildSigned(
@@ -25,7 +45,12 @@ namespace GPUParticles
             string assetName = "RotationBySpeed_LUT")
         {
             return BuildSampled(
-                curve, resolution, saveAsAsset, assetName, clampNonNegative: false);
+                curve,
+                resolution,
+                saveAsAsset,
+                assetName,
+                clampNonNegative: false,
+                TextureFormat.RHalf);
         }
 
         static Texture2D BuildSampled(
@@ -33,7 +58,8 @@ namespace GPUParticles
             int resolution,
             bool saveAsAsset,
             string assetName,
-            bool clampNonNegative)
+            bool clampNonNegative,
+            TextureFormat textureFormat)
         {
             resolution = Mathf.Max(2, resolution);
             if (string.IsNullOrEmpty(assetName))
@@ -42,7 +68,7 @@ namespace GPUParticles
                     ? "SizeOverLife_LUT"
                     : "RotationBySpeed_LUT";
             }
-            var tex = new Texture2D(resolution, 2, TextureFormat.RHalf, false, true)
+            var tex = new Texture2D(resolution, 2, textureFormat, false, true)
             {
                 name = assetName,
                 wrapMode = TextureWrapMode.Clamp,

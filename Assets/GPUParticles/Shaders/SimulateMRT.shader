@@ -32,6 +32,7 @@ Shader "Hidden/GPUParticles/SimulateMRT"
             TEXTURE2D(_CurVelSize);      SAMPLER(sampler_CurVelSize);
             TEXTURE2D(_CurColor);        SAMPLER(sampler_CurColor);
             TEXTURE2D(_CurRotationPhase); SAMPLER(sampler_CurRotationPhase);
+            TEXTURE2D(_StartLifetimeLUT);
             TEXTURE2D(_StartSpeedLUT);
             TEXTURE2D(_StartSizeLUT);
             TEXTURE2D(_StartColorLUT);
@@ -48,6 +49,10 @@ Shader "Hidden/GPUParticles/SimulateMRT"
             TEXTURE2D(_LifetimeByEmitterSpeedLUT);
             SAMPLER(sampler_LifetimeByEmitterSpeedLUT);
 
+            // Unity 2022.3 Shuriken samples Main curves just after the
+            // emission tick boundary; this is the measured tick phase.
+            static const float START_LIFETIME_CURVE_TICK_PHASE = 0.2;
+
             // --- Params ---
             CBUFFER_START(UnityPerMaterial)
                 int     _GridSize;
@@ -56,6 +61,8 @@ Shader "Hidden/GPUParticles/SimulateMRT"
                 float   _StartLifetime;
                 float   _StartLifetimeMin;
                 int     _RandomizeStartLifetime;
+                int     _StartLifetimeMode;
+                float   _StartLifetimeLUTInvWidth;
                 float   _StartSpeed;
                 float   _StartSpeedMin;
                 int     _RandomizeStartSpeed;
@@ -786,6 +793,56 @@ Shader "Hidden/GPUParticles/SimulateMRT"
                 return lerp(minimum, maximum, randomValue);
             }
 
+            float StartLifetimeAtBirth(uint id, float particleAge)
+            {
+                if (_StartLifetimeMode == 0) // Constant
+                {
+                    return max(0.001, _StartLifetime);
+                }
+
+                float randomValue = Hash01(id ^ 0x68E31DA4u);
+                if (_StartLifetimeMode == 3) // TwoConstants
+                {
+                    return max(
+                        0.001,
+                        lerp(
+                            _StartLifetimeMin,
+                            _StartLifetime,
+                            randomValue));
+                }
+
+                float birthActiveTime = max(
+                    0.0,
+                    _EmissionTimeAfterStep - particleAge -
+                    _EmissionStartDelay);
+                float sampleDeltaTime = max(1e-6, _DeltaTime);
+                float sampledBirthTime =
+                    ceil(max(0.0, birthActiveTime - 1e-6) /
+                         sampleDeltaTime) * sampleDeltaTime +
+                    sampleDeltaTime * START_LIFETIME_CURVE_TICK_PHASE;
+                float duration = max(0.05, _EmissionDuration);
+                float systemTime = _EmissionLooping != 0
+                    ? frac(sampledBirthTime / duration)
+                    : saturate(sampledBirthTime / duration);
+                float lutPosition = LUTPosition(
+                    systemTime,
+                    _StartLifetimeLUTInvWidth);
+                float maximum = SAMPLE_TEXTURE2D_LOD(
+                    _StartLifetimeLUT, sampler_SizeLUT,
+                    float2(lutPosition, 0.75), 0).r;
+                if (_StartLifetimeMode != 2) // Curve
+                {
+                    return max(0.001, maximum);
+                }
+
+                float minimum = SAMPLE_TEXTURE2D_LOD(
+                    _StartLifetimeLUT, sampler_SizeLUT,
+                    float2(lutPosition, 0.25), 0).r;
+                return max(
+                    0.001,
+                    lerp(minimum, maximum, randomValue));
+            }
+
             float StartSpeedAtBirth(uint id, float particleAge)
             {
                 if (_StartSpeedMode == 0) // Constant
@@ -1012,8 +1069,9 @@ Shader "Hidden/GPUParticles/SimulateMRT"
                 float rotationPhase = curModuleState.x;
                 float3 birthEmitterVelocityWS = curModuleState.yzw;
 
-                float baseParticleStartLifetime = RandomRange(
-                    id, 0x68E31DA4u, _RandomizeStartLifetime, _StartLifetimeMin, _StartLifetime);
+                bool startLifetimeUsesAgeState =
+                    _StartLifetimeMode == 1 || _StartLifetimeMode == 2;
+                float baseParticleStartLifetime = StartLifetimeAtBirth(id, 0.0);
                 float particleStartLifetime = baseParticleStartLifetime *
                     LifetimeByEmitterSpeedMultiplier(
                         id,
@@ -1043,6 +1101,9 @@ Shader "Hidden/GPUParticles/SimulateMRT"
                     uint emitOrdinal = EmitOrdinal(
                         id, _EmitStart, (uint)_MaxParticles);
                     stepDt = SpawnAgeThisFrame(emitOrdinal);
+                    baseParticleStartLifetime = StartLifetimeAtBirth(
+                        id,
+                        stepDt);
                     particleStartSpeed = StartSpeedAtBirth(id, stepDt);
                     particleStartSize = StartSizeAtBirth(id, stepDt);
                     float3 urnd = Hash03(id * 9781u + 0x9E3779B9u);
@@ -1352,7 +1413,9 @@ Shader "Hidden/GPUParticles/SimulateMRT"
                         LifetimeByEmitterSpeedMultiplier(
                             id,
                             birthEmitterVelocityWS);
-                    life = particleStartLifetime;
+                    life = startLifetimeUsesAgeState
+                        ? 1.0
+                        : particleStartLifetime;
                     
                     float tSpawn = 0.0;
                     float4 lutColSpawn = ColorOverLifetime(id, tSpawn);
@@ -1394,13 +1457,46 @@ Shader "Hidden/GPUParticles/SimulateMRT"
                         stepDt = _DeltaTime;
                     }
 
-                    float normalizedAgeBeforeStep = saturate(
-                        1.0 - (life / max(particleStartLifetime, 1e-5)));
-                    life = max(0.0, life - stepDt);
-                    float normalizedAgeAfterStep = saturate(
-                        1.0 - (life / max(particleStartLifetime, 1e-5)));
-                    float particleAgeAfterStep = max(
-                        0.0, particleStartLifetime - life);
+                    float particleAgeBeforeStep;
+                    float particleAgeAfterStep;
+                    float normalizedAgeBeforeStep;
+                    float normalizedAgeAfterStep;
+                    if (startLifetimeUsesAgeState)
+                    {
+                        particleAgeBeforeStep = max(0.0, life - 1.0);
+                        particleAgeAfterStep =
+                            particleAgeBeforeStep + stepDt;
+                        baseParticleStartLifetime = StartLifetimeAtBirth(
+                            id,
+                            particleAgeAfterStep);
+                        particleStartLifetime = baseParticleStartLifetime *
+                            LifetimeByEmitterSpeedMultiplier(
+                                id,
+                                birthEmitterVelocityWS);
+                        normalizedAgeBeforeStep = saturate(
+                            particleAgeBeforeStep /
+                            max(particleStartLifetime, 1e-5));
+                        normalizedAgeAfterStep = saturate(
+                            particleAgeAfterStep /
+                            max(particleStartLifetime, 1e-5));
+                        life = particleAgeAfterStep + 1e-4 >=
+                               particleStartLifetime
+                            ? 0.0
+                            : particleAgeAfterStep + 1.0;
+                    }
+                    else
+                    {
+                        normalizedAgeBeforeStep = saturate(
+                            1.0 -
+                            (life / max(particleStartLifetime, 1e-5)));
+                        life = max(0.0, life - stepDt);
+                        normalizedAgeAfterStep = saturate(
+                            1.0 -
+                            (life / max(particleStartLifetime, 1e-5)));
+                        particleAgeAfterStep = max(
+                            0.0,
+                            particleStartLifetime - life);
+                    }
                     particleStartColor = StartColorAtBirth(
                         id, particleAgeAfterStep);
                     particleStartSize = StartSizeAtBirth(

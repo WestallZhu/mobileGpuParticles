@@ -47,6 +47,7 @@ namespace GPUParticles
         // LUT缓存（避免每帧重建）
         private float lastColorLUTUpdate = 0f;
         private float lastStartColorLUTUpdate = 0f;
+        private float lastStartLifetimeLUTUpdate = 0f;
         private float lastStartSpeedLUTUpdate = 0f;
         private float lastStartSizeLUTUpdate = 0f;
         private float lastGravityModifierLUTUpdate = 0f;
@@ -71,6 +72,7 @@ namespace GPUParticles
         private Texture2D generatedTextureSheetStartLUT;
         private Texture2D generatedColorLUT;
         private Texture2D generatedStartColorLUT;
+        private Texture2D generatedStartLifetimeLUT;
         private Texture2D generatedStartSpeedLUT;
         private Texture2D generatedStartSizeLUT;
         private Texture2D generatedGravityModifierLUT;
@@ -224,9 +226,32 @@ namespace GPUParticles
                 cachedSimulationSpace = main.simulationSpace;
             }
 
+            ParticleSystem.MinMaxCurve startLifetime = main.startLifetime;
             ShurikenMinMaxUtility.TryGetConstantRange(
-                main.startLifetime, out float minimum, out float maximum);
+                startLifetime, out float minimum, out float maximum);
             targetGPUParticleSystem.SetStartLifetimeRange(minimum, maximum);
+            targetGPUParticleSystem.startLifetimeMode = startLifetime.mode;
+            bool updateStartLifetimeLUT = force ||
+                Time.realtimeSinceStartup - lastStartLifetimeLUTUpdate >
+                LUT_UPDATE_INTERVAL;
+            if (updateStartLifetimeLUT)
+            {
+                DestroyGeneratedTexture(ref generatedStartLifetimeLUT);
+                if (IsCurveMode(startLifetime.mode))
+                {
+                    generatedStartLifetimeLUT = CurveLUTBuilder.BuildHighPrecision(
+                        startLifetime,
+                        assetName: "StartLifetime_LUT");
+                    targetGPUParticleSystem.startLifetimeLUT =
+                        generatedStartLifetimeLUT;
+                }
+                else
+                {
+                    targetGPUParticleSystem.startLifetimeLUT =
+                        CurveLUTBuilder.GetDefaultUnitLUT();
+                }
+                lastStartLifetimeLUTUpdate = Time.realtimeSinceStartup;
+            }
 
             ShurikenMinMaxUtility.TryGetConstantRange(
                 main.startSpeed, out minimum, out maximum);
@@ -843,6 +868,7 @@ namespace GPUParticles
             DestroyGeneratedLifetimeByEmitterSpeedLUT();
             DestroyGeneratedTextureSheetLUTs();
             DestroyGeneratedTexture(ref generatedStartColorLUT);
+            DestroyGeneratedTexture(ref generatedStartLifetimeLUT);
             DestroyGeneratedTexture(ref generatedStartSpeedLUT);
             DestroyGeneratedTexture(ref generatedStartSizeLUT);
             DestroyGeneratedTexture(ref generatedGravityModifierLUT);

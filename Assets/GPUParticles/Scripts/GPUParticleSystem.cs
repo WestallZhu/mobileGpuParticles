@@ -51,6 +51,9 @@ namespace GPUParticles
         // --------- Main ---------
         [Header("Main (Shuriken Mapping)")]
         [Min(0.001f)] public float startLifetime = 2.0f;
+        public ParticleSystemCurveMode startLifetimeMode =
+            ParticleSystemCurveMode.Constant;
+        public Texture2D startLifetimeLUT;
         public float startSpeed = 5.0f;
         public ParticleSystemCurveMode startSpeedMode =
             ParticleSystemCurveMode.Constant;
@@ -244,7 +247,11 @@ namespace GPUParticles
         bool previousEmitterPositionValid;
         Vector3 previousEmitterVelocityWS;
         uint simulationTick;
+        float lastSimulationDeltaTime = 1f / 60f;
         int lastSimulatedFrame = -1;
+        // Unity 2022.3 Shuriken samples Main curves just after the emission
+        // tick boundary. This measured phase keeps automatic births aligned.
+        const float StartLifetimeCurveTickPhase = 0.2f;
         const int MaxBurstGroupsPerStep = 8;
         const int MaxBurstCyclesPerLoop = 4096;
         readonly int[] stepBurstCounts = new int[MaxBurstGroupsPerStep];
@@ -266,6 +273,12 @@ namespace GPUParticles
         static readonly int _StartLifetime = Shader.PropertyToID("_StartLifetime");
         static readonly int _StartLifetimeMin = Shader.PropertyToID("_StartLifetimeMin");
         static readonly int _RandomizeStartLifetime = Shader.PropertyToID("_RandomizeStartLifetime");
+        static readonly int _StartLifetimeMode =
+            Shader.PropertyToID("_StartLifetimeMode");
+        static readonly int _StartLifetimeLUT =
+            Shader.PropertyToID("_StartLifetimeLUT");
+        static readonly int _StartLifetimeLUTInvWidth =
+            Shader.PropertyToID("_StartLifetimeLUTInvWidth");
         static readonly int _StartSpeed = Shader.PropertyToID("_StartSpeed");
         static readonly int _StartSpeedMin = Shader.PropertyToID("_StartSpeedMin");
         static readonly int _RandomizeStartSpeed = Shader.PropertyToID("_RandomizeStartSpeed");
@@ -636,6 +649,9 @@ namespace GPUParticles
             startLifetimeMin = Mathf.Max(0.001f, Mathf.Min(minimum, maximum));
             startLifetime = Mathf.Max(0.001f, Mathf.Max(minimum, maximum));
             randomizeStartLifetime = !Mathf.Approximately(startLifetimeMin, startLifetime);
+            startLifetimeMode = randomizeStartLifetime
+                ? ParticleSystemCurveMode.TwoConstants
+                : ParticleSystemCurveMode.Constant;
         }
 
         public void SetStartSpeedRange(float minimum, float maximum)
@@ -846,19 +862,67 @@ namespace GPUParticles
 
         internal float ResolveStartLifetime(int particleId)
         {
-            return ResolveStartLifetime(particleId, Vector3.zero);
+            return ResolveStartLifetime(particleId, 0f, Vector3.zero);
         }
 
         internal float ResolveStartLifetime(
             int particleId,
             Vector3 birthEmitterVelocityWS)
         {
-            float baseLifetime = ResolveRandomRange(
-                randomizeStartLifetime,
-                startLifetimeMin,
-                startLifetime,
-                (uint)particleId,
-                0x68E31DA4u);
+            return ResolveStartLifetime(
+                particleId,
+                0f,
+                birthEmitterVelocityWS);
+        }
+
+        internal float ResolveStartLifetime(
+            int particleId,
+            float particleAge,
+            Vector3 birthEmitterVelocityWS)
+        {
+            uint id = (uint)particleId;
+            ParticleSystemCurveMode mode = EffectiveStartLifetimeMode();
+            float baseLifetime;
+            if (mode == ParticleSystemCurveMode.Curve ||
+                mode == ParticleSystemCurveMode.TwoCurves)
+            {
+                float activeTime = Mathf.Max(
+                    0f,
+                    emissionTime - ResolveEmissionStartDelay());
+                float birthActiveTime = Mathf.Max(0f, activeTime - particleAge);
+                float duration = Mathf.Max(0.05f, emissionDuration);
+                float sampleDeltaTime = Mathf.Max(
+                    1e-6f,
+                    lastSimulationDeltaTime);
+                float sampledBirthTime = Mathf.Ceil(
+                    Mathf.Max(0f, birthActiveTime - 1e-6f) /
+                    sampleDeltaTime) * sampleDeltaTime +
+                    sampleDeltaTime * StartLifetimeCurveTickPhase;
+                float normalizedBirthTime = emissionLooping
+                    ? Mathf.Repeat(sampledBirthTime, duration) / duration
+                    : Mathf.Clamp01(sampledBirthTime / duration);
+                float minimum = Mathf.Max(
+                    0.001f,
+                    SampleLUTRow(startLifetimeLUT, normalizedBirthTime, 0));
+                float maximum = Mathf.Max(
+                    0.001f,
+                    SampleLUTRow(startLifetimeLUT, normalizedBirthTime, 1));
+                baseLifetime = mode == ParticleSystemCurveMode.TwoCurves
+                    ? Mathf.LerpUnclamped(
+                        minimum,
+                        maximum,
+                        Hash01(id ^ 0x68E31DA4u))
+                    : maximum;
+            }
+            else
+            {
+                baseLifetime = ResolveRandomRange(
+                    mode == ParticleSystemCurveMode.TwoConstants,
+                    startLifetimeMin,
+                    startLifetime,
+                    id,
+                    0x68E31DA4u);
+            }
             if (!lifetimeByEmitterSpeedEnabled ||
                 lifetimeByEmitterSpeedLUT == null)
             {
@@ -886,17 +950,50 @@ namespace GPUParticles
             return baseLifetime * multiplier;
         }
 
+        internal void ResolveParticleLifetimeState(
+            int particleId,
+            float lifetimeState,
+            Vector3 birthEmitterVelocityWS,
+            out float particleStartLifetime,
+            out float particleAge,
+            out float remainingLifetime)
+        {
+            if (IsStartLifetimeCurveMode())
+            {
+                particleAge = Mathf.Max(0f, lifetimeState - 1f);
+                particleStartLifetime = ResolveStartLifetime(
+                    particleId,
+                    particleAge,
+                    birthEmitterVelocityWS);
+                remainingLifetime = Mathf.Max(
+                    0f,
+                    particleStartLifetime - particleAge);
+                return;
+            }
+
+            particleStartLifetime = ResolveStartLifetime(
+                particleId,
+                birthEmitterVelocityWS);
+            remainingLifetime = Mathf.Max(0f, lifetimeState);
+            particleAge = Mathf.Max(
+                0f,
+                particleStartLifetime - remainingLifetime);
+        }
+
         internal float ResolveParticleRotationRadians(
             int particleId,
-            float remainingLifetime,
+            float lifetimeState,
             float rotationBySpeedPhase = 0f,
             Vector3 birthEmitterVelocityWS = default)
         {
             uint id = (uint)particleId;
-            float particleStartLifetime = ResolveStartLifetime(
+            ResolveParticleLifetimeState(
                 particleId,
-                birthEmitterVelocityWS);
-            float age = Mathf.Max(0f, particleStartLifetime - remainingLifetime);
+                lifetimeState,
+                birthEmitterVelocityWS,
+                out float particleStartLifetime,
+                out float age,
+                out _);
             float particleStartRotation = ResolveRandomRange(
                 randomizeStartRotation,
                 startRotationMin,
@@ -926,6 +1023,21 @@ namespace GPUParticles
             float integral = Mathf.LerpUnclamped(minimumIntegral, maximumIntegral, blend);
             return particleStartRotation + integral * particleStartLifetime +
                    rotationBySpeedPhase;
+        }
+
+        ParticleSystemCurveMode EffectiveStartLifetimeMode()
+        {
+            return startLifetimeMode == ParticleSystemCurveMode.Constant &&
+                   randomizeStartLifetime
+                ? ParticleSystemCurveMode.TwoConstants
+                : startLifetimeMode;
+        }
+
+        internal bool IsStartLifetimeCurveMode()
+        {
+            ParticleSystemCurveMode mode = EffectiveStartLifetimeMode();
+            return mode == ParticleSystemCurveMode.Curve ||
+                   mode == ParticleSystemCurveMode.TwoCurves;
         }
 
         static float SampleLUTRow(Texture2D texture, float normalizedPosition, int row)
@@ -1344,6 +1456,7 @@ namespace GPUParticles
         internal void SimulateStep(CommandBuffer cmd, float dt)
         {
             dt = Mathf.Max(0f, dt);
+            lastSimulationDeltaTime = dt;
             Vector3 emitterCurrentPositionWS = transform.position;
             Vector3 emitterPreviousPositionWS = previousEmitterPositionValid
                 ? previousEmitterPositionWS
@@ -1434,6 +1547,9 @@ namespace GPUParticles
             simulateMaterial.SetTexture(_CurVelSize, velSize[src]);
             simulateMaterial.SetTexture(_CurColor,   colorRT[src]);
             simulateMaterial.SetTexture(_CurRotationPhase, rotationPhaseRT[src]);
+            Texture2D selectedStartLifetimeLUT = startLifetimeLUT != null
+                ? startLifetimeLUT
+                : CurveLUTBuilder.GetDefaultUnitLUT();
             Texture2D selectedStartSpeedLUT = startSpeedLUT != null
                 ? startSpeedLUT
                 : CurveLUTBuilder.GetDefaultZeroLUT();
@@ -1479,6 +1595,8 @@ namespace GPUParticles
                     : CurveLUTBuilder.GetDefaultUnitLUT();
 
             simulateMaterial.SetTexture("_GradLUT", selectedColorOverLifetimeLUT);
+            simulateMaterial.SetTexture(
+                _StartLifetimeLUT, selectedStartLifetimeLUT);
             simulateMaterial.SetTexture(_StartSpeedLUT, selectedStartSpeedLUT);
             simulateMaterial.SetTexture(_StartSizeLUT, selectedStartSizeLUT);
             simulateMaterial.SetTexture(_StartColorLUT, selectedStartColorLUT);
@@ -1502,6 +1620,9 @@ namespace GPUParticles
                 selectedLifetimeByEmitterSpeedLUT);
             simulateMaterial.SetFloat(
                 _GradLUTInvWidth, InverseTextureWidth(selectedColorOverLifetimeLUT));
+            simulateMaterial.SetFloat(
+                _StartLifetimeLUTInvWidth,
+                InverseTextureWidth(selectedStartLifetimeLUT));
             simulateMaterial.SetFloat(
                 _StartSpeedLUTInvWidth,
                 InverseTextureWidth(selectedStartSpeedLUT));
@@ -1545,6 +1666,9 @@ namespace GPUParticles
             simulateMaterial.SetFloat(_StartLifetime, startLifetime);
             simulateMaterial.SetFloat(_StartLifetimeMin, startLifetimeMin);
             simulateMaterial.SetInt(_RandomizeStartLifetime, randomizeStartLifetime ? 1 : 0);
+            simulateMaterial.SetInt(
+                _StartLifetimeMode,
+                (int)EffectiveStartLifetimeMode());
             simulateMaterial.SetFloat(_StartSpeed, startSpeed);
             simulateMaterial.SetFloat(_StartSpeedMin, startSpeedMin);
             simulateMaterial.SetInt(_RandomizeStartSpeed, randomizeStartSpeed ? 1 : 0);
@@ -1812,6 +1936,31 @@ namespace GPUParticles
             renderMaterial.SetFloat(_StartLifetime, startLifetime);
             renderMaterial.SetFloat(_StartLifetimeMin, startLifetimeMin);
             renderMaterial.SetInt(_RandomizeStartLifetime, randomizeStartLifetime ? 1 : 0);
+            Texture2D selectedStartLifetimeLUT = startLifetimeLUT != null
+                ? startLifetimeLUT
+                : CurveLUTBuilder.GetDefaultUnitLUT();
+            renderMaterial.SetTexture(
+                _StartLifetimeLUT,
+                selectedStartLifetimeLUT);
+            renderMaterial.SetFloat(
+                _StartLifetimeLUTInvWidth,
+                InverseTextureWidth(selectedStartLifetimeLUT));
+            renderMaterial.SetInt(
+                _StartLifetimeMode,
+                (int)EffectiveStartLifetimeMode());
+            renderMaterial.SetFloat(_EmissionTimeAfterStep, emissionTime);
+            renderMaterial.SetFloat(
+                _EmissionStartDelay,
+                ResolveEmissionStartDelay());
+            renderMaterial.SetFloat(
+                _EmissionDuration,
+                Mathf.Max(0.05f, emissionDuration));
+            renderMaterial.SetInt(
+                _EmissionLooping,
+                emissionLooping ? 1 : 0);
+            renderMaterial.SetFloat(
+                _DeltaTime,
+                lastSimulationDeltaTime);
             Texture2D selectedLifetimeByEmitterSpeedLUT =
                 lifetimeByEmitterSpeedLUT != null
                     ? lifetimeByEmitterSpeedLUT

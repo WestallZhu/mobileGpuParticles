@@ -503,8 +503,17 @@ namespace GPUParticles
         {
             var main = particleSystem.main;
 
-            GetCurveRange(main.startLifetime, "Start Lifetime", context, out float minimum, out float maximum);
+            ParticleSystem.MinMaxCurve startLifetime = main.startLifetime;
+            ShurikenMinMaxUtility.TryGetConstantRange(
+                startLifetime, out float minimum, out float maximum);
             gpu.SetStartLifetimeRange(minimum, maximum);
+            gpu.startLifetimeMode = startLifetime.mode;
+            gpu.startLifetimeLUT = IsCurveMode(startLifetime.mode)
+                ? CurveLUTBuilder.BuildHighPrecision(
+                    startLifetime,
+                    saveAsAsset: true,
+                    assetName: "StartLifetime_LUT")
+                : CurveLUTBuilder.GetDefaultUnitLUT();
 
             ParticleSystem.MinMaxCurve startSpeed = main.startSpeed;
             ShurikenMinMaxUtility.TryGetConstantRange(
