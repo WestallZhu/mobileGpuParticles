@@ -671,6 +671,27 @@ namespace GPUParticles.Editor
                 ParticleABValidationProfile.TextureSheetSingleRowPoint);
         }
 
+        [MenuItem("Tools/GPU Particles/Run Texture Sheet Blend Lifetime A-B RT Capture")]
+        public static void RunTextureSheetBlendLifetimeCaptureMenu()
+        {
+            StartTextureSheetCaptureMenu(
+                ParticleABValidationProfile.TextureSheetBlendLifetimePoint);
+        }
+
+        [MenuItem("Tools/GPU Particles/Run Texture Sheet Blend Speed A-B RT Capture")]
+        public static void RunTextureSheetBlendSpeedCaptureMenu()
+        {
+            StartTextureSheetCaptureMenu(
+                ParticleABValidationProfile.TextureSheetBlendSpeedPoint);
+        }
+
+        [MenuItem("Tools/GPU Particles/Run Texture Sheet Blend FPS A-B RT Capture")]
+        public static void RunTextureSheetBlendFPSCaptureMenu()
+        {
+            StartTextureSheetCaptureMenu(
+                ParticleABValidationProfile.TextureSheetBlendFPSPoint);
+        }
+
         [MenuItem("Tools/GPU Particles/Run Shape Sphere A-B RT Capture")]
         public static void RunShapeSphereCaptureMenu()
         {
@@ -1359,6 +1380,30 @@ namespace GPUParticles.Editor
                 ParticleABValidationProfile.TextureSheetSingleRowPoint);
         }
 
+        public static void RunBatchTextureSheetBlendLifetimeCapture()
+        {
+            ValidateCommonFeatureMapping();
+            StartCapture(
+                true,
+                ParticleABValidationProfile.TextureSheetBlendLifetimePoint);
+        }
+
+        public static void RunBatchTextureSheetBlendSpeedCapture()
+        {
+            ValidateCommonFeatureMapping();
+            StartCapture(
+                true,
+                ParticleABValidationProfile.TextureSheetBlendSpeedPoint);
+        }
+
+        public static void RunBatchTextureSheetBlendFPSCapture()
+        {
+            ValidateCommonFeatureMapping();
+            StartCapture(
+                true,
+                ParticleABValidationProfile.TextureSheetBlendFPSPoint);
+        }
+
         public static void RunBatchRotationOverLifetimeCapture()
         {
             ValidateCommonFeatureMapping();
@@ -1572,6 +1617,9 @@ namespace GPUParticles.Editor
                 case ParticleABValidationProfile.TextureSheetSpeedPoint:
                 case ParticleABValidationProfile.TextureSheetFPSPoint:
                 case ParticleABValidationProfile.TextureSheetSingleRowPoint:
+                case ParticleABValidationProfile.TextureSheetBlendLifetimePoint:
+                case ParticleABValidationProfile.TextureSheetBlendSpeedPoint:
+                case ParticleABValidationProfile.TextureSheetBlendFPSPoint:
                     return 3.8f;
                 case ParticleABValidationProfile.RotationOverLifetimeCurvePoint: return 2.5f;
                 case ParticleABValidationProfile.RotationBySpeedCurvePoint: return 2.5f;
@@ -1671,7 +1719,10 @@ namespace GPUParticles.Editor
                    profile == ParticleABValidationProfile.TextureSheetLifetimePoint ||
                    profile == ParticleABValidationProfile.TextureSheetSpeedPoint ||
                    profile == ParticleABValidationProfile.TextureSheetFPSPoint ||
-                   profile == ParticleABValidationProfile.TextureSheetSingleRowPoint
+                   profile == ParticleABValidationProfile.TextureSheetSingleRowPoint ||
+                   profile == ParticleABValidationProfile.TextureSheetBlendLifetimePoint ||
+                   profile == ParticleABValidationProfile.TextureSheetBlendSpeedPoint ||
+                   profile == ParticleABValidationProfile.TextureSheetBlendFPSPoint
                 ? 20f
                 : 5f;
         }
@@ -1814,6 +1865,12 @@ namespace GPUParticles.Editor
                     return "TestResults/ParticleTextureSheetFPS";
                 case ParticleABValidationProfile.TextureSheetSingleRowPoint:
                     return "TestResults/ParticleTextureSheetSingleRow";
+                case ParticleABValidationProfile.TextureSheetBlendLifetimePoint:
+                    return "TestResults/ParticleTextureSheetBlendLifetime";
+                case ParticleABValidationProfile.TextureSheetBlendSpeedPoint:
+                    return "TestResults/ParticleTextureSheetBlendSpeed";
+                case ParticleABValidationProfile.TextureSheetBlendFPSPoint:
+                    return "TestResults/ParticleTextureSheetBlendFPS";
                 case ParticleABValidationProfile.RotationOverLifetimeCurvePoint:
                     return "TestResults/ParticleRotationOverLifetime";
                 case ParticleABValidationProfile.RotationBySpeedCurvePoint:
@@ -3350,6 +3407,7 @@ namespace GPUParticles.Editor
                 ValidateShapeMappings();
                 ValidateNoiseMapping();
                 ValidateCollisionMapping();
+                ValidateTextureSheetFrameBlendingMapping();
                 Debug.Log("PARTICLE_COMMON_FEATURE_MAPPING_RESULT:PASS");
             }
             finally
@@ -3995,6 +4053,80 @@ namespace GPUParticles.Editor
             finally
             {
                 Object.DestroyImmediate(owner);
+                for (int i = 0; i < generatedTextures.Length; i++)
+                {
+                    CleanupGeneratedValidationTexture(generatedTextures[i]);
+                }
+            }
+        }
+
+        static void ValidateTextureSheetFrameBlendingMapping()
+        {
+            var owner = new GameObject(
+                "ParticleTextureSheetBlendMappingValidation");
+            owner.SetActive(false);
+            Material material = null;
+            var generatedTextures = new Texture2D[4];
+            try
+            {
+                var shuriken = owner.AddComponent<ParticleSystem>();
+                ParticleSystem.MainModule main = shuriken.main;
+                main.playOnAwake = false;
+
+                ParticleSystem.TextureSheetAnimationModule textureSheet =
+                    shuriken.textureSheetAnimation;
+                textureSheet.enabled = true;
+                textureSheet.mode = ParticleSystemAnimationMode.Grid;
+                textureSheet.numTilesX = 2;
+                textureSheet.numTilesY = 1;
+                textureSheet.animation =
+                    ParticleSystemAnimationType.WholeSheet;
+                textureSheet.timeMode =
+                    ParticleSystemAnimationTimeMode.Lifetime;
+                textureSheet.cycleCount = 2;
+                textureSheet.uvChannelMask =
+                    UVChannelFlags.UV0 | UVChannelFlags.UV1;
+                textureSheet.frameOverTime = new ParticleSystem.MinMaxCurve(
+                    1f,
+                    AnimationCurve.Linear(0f, 0f, 1f, 1f));
+                textureSheet.startFrame = 0f;
+
+                Shader shader = Shader.Find(
+                    "Universal Render Pipeline/Particles/Unlit");
+                Require(shader != null,
+                    "URP particle shader was not found for Flipbook Blending mapping.");
+                material = new Material(shader);
+                material.SetFloat("_FlipbookBlending", 1f);
+                material.EnableKeyword("_FLIPBOOKBLENDING_ON");
+                owner.GetComponent<ParticleSystemRenderer>().sharedMaterial =
+                    material;
+
+                ShurikenConverter.Convert(owner);
+                var gpu = owner.GetComponent<GPUParticleSystem>();
+                Require(gpu != null,
+                    "Flipbook Blending conversion did not create a GPU system.");
+                generatedTextures[0] = gpu.textureSheetFrameOverTimeLUT;
+                generatedTextures[1] = gpu.textureSheetStartFrameLUT;
+                Require(gpu.textureSheetAnimationEnabled,
+                    "Texture Sheet Grid animation was not enabled.");
+                Require(gpu.textureSheetFrameBlending,
+                    "URP Flipbook Blending material state was not mapped.");
+                Require(
+                    (gpu.textureSheetUVChannelMask & UVChannelFlags.UV1) != 0,
+                    "Texture Sheet UV1 animation state was not preserved.");
+
+                material.SetFloat("_FlipbookBlending", 0f);
+                material.DisableKeyword("_FLIPBOOKBLENDING_ON");
+                ShurikenConverter.Convert(owner);
+                generatedTextures[2] = gpu.textureSheetFrameOverTimeLUT;
+                generatedTextures[3] = gpu.textureSheetStartFrameLUT;
+                Require(!gpu.textureSheetFrameBlending,
+                    "Disabled URP Flipbook Blending state was not remapped.");
+            }
+            finally
+            {
+                Object.DestroyImmediate(owner);
+                Object.DestroyImmediate(material);
                 for (int i = 0; i < generatedTextures.Length; i++)
                 {
                     CleanupGeneratedValidationTexture(generatedTextures[i]);

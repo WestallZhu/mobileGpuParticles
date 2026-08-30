@@ -1069,6 +1069,16 @@ namespace GPUParticles
             Object context)
         {
             var textureSheet = particleSystem.textureSheetAnimation;
+            var particleRenderer =
+                particleSystem.GetComponent<ParticleSystemRenderer>();
+            Material particleMaterial = particleRenderer != null
+                ? particleRenderer.sharedMaterial
+                : null;
+            bool usesFrameBlending = particleMaterial != null &&
+                ((particleMaterial.HasProperty("_FlipbookBlending") &&
+                  particleMaterial.GetFloat("_FlipbookBlending") > 0.5f) ||
+                 particleMaterial.IsKeywordEnabled("_FLIPBOOKBLENDING_ON"));
+            gpu.textureSheetFrameBlending = usesFrameBlending;
             gpu.textureSheetMode = textureSheet.mode;
             gpu.textureSheetAnimation = textureSheet.animation;
             gpu.textureSheetTimeMode = textureSheet.timeMode;
@@ -1113,14 +1123,7 @@ namespace GPUParticles
             {
                 Debug.LogWarning(
                     "Texture Sheet Animation does not target UV0, so it does not " +
-                    "affect the GPU renderer's Base Map. UV1-UV3 are not emitted.",
-                    context);
-            }
-            else if ((textureSheet.uvChannelMask & ~UVChannelFlags.UV0) != 0)
-            {
-                Debug.LogWarning(
-                    "Texture Sheet Animation UV1-UV3 channels are not emitted by " +
-                    "the GPU billboard renderer; UV0 was mapped.",
+                    "affect the GPU renderer's Base Map.",
                     context);
             }
 
@@ -1134,20 +1137,18 @@ namespace GPUParticles
                     context);
             }
 
-            var particleRenderer =
-                particleSystem.GetComponent<ParticleSystemRenderer>();
-            Material particleMaterial = particleRenderer != null
-                ? particleRenderer.sharedMaterial
-                : null;
-            bool usesFrameBlending = particleMaterial != null &&
-                ((particleMaterial.HasProperty("_FlipbookBlending") &&
-                  particleMaterial.GetFloat("_FlipbookBlending") > 0.5f) ||
-                 particleMaterial.IsKeywordEnabled("_FLIPBOOKBLENDING_ON"));
+            UVChannelFlags supportedChannels = UVChannelFlags.UV0;
             if (usesFrameBlending)
             {
+                supportedChannels |= UVChannelFlags.UV1;
+            }
+            UVChannelFlags unsupportedChannels =
+                textureSheet.uvChannelMask & ~supportedChannels;
+            if (unsupportedChannels != 0)
+            {
                 Debug.LogWarning(
-                    "Texture Sheet flipbook frame blending is not supported; " +
-                    "the GPU renderer uses Shuriken's discrete current frame.",
+                    "Texture Sheet Animation UV channels not consumed by the " +
+                    $"GPU Base Map were ignored: {unsupportedChannels}.",
                     context);
             }
 

@@ -13,6 +13,7 @@ namespace GPUParticles
         private GPUParticleSystem targetGPUParticleSystem;
         private ParticleSystemRenderer sourceRenderer;
         private Texture2D cachedBaseMap;
+        private bool cachedTextureSheetFrameBlending;
 
         // 缓存上次的值以检测变化
         private float cachedStartLifetime;
@@ -1768,6 +1769,24 @@ namespace GPUParticles
                 targetGPUParticleSystem.baseMap = baseMap != null ? baseMap : Texture2D.whiteTexture;
                 cachedBaseMap = baseMap;
             }
+
+            bool frameBlending = UsesFlipbookBlending(
+                sourceRenderer.sharedMaterial);
+            if (force ||
+                frameBlending != cachedTextureSheetFrameBlending)
+            {
+                targetGPUParticleSystem.textureSheetFrameBlending =
+                    frameBlending;
+                cachedTextureSheetFrameBlending = frameBlending;
+            }
+        }
+
+        static bool UsesFlipbookBlending(Material material)
+        {
+            if (material == null) return false;
+            return (material.HasProperty("_FlipbookBlending") &&
+                    material.GetFloat("_FlipbookBlending") > 0.5f) ||
+                   material.IsKeywordEnabled("_FLIPBOOKBLENDING_ON");
         }
 
         static Texture2D TryGetBaseMap(ParticleSystemRenderer renderer)

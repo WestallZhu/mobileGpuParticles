@@ -104,6 +104,8 @@ Shader "GPUParticles/UnlitBillboardURP"
                 int   _TextureSheetCycleCount;
                 float _TextureSheetFps;
                 float2 _TextureSheetSpeedRange;
+                int   _TextureSheetFrameBlending;
+                int   _TextureSheetBlendNextUV;
                 float _TextureSheetFrameLUTInvWidth;
                 float _TextureSheetStartLUTInvWidth;
 
@@ -140,7 +142,14 @@ Shader "GPUParticles/UnlitBillboardURP"
             CBUFFER_END
 
             // handy
-            struct VOut{ float4 posHCS:SV_POSITION; float2 uv:TEXCOORD0; float4 col:COLOR; };
+            struct VOut
+            {
+                float4 posHCS : SV_POSITION;
+                float2 uv : TEXCOORD0;
+                float2 uvNext : TEXCOORD1;
+                float frameBlend : TEXCOORD2;
+                float4 col : COLOR;
+            };
 
             uint HashU32(uint x)
             {
@@ -546,22 +555,56 @@ Shader "GPUParticles/UnlitBillboardURP"
                 return (animationFrame + startFrame) % sequenceFrameCount;
             }
 
-            float2 TextureSheetUV(
+            float TextureSheetSequencePosition(
                 uint id,
-                float2 baseUV,
                 float normalizedAge,
                 float particleAge,
                 float particleSpeed)
             {
-                if (_TextureSheetEnabled == 0)
-                {
-                    return baseUV;
-                }
-
                 int columns = max(1, _TextureSheetTilesX);
                 int rows = max(1, _TextureSheetTilesY);
-                int sequenceFrame = TextureSheetSequenceFrame(
-                    id, normalizedAge, particleAge, particleSpeed);
+                int sequenceFrameCount = _TextureSheetAnimation == 0
+                    ? columns * rows
+                    : columns;
+
+                float startPosition = saturate(
+                    SampleTextureSheetStartFrame(id));
+                int startFrame = min(
+                    (int)floor(startPosition * sequenceFrameCount),
+                    sequenceFrameCount - 1);
+
+                float animationPosition;
+                if (_TextureSheetTimeMode == 2) // FPS
+                {
+                    animationPosition = max(0.0, particleAge) *
+                        max(0.0, _TextureSheetFps);
+                }
+                else
+                {
+                    float curvePosition = _TextureSheetTimeMode == 1
+                        ? SpeedRangePosition(
+                            particleSpeed, _TextureSheetSpeedRange)
+                        : normalizedAge;
+                    float progress = saturate(
+                        SampleTextureSheetFrame(id, curvePosition));
+                    animationPosition = progress * sequenceFrameCount *
+                        max(1, _TextureSheetCycleCount);
+                }
+
+                return startFrame + animationPosition;
+            }
+
+            float2 TextureSheetFrameUV(
+                uint id,
+                float2 baseUV,
+                int sequenceFrame)
+            {
+                int columns = max(1, _TextureSheetTilesX);
+                int rows = max(1, _TextureSheetTilesY);
+                int sequenceFrameCount = _TextureSheetAnimation == 0
+                    ? columns * rows
+                    : columns;
+                sequenceFrame = sequenceFrame % sequenceFrameCount;
                 int column = sequenceFrame % columns;
                 int rowFromTop;
                 if (_TextureSheetAnimation == 0) // Whole Sheet
@@ -576,14 +619,75 @@ Shader "GPUParticles/UnlitBillboardURP"
                 }
                 else
                 {
-                    // MeshIndex uses this Custom fallback because Mesh particle
-                    // rendering is not supported by this renderer.
-                    rowFromTop = clamp(_TextureSheetRowIndex, 0, rows - 1);
+                    rowFromTop = clamp(
+                        _TextureSheetRowIndex, 0, rows - 1);
                 }
 
                 int rowFromBottom = rows - 1 - rowFromTop;
                 return (baseUV + float2(column, rowFromBottom)) /
                        float2(columns, rows);
+            }
+
+            float2 TextureSheetUV(
+                uint id,
+                float2 baseUV,
+                float normalizedAge,
+                float particleAge,
+                float particleSpeed)
+            {
+                if (_TextureSheetEnabled == 0)
+                {
+                    return baseUV;
+                }
+
+                int sequenceFrame = TextureSheetSequenceFrame(
+                    id, normalizedAge, particleAge, particleSpeed);
+                return TextureSheetFrameUV(id, baseUV, sequenceFrame);
+            }
+
+            void TextureSheetUVs(
+                uint id,
+                float2 baseUV,
+                float normalizedAge,
+                float particleAge,
+                float particleSpeed,
+                out float2 currentUV,
+                out float2 nextUV,
+                out float frameBlend)
+            {
+                if (_TextureSheetEnabled == 0)
+                {
+                    currentUV = baseUV;
+                    nextUV = baseUV;
+                    frameBlend = 0.0;
+                    return;
+                }
+
+                if (_TextureSheetFrameBlending == 0)
+                {
+                    currentUV = TextureSheetUV(
+                        id,
+                        baseUV,
+                        normalizedAge,
+                        particleAge,
+                        particleSpeed);
+                    nextUV = currentUV;
+                    frameBlend = 0.0;
+                    return;
+                }
+
+                float sequencePosition = TextureSheetSequencePosition(
+                    id,
+                    normalizedAge,
+                    particleAge,
+                    particleSpeed);
+                int currentFrame = (int)floor(sequencePosition);
+                currentUV = TextureSheetFrameUV(
+                    id, baseUV, currentFrame);
+                nextUV = _TextureSheetBlendNextUV != 0
+                    ? TextureSheetFrameUV(id, baseUV, currentFrame + 1)
+                    : baseUV;
+                frameBlend = frac(sequencePosition);
             }
 
             float3 Ortho(float3 v){ return normalize( any(abs(v) > 0.0) ? (abs(v.z)<0.999?cross(v,float3(0,0,1)):cross(v,float3(0,1,0))) : float3(1,0,0) ); }
@@ -750,7 +854,10 @@ Shader "GPUParticles/UnlitBillboardURP"
                 if (quadId >= (uint)_MaxParticles)
                 {
                     o.posHCS = float4(0,0,0,0);
-                    o.uv = 0; o.col = 0;
+                    o.uv = 0;
+                    o.uvNext = 0;
+                    o.frameBlend = 0;
+                    o.col = 0;
                     return o;
                 }
 
@@ -769,7 +876,11 @@ Shader "GPUParticles/UnlitBillboardURP"
                 if (posLife.w <= 0.0 || pcol.a <= _MinAlphaCull)
                 {
                     o.posHCS = float4(0,0,0,0);
-                    o.uv = 0; o.col = 0; return o;
+                    o.uv = 0;
+                    o.uvNext = 0;
+                    o.frameBlend = 0;
+                    o.col = 0;
+                    return o;
                 }
 
                 bool startLifetimeUsesAgeState =
@@ -920,12 +1031,15 @@ Shader "GPUParticles/UnlitBillboardURP"
                     posWS + RenderRight * local.x + RenderUp * local.y;
 
                 o.posHCS = TransformWorldToHClip(wpos);
-                o.uv = TextureSheetUV(
+                TextureSheetUVs(
                     quadId,
                     quadUV[corner],
                     normalizedAge,
                     particleAge,
-                    length(velSize.xyz));
+                    length(velSize.xyz),
+                    o.uv,
+                    o.uvNext,
+                    o.frameBlend);
                 o.col = pcol;
                 return o;
             }
@@ -933,6 +1047,12 @@ Shader "GPUParticles/UnlitBillboardURP"
             half4 Frag(VOut i) : SV_Target
             {
                 float4 baseCol = SAMPLE_TEXTURE2D(_BaseMap, sampler_BaseMap, i.uv);
+                if (_TextureSheetFrameBlending != 0)
+                {
+                    float4 nextCol = SAMPLE_TEXTURE2D(
+                        _BaseMap, sampler_BaseMap, i.uvNext);
+                    baseCol = lerp(baseCol, nextCol, saturate(i.frameBlend));
+                }
                 return baseCol * i.col;
             }
             ENDHLSL

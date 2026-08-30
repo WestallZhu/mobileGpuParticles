@@ -239,6 +239,9 @@ namespace GPUParticles
         [Min(1)] public int textureSheetCycleCount = 1;
         [Min(0f)] public float textureSheetFps = 30f;
         public Vector2 textureSheetSpeedRange = new Vector2(0f, 1f);
+        [Tooltip("Blend the current Grid frame with the next frame, matching " +
+                 "URP particle material Flipbook Blending.")]
+        public bool textureSheetFrameBlending;
         public Texture2D textureSheetFrameOverTimeLUT;
         public Texture2D textureSheetStartFrameLUT;
 
@@ -722,6 +725,10 @@ namespace GPUParticles
             Shader.PropertyToID("_TextureSheetFps");
         static readonly int _TextureSheetSpeedRange =
             Shader.PropertyToID("_TextureSheetSpeedRange");
+        static readonly int _TextureSheetFrameBlending =
+            Shader.PropertyToID("_TextureSheetFrameBlending");
+        static readonly int _TextureSheetBlendNextUV =
+            Shader.PropertyToID("_TextureSheetBlendNextUV");
         static readonly int _TextureSheetFrameOverTimeLUT =
             Shader.PropertyToID("_TextureSheetFrameOverTimeLUT");
         static readonly int _TextureSheetStartFrameLUT =
@@ -3601,6 +3608,14 @@ namespace GPUParticles
                     textureSheetSpeedRange.y,
                     0f,
                     0f));
+            bool textureSheetAffectsUV1 =
+                (textureSheetUVChannelMask & UVChannelFlags.UV1) != 0;
+            renderMaterial.SetInt(
+                _TextureSheetFrameBlending,
+                useTextureSheet && textureSheetFrameBlending ? 1 : 0);
+            renderMaterial.SetInt(
+                _TextureSheetBlendNextUV,
+                textureSheetAffectsUV1 ? 1 : 0);
             renderMaterial.SetTexture(
                 _TextureSheetFrameOverTimeLUT,
                 selectedTextureSheetFrameLUT);
