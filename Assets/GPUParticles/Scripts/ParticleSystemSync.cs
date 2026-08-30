@@ -97,6 +97,7 @@ namespace GPUParticles
         private float lastLimitVelocityLUTUpdate = 0f;
         private float lastInheritVelocityLUTUpdate = 0f;
         private float lastLifetimeByEmitterSpeedLUTUpdate = 0f;
+        private float lastNoiseLUTUpdate = 0f;
         private float lastTextureSheetLUTUpdate = 0f;
         private float lastColorBySpeedLUTUpdate = 0f;
         private float lastSizeBySpeedLUTUpdate = 0f;
@@ -111,6 +112,9 @@ namespace GPUParticles
         private Texture2D generatedLimitVelocityLUT;
         private Texture2D generatedInheritVelocityLUT;
         private Texture2D generatedLifetimeByEmitterSpeedLUT;
+        private Texture2D generatedNoiseStrengthLUT;
+        private Texture2D generatedNoiseAmountsLUT;
+        private Texture2D generatedNoiseRemapLUT;
         private Texture2D generatedTextureSheetFrameLUT;
         private Texture2D generatedTextureSheetStartLUT;
         private Texture2D generatedColorLUT;
@@ -172,6 +176,7 @@ namespace GPUParticles
             SyncLimitVelocityOverLifetime(true);
             SyncInheritVelocity(true);
             SyncLifetimeByEmitterSpeed(true);
+            SyncNoise(true);
             SyncTextureSheetAnimation(true);
             SyncRendererParameters(true);
             SyncRotationParameters(true);
@@ -270,6 +275,7 @@ namespace GPUParticles
             SyncLimitVelocityOverLifetime();
             SyncInheritVelocity();
             SyncLifetimeByEmitterSpeed();
+            SyncNoise();
             SyncTextureSheetAnimation();
             SyncRendererParameters();
             SyncRotationParameters();
@@ -1208,6 +1214,100 @@ namespace GPUParticles
                 Time.realtimeSinceStartup;
         }
 
+        void SyncNoise(bool forceUpdate = false)
+        {
+            var noise = sourceParticleSystem.noise;
+            bool timeToUpdate =
+                Time.realtimeSinceStartup - lastNoiseLUTUpdate >
+                LUT_UPDATE_INTERVAL;
+            if (!forceUpdate && !timeToUpdate) return;
+
+            targetGPUParticleSystem.noiseEnabled = noise.enabled;
+            targetGPUParticleSystem.noiseSeparateAxes = noise.separateAxes;
+            targetGPUParticleSystem.noiseFrequency =
+                Mathf.Max(0.0001f, noise.frequency);
+            targetGPUParticleSystem.noiseDamping = noise.damping;
+            targetGPUParticleSystem.noiseQuality = noise.quality;
+            targetGPUParticleSystem.noiseOctaveCount =
+                Mathf.Clamp(noise.octaveCount, 1, 4);
+            targetGPUParticleSystem.noiseOctaveMultiplier =
+                Mathf.Max(0f, noise.octaveMultiplier);
+            targetGPUParticleSystem.noiseOctaveScale =
+                Mathf.Max(1f, noise.octaveScale);
+            targetGPUParticleSystem.noiseRemapEnabled =
+                noise.enabled && noise.remapEnabled;
+
+            DestroyGeneratedTexture(ref generatedNoiseStrengthLUT);
+            DestroyGeneratedTexture(ref generatedNoiseAmountsLUT);
+            DestroyGeneratedTexture(ref generatedNoiseRemapLUT);
+            if (!noise.enabled)
+            {
+                targetGPUParticleSystem.noiseStrengthLUT =
+                    MinMaxCurveVector3LUTBuilder.GetDefaultUnitVectorLUT();
+                targetGPUParticleSystem.noiseAmountsLUT =
+                    MinMaxCurveVector3LUTBuilder.GetDefaultNoiseAmountsLUT();
+                targetGPUParticleSystem.noiseRemapLUT =
+                    MinMaxCurveVector3LUTBuilder.GetDefaultSignedIdentityLUT();
+                lastNoiseLUTUpdate = Time.realtimeSinceStartup;
+                return;
+            }
+
+            ParticleSystem.MinMaxCurve strengthX = noise.separateAxes
+                ? noise.strengthX
+                : noise.strength;
+            ParticleSystem.MinMaxCurve strengthY = noise.separateAxes
+                ? noise.strengthY
+                : noise.strength;
+            ParticleSystem.MinMaxCurve strengthZ = noise.separateAxes
+                ? noise.strengthZ
+                : noise.strength;
+            generatedNoiseStrengthLUT =
+                MinMaxCurveVector3LUTBuilder.Build(
+                    strengthX,
+                    strengthY,
+                    strengthZ,
+                    assetName: "NoiseStrength_LUT");
+            generatedNoiseAmountsLUT =
+                MinMaxCurveVector3LUTBuilder.Build(
+                    noise.positionAmount,
+                    noise.rotationAmount,
+                    noise.sizeAmount,
+                    noise.scrollSpeed,
+                    assetName: "NoiseAmounts_LUT");
+            targetGPUParticleSystem.noiseStrengthLUT =
+                generatedNoiseStrengthLUT;
+            targetGPUParticleSystem.noiseAmountsLUT =
+                generatedNoiseAmountsLUT;
+
+            if (noise.remapEnabled)
+            {
+                ParticleSystem.MinMaxCurve remapX = noise.separateAxes
+                    ? noise.remapX
+                    : noise.remap;
+                ParticleSystem.MinMaxCurve remapY = noise.separateAxes
+                    ? noise.remapY
+                    : noise.remap;
+                ParticleSystem.MinMaxCurve remapZ = noise.separateAxes
+                    ? noise.remapZ
+                    : noise.remap;
+                generatedNoiseRemapLUT =
+                    MinMaxCurveVector3LUTBuilder.Build(
+                        remapX,
+                        remapY,
+                        remapZ,
+                        assetName: "NoiseRemap_LUT");
+                targetGPUParticleSystem.noiseRemapLUT =
+                    generatedNoiseRemapLUT;
+            }
+            else
+            {
+                targetGPUParticleSystem.noiseRemapLUT =
+                    MinMaxCurveVector3LUTBuilder.GetDefaultSignedIdentityLUT();
+            }
+
+            lastNoiseLUTUpdate = Time.realtimeSinceStartup;
+        }
+
         void SyncTextureSheetAnimation(bool forceUpdate = false)
         {
             var textureSheet = sourceParticleSystem.textureSheetAnimation;
@@ -1278,6 +1378,9 @@ namespace GPUParticles
 
         void OnDestroy()
         {
+            DestroyGeneratedTexture(ref generatedNoiseStrengthLUT);
+            DestroyGeneratedTexture(ref generatedNoiseAmountsLUT);
+            DestroyGeneratedTexture(ref generatedNoiseRemapLUT);
             DestroyGeneratedTexture(ref generatedShapeArcSpeedLUT);
             DestroyGeneratedForceLUT();
             DestroyGeneratedVelocityLUT();

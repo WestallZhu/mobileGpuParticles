@@ -53,6 +53,9 @@ Shader "Hidden/GPUParticles/SimulateMRT"
             TEXTURE2D(_LifetimeByEmitterSpeedLUT);
             SAMPLER(sampler_LifetimeByEmitterSpeedLUT);
             TEXTURE2D(_ShapeArcSpeedIntegralLUT);
+            TEXTURE2D(_NoiseStrengthLUT);
+            TEXTURE2D(_NoiseAmountsLUT);
+            TEXTURE2D(_NoiseRemapLUT);
 
             // Unity 2022.3 Shuriken samples Main curves just after the
             // emission tick boundary; this is the measured tick phase.
@@ -126,6 +129,18 @@ Shader "Hidden/GPUParticles/SimulateMRT"
                 int     _LifetimeByEmitterSpeedEnabled;
                 float2  _LifetimeByEmitterSpeedRange;
                 float   _LifetimeByEmitterSpeedLUTInvWidth;
+                int     _NoiseEnabled;
+                int     _NoiseSeparateAxes;
+                float   _NoiseStrengthLUTInvWidth;
+                float   _NoiseAmountsLUTInvWidth;
+                int     _NoiseRemapEnabled;
+                float   _NoiseRemapLUTInvWidth;
+                float   _NoiseFrequency;
+                int     _NoiseDamping;
+                int     _NoiseQuality;       // 0 Low, 1 Medium, 2 High
+                int     _NoiseOctaveCount;
+                float   _NoiseOctaveMultiplier;
+                float   _NoiseOctaveScale;
                 int     _ColorOverLifetimeMode;
                 int     _ColorBySpeedEnabled;
                 int     _ColorBySpeedMode;
@@ -848,6 +863,218 @@ Shader "Hidden/GPUParticles/SimulateMRT"
                         stepAngle;
                 }
                 return clamp(angle, 0.0, arc);
+            }
+
+            float NoiseLatticeValue(int3 cell, uint salt)
+            {
+                uint hash = (uint)cell.x * 0x8DA6B343u;
+                hash ^= (uint)cell.y * 0xD8163841u;
+                hash ^= (uint)cell.z * 0xCB1AB31Fu;
+                return Hash01(hash ^ salt) * 2.0 - 1.0;
+            }
+
+            // Smooth value noise with analytic derivatives. Three offset scalar
+            // fields are combined below as a divergence-free Curl field.
+            float4 ValueNoiseDerivatives(float3 coordinate, uint salt)
+            {
+                int3 cell = (int3)floor(coordinate);
+                float3 f = frac(coordinate);
+                float3 blend = f * f * (3.0 - 2.0 * f);
+                float3 blendDerivative = 6.0 * f * (1.0 - f);
+
+                float n000 = NoiseLatticeValue(cell + int3(0, 0, 0), salt);
+                float n100 = NoiseLatticeValue(cell + int3(1, 0, 0), salt);
+                float n010 = NoiseLatticeValue(cell + int3(0, 1, 0), salt);
+                float n110 = NoiseLatticeValue(cell + int3(1, 1, 0), salt);
+                float n001 = NoiseLatticeValue(cell + int3(0, 0, 1), salt);
+                float n101 = NoiseLatticeValue(cell + int3(1, 0, 1), salt);
+                float n011 = NoiseLatticeValue(cell + int3(0, 1, 1), salt);
+                float n111 = NoiseLatticeValue(cell + int3(1, 1, 1), salt);
+
+                float nx00 = lerp(n000, n100, blend.x);
+                float nx10 = lerp(n010, n110, blend.x);
+                float nx01 = lerp(n001, n101, blend.x);
+                float nx11 = lerp(n011, n111, blend.x);
+                float nxy0 = lerp(nx00, nx10, blend.y);
+                float nxy1 = lerp(nx01, nx11, blend.y);
+                float value = lerp(nxy0, nxy1, blend.z);
+
+                float derivativeX = blendDerivative.x * lerp(
+                    lerp(n100 - n000, n110 - n010, blend.y),
+                    lerp(n101 - n001, n111 - n011, blend.y),
+                    blend.z);
+                float derivativeY = blendDerivative.y * lerp(
+                    lerp(n010 - n000, n110 - n100, blend.x),
+                    lerp(n011 - n001, n111 - n101, blend.x),
+                    blend.z);
+                float derivativeZ = blendDerivative.z * (nxy1 - nxy0);
+                return float4(
+                    value,
+                    derivativeX,
+                    derivativeY,
+                    derivativeZ);
+            }
+
+            float3 NoiseCurlLayer(float3 coordinate, int quality, uint salt)
+            {
+                float3 a = ValueNoiseDerivatives(
+                    coordinate + float3(19.1, 7.7, 3.4),
+                    salt ^ 0xA511E9B3u).yzw;
+
+                if (quality <= 0)
+                {
+                    return float3(
+                        a.y - a.z,
+                        a.z - a.x,
+                        a.x - a.y) * 0.65;
+                }
+
+                float3 b = ValueNoiseDerivatives(
+                    coordinate + float3(5.2, 31.8, 11.6),
+                    salt ^ 0x63D83595u).yzw;
+                if (quality == 1)
+                {
+                    float3 c = a.zxy;
+                    return float3(
+                        c.y - b.z,
+                        a.z - c.x,
+                        b.x - a.y) * 0.55;
+                }
+
+                float3 cHigh = ValueNoiseDerivatives(
+                    coordinate + float3(27.4, 13.5, 41.2),
+                    salt ^ 0xB8D3A7E5u).yzw;
+                return float3(
+                    cHigh.y - b.z,
+                    a.z - cHigh.x,
+                    b.x - a.y) * 0.5;
+            }
+
+            float3 NoiseCurl(float3 coordinate)
+            {
+                float3 total = 0.0;
+                float totalAmplitude = 0.0;
+                float amplitude = 1.0;
+                float frequency = max(0.0001, _NoiseFrequency);
+                int octaveCount = clamp(_NoiseOctaveCount, 1, 4);
+                [unroll]
+                for (int octave = 0; octave < 4; octave++)
+                {
+                    if (octave < octaveCount)
+                    {
+                        total += NoiseCurlLayer(
+                            coordinate * frequency,
+                            _NoiseQuality,
+                            0x9E3779B9u + (uint)octave * 0x85EBCA6Bu) *
+                            amplitude;
+                        totalAmplitude += amplitude;
+                        amplitude *= max(0.0, _NoiseOctaveMultiplier);
+                        frequency *= max(1.0, _NoiseOctaveScale);
+                    }
+                }
+                return clamp(total / max(1e-5, totalAmplitude), -1.0, 1.0);
+            }
+
+            float3 NoiseStrength(uint id, float normalizedAge)
+            {
+                float x = LUTPosition(
+                    normalizedAge, _NoiseStrengthLUTInvWidth);
+                float3 minimum = SAMPLE_TEXTURE2D_LOD(
+                    _NoiseStrengthLUT,
+                    sampler_SizeLUT,
+                    float2(x, 0.25),
+                    0).rgb;
+                float3 maximum = SAMPLE_TEXTURE2D_LOD(
+                    _NoiseStrengthLUT,
+                    sampler_SizeLUT,
+                    float2(x, 0.75),
+                    0).rgb;
+                return float3(
+                    lerp(minimum.x, maximum.x, Hash01(id ^ 0xD1B54A35u)),
+                    lerp(minimum.y, maximum.y, Hash01(id ^ 0x94D049BBu)),
+                    lerp(minimum.z, maximum.z, Hash01(id ^ 0x369DEA0Fu)));
+            }
+
+            float4 NoiseAmounts(uint id, float normalizedAge)
+            {
+                float x = LUTPosition(
+                    normalizedAge, _NoiseAmountsLUTInvWidth);
+                float4 minimum = SAMPLE_TEXTURE2D_LOD(
+                    _NoiseAmountsLUT,
+                    sampler_SizeLUT,
+                    float2(x, 0.25),
+                    0);
+                float4 maximum = SAMPLE_TEXTURE2D_LOD(
+                    _NoiseAmountsLUT,
+                    sampler_SizeLUT,
+                    float2(x, 0.75),
+                    0);
+                return float4(
+                    lerp(minimum.x, maximum.x, Hash01(id ^ 0xDB4F0B91u)),
+                    lerp(minimum.y, maximum.y, Hash01(id ^ 0xBBE05633u)),
+                    lerp(minimum.z, maximum.z, Hash01(id ^ 0xA0F2EC75u)),
+                    lerp(minimum.w, maximum.w, Hash01(id ^ 0x89E18285u)));
+            }
+
+            float3 RemapNoise(uint id, float3 value)
+            {
+                if (_NoiseRemapEnabled == 0)
+                {
+                    return value;
+                }
+
+                float3 position = saturate(value * 0.5 + 0.5);
+                float3 lutX = float3(
+                    LUTPosition(position.x, _NoiseRemapLUTInvWidth),
+                    LUTPosition(position.y, _NoiseRemapLUTInvWidth),
+                    LUTPosition(position.z, _NoiseRemapLUTInvWidth));
+                float3 minimum = float3(
+                    SAMPLE_TEXTURE2D_LOD(
+                        _NoiseRemapLUT, sampler_SizeLUT,
+                        float2(lutX.x, 0.25), 0).r,
+                    SAMPLE_TEXTURE2D_LOD(
+                        _NoiseRemapLUT, sampler_SizeLUT,
+                        float2(lutX.y, 0.25), 0).g,
+                    SAMPLE_TEXTURE2D_LOD(
+                        _NoiseRemapLUT, sampler_SizeLUT,
+                        float2(lutX.z, 0.25), 0).b);
+                float3 maximum = float3(
+                    SAMPLE_TEXTURE2D_LOD(
+                        _NoiseRemapLUT, sampler_SizeLUT,
+                        float2(lutX.x, 0.75), 0).r,
+                    SAMPLE_TEXTURE2D_LOD(
+                        _NoiseRemapLUT, sampler_SizeLUT,
+                        float2(lutX.y, 0.75), 0).g,
+                    SAMPLE_TEXTURE2D_LOD(
+                        _NoiseRemapLUT, sampler_SizeLUT,
+                        float2(lutX.z, 0.75), 0).b);
+                return float3(
+                    lerp(minimum.x, maximum.x, Hash01(id ^ 0xC2B2AE35u)),
+                    lerp(minimum.y, maximum.y, Hash01(id ^ 0x27D4EB2Fu)),
+                    lerp(minimum.z, maximum.z, Hash01(id ^ 0x165667B1u)));
+            }
+
+            float3 ParticleNoise(
+                uint id,
+                float3 position,
+                float normalizedAge,
+                out float4 amounts)
+            {
+                amounts = NoiseAmounts(id, normalizedAge);
+                float scrollPhase = max(
+                    0.0,
+                    _EmissionTimeAfterStep - _EmissionStartDelay) *
+                    amounts.w;
+                float3 scrollDirection = normalize(float3(0.19, 0.53, 0.83));
+                float3 field = NoiseCurl(
+                    position + scrollDirection * scrollPhase);
+                field = RemapNoise(id, field);
+                float3 strength = NoiseStrength(id, normalizedAge);
+                if (_NoiseDamping != 0)
+                {
+                    strength /= max(0.0001, _NoiseFrequency);
+                }
+                return field * strength;
             }
 
             float3 ForceOverLifetime(uint id, float normalizedAge)
@@ -1928,6 +2155,8 @@ Shader "Hidden/GPUParticles/SimulateMRT"
                     particleStartSize = StartSizeAtBirth(
                         id, particleAgeAfterStep);
                     float speedBeforeStep = length(vel);
+                    float3 particleNoiseValue = 0.0;
+                    float4 particleNoiseAmounts = 0.0;
 
                     // Stored velocity includes the prior frame's inherited component
                     // so rendering and by-speed modules see effective motion. Remove it
@@ -2080,6 +2309,18 @@ Shader "Hidden/GPUParticles/SimulateMRT"
                     {
                         pos += vel * movementSpeedModifier * stepDt;
                     }
+                    if (_NoiseEnabled != 0)
+                    {
+                        particleNoiseValue = ParticleNoise(
+                            id,
+                            pos,
+                            normalizedAgeAfterStep,
+                            particleNoiseAmounts);
+                        // Shuriken exposes Noise as animated position while the
+                        // particle's stored velocity remains the module-free value.
+                        pos += particleNoiseValue *
+                               particleNoiseAmounts.x * stepDt;
+                    }
 
                     // lifetime normalized 0..1 (0 birth, 1 death)
                     float t = normalizedAgeAfterStep;
@@ -2101,6 +2342,17 @@ Shader "Hidden/GPUParticles/SimulateMRT"
                         rotationPhase += (angularVelocityBefore + angularVelocityAfter) *
                                          (0.5 * stepDt);
                     }
+                    if (_NoiseEnabled != 0)
+                    {
+                        // Remapped rotation/size channels use Shuriken's signed
+                        // half-range; position uses the remapped value directly.
+                        float rotationNoiseScale =
+                            _NoiseRemapEnabled != 0 ? 0.5 : 1.0;
+                        rotationPhase += particleNoiseValue.z *
+                            particleNoiseAmounts.y *
+                            rotationNoiseScale *
+                            0.01745329252 * stepDt;
+                    }
                     float colorSpeedPosition = SpeedRangePosition(
                         currentSpeed, _ColorBySpeedRange);
                     float sizeSpeedPosition = SpeedRangePosition(
@@ -2114,6 +2366,18 @@ Shader "Hidden/GPUParticles/SimulateMRT"
 
                     col = particleStartColor * lutCol * speedColor;
                     size = particleStartSize * lutSize * speedSize;
+                    if (_NoiseEnabled != 0 && _NoiseSeparateAxes == 0)
+                    {
+                        // Unity 2022.3 does not apply Noise Size Amount while
+                        // Separate Axes is enabled.
+                        float sizeNoiseScale =
+                            _NoiseRemapEnabled != 0 ? 0.5 : 1.0;
+                        size *= max(
+                            0.0,
+                            1.0 + particleNoiseValue.z *
+                                  particleNoiseAmounts.z *
+                                  sizeNoiseScale);
+                    }
                 }
                 else
                 {

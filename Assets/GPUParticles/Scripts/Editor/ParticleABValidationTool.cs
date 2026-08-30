@@ -587,6 +587,43 @@ namespace GPUParticles.Editor
                 ParticleABValidationProfile.LifetimeByEmitterSpeedPoint);
         }
 
+        [MenuItem("Tools/GPU Particles/Run Noise Curl Position A-B RT Capture")]
+        public static void RunNoiseCurlPositionCaptureMenu()
+        {
+            StartNoiseCaptureMenu(
+                ParticleABValidationProfile.NoiseCurlPositionPoint);
+        }
+
+        [MenuItem("Tools/GPU Particles/Run Noise Separate Axes Remap A-B RT Capture")]
+        public static void RunNoiseSeparateAxesRemapCaptureMenu()
+        {
+            StartNoiseCaptureMenu(
+                ParticleABValidationProfile.NoiseSeparateAxesRemapPoint);
+        }
+
+        [MenuItem("Tools/GPU Particles/Run Noise Rotation Size A-B RT Capture")]
+        public static void RunNoiseRotationSizeCaptureMenu()
+        {
+            StartNoiseCaptureMenu(
+                ParticleABValidationProfile.NoiseRotationSizePoint);
+        }
+
+        static void StartNoiseCaptureMenu(ParticleABValidationProfile profile)
+        {
+            if (EditorApplication.isPlaying)
+            {
+                Debug.LogWarning(
+                    "Stop Play Mode before starting a deterministic A/B capture.");
+                return;
+            }
+
+            if (!EditorSceneManager.SaveCurrentModifiedScenesIfUserWantsTo())
+            {
+                return;
+            }
+            StartCapture(false, profile);
+        }
+
         [MenuItem("Tools/GPU Particles/Run Texture Sheet Lifetime A-B RT Capture")]
         public static void RunTextureSheetLifetimeCaptureMenu()
         {
@@ -1147,6 +1184,30 @@ namespace GPUParticles.Editor
                 ParticleABValidationProfile.LifetimeByEmitterSpeedPoint);
         }
 
+        public static void RunBatchNoiseCurlPositionCapture()
+        {
+            ValidateCommonFeatureMapping();
+            StartCapture(
+                true,
+                ParticleABValidationProfile.NoiseCurlPositionPoint);
+        }
+
+        public static void RunBatchNoiseSeparateAxesRemapCapture()
+        {
+            ValidateCommonFeatureMapping();
+            StartCapture(
+                true,
+                ParticleABValidationProfile.NoiseSeparateAxesRemapPoint);
+        }
+
+        public static void RunBatchNoiseRotationSizeCapture()
+        {
+            ValidateCommonFeatureMapping();
+            StartCapture(
+                true,
+                ParticleABValidationProfile.NoiseRotationSizePoint);
+        }
+
         public static void RunBatchShapeSphereCapture()
         {
             ValidateCommonFeatureMapping();
@@ -1570,6 +1631,9 @@ namespace GPUParticles.Editor
                    profile == ParticleABValidationProfile.EmitterVelocityCustomPoint ||
                    profile == ParticleABValidationProfile.EmitterVelocityRigidbodyPoint ||
                    profile == ParticleABValidationProfile.LifetimeByEmitterSpeedPoint ||
+                   profile == ParticleABValidationProfile.NoiseCurlPositionPoint ||
+                   profile == ParticleABValidationProfile.NoiseSeparateAxesRemapPoint ||
+                   profile == ParticleABValidationProfile.NoiseRotationSizePoint ||
                    profile == ParticleABValidationProfile.TextureSheetLifetimePoint ||
                    profile == ParticleABValidationProfile.TextureSheetSpeedPoint ||
                    profile == ParticleABValidationProfile.TextureSheetFPSPoint ||
@@ -1674,6 +1738,12 @@ namespace GPUParticles.Editor
                     return "TestResults/ParticleCullingAlwaysSimulate";
                 case ParticleABValidationProfile.LifetimeByEmitterSpeedPoint:
                     return "TestResults/ParticleLifetimeByEmitterSpeed";
+                case ParticleABValidationProfile.NoiseCurlPositionPoint:
+                    return "TestResults/ParticleNoiseCurlPosition";
+                case ParticleABValidationProfile.NoiseSeparateAxesRemapPoint:
+                    return "TestResults/ParticleNoiseSeparateAxesRemap";
+                case ParticleABValidationProfile.NoiseRotationSizePoint:
+                    return "TestResults/ParticleNoiseRotationSize";
                 case ParticleABValidationProfile.ShapeSpherePoint:
                     return "TestResults/ParticleShapeSphere";
                 case ParticleABValidationProfile.ShapeCirclePoint:
@@ -3242,6 +3312,7 @@ namespace GPUParticles.Editor
 
                 ValidateSeparateAxisSizeMapping();
                 ValidateShapeMappings();
+                ValidateNoiseMapping();
                 Debug.Log("PARTICLE_COMMON_FEATURE_MAPPING_RESULT:PASS");
             }
             finally
@@ -3642,6 +3713,151 @@ namespace GPUParticles.Editor
                 RequireLUTEndpoints(
                     gpu.sizeBySpeedYLUT, 0.5f, 1f, 1.5f, 0.75f,
                     "Size by Speed Y");
+            }
+            finally
+            {
+                Object.DestroyImmediate(owner);
+                for (int i = 0; i < generatedTextures.Length; i++)
+                {
+                    CleanupGeneratedValidationTexture(generatedTextures[i]);
+                }
+            }
+        }
+
+        static void ValidateNoiseMapping()
+        {
+            var owner = new GameObject("ParticleNoiseMappingValidation");
+            owner.SetActive(false);
+            var generatedTextures = new Texture2D[6];
+            try
+            {
+                var shuriken = owner.AddComponent<ParticleSystem>();
+                var main = shuriken.main;
+                main.playOnAwake = false;
+
+                var noise = shuriken.noise;
+                noise.enabled = true;
+                noise.separateAxes = true;
+                noise.frequency = 0.75f;
+                noise.damping = false;
+                noise.quality = ParticleSystemNoiseQuality.High;
+                noise.octaveCount = 3;
+                noise.octaveMultiplier = 0.4f;
+                noise.octaveScale = 2.5f;
+                noise.strengthX = new ParticleSystem.MinMaxCurve(
+                    1f,
+                    AnimationCurve.Linear(0f, 0.25f, 1f, 0.75f),
+                    AnimationCurve.Linear(0f, 1.25f, 1f, 1.75f));
+                noise.strengthY = new ParticleSystem.MinMaxCurve(-0.5f, 0.75f);
+                noise.strengthZ = 0.25f;
+                noise.positionAmount = new ParticleSystem.MinMaxCurve(
+                    1f,
+                    AnimationCurve.Linear(0f, 0.25f, 1f, 0.75f),
+                    AnimationCurve.Linear(0f, 1.25f, 1f, 1.75f));
+                noise.rotationAmount = new ParticleSystem.MinMaxCurve(60f, 120f);
+                noise.sizeAmount = 0.4f;
+                noise.scrollSpeed = new ParticleSystem.MinMaxCurve(
+                    1f,
+                    AnimationCurve.Linear(0f, 0.1f, 1f, 0.3f));
+                noise.remapEnabled = true;
+                noise.remapX = new ParticleSystem.MinMaxCurve(
+                    1f,
+                    AnimationCurve.Linear(0f, -1f, 1f, 1f));
+                noise.remapY = new ParticleSystem.MinMaxCurve(-0.25f, 0.5f);
+                noise.remapZ = new ParticleSystem.MinMaxCurve(
+                    1f,
+                    AnimationCurve.Linear(0f, 0.1f, 1f, 0.2f),
+                    AnimationCurve.Linear(0f, 0.6f, 1f, 0.8f));
+
+                ShurikenConverter.Convert(owner);
+                var gpu = owner.GetComponent<GPUParticleSystem>();
+                Require(gpu != null,
+                    "Noise conversion did not create a GPUParticleSystem.");
+                generatedTextures[0] = gpu.noiseStrengthLUT;
+                generatedTextures[1] = gpu.noiseAmountsLUT;
+                generatedTextures[2] = gpu.noiseRemapLUT;
+
+                Require(gpu.noiseEnabled,
+                    "Noise enabled state was not mapped.");
+                Require(gpu.noiseSeparateAxes,
+                    "Noise Separate Axes state was not mapped.");
+                RequireApproximately(gpu.noiseFrequency, 0.75f,
+                    "Noise frequency");
+                Require(!gpu.noiseDamping,
+                    "Noise damping state was not mapped.");
+                Require(gpu.noiseQuality == ParticleSystemNoiseQuality.High,
+                    "Noise quality was not mapped.");
+                Require(gpu.noiseOctaveCount == 3,
+                    "Noise octave count was not mapped.");
+                RequireApproximately(gpu.noiseOctaveMultiplier, 0.4f,
+                    "Noise octave multiplier");
+                RequireApproximately(gpu.noiseOctaveScale, 2.5f,
+                    "Noise octave scale");
+                Require(gpu.noiseRemapEnabled,
+                    "Noise Remap enabled state was not mapped.");
+                RequireTwoRowLUT(gpu.noiseStrengthLUT, "Noise Strength");
+                RequireTwoRowLUT(gpu.noiseAmountsLUT, "Noise Amounts");
+                RequireTwoRowLUT(gpu.noiseRemapLUT, "Noise Remap");
+                RequireColorApproximately(
+                    gpu.noiseStrengthLUT.GetPixel(0, 0),
+                    new Color(0.25f, -0.5f, 0.25f, 0f),
+                    "Noise Strength minimum start");
+                RequireColorApproximately(
+                    gpu.noiseStrengthLUT.GetPixel(
+                        gpu.noiseStrengthLUT.width - 1, 1),
+                    new Color(1.75f, 0.75f, 0.25f, 0f),
+                    "Noise Strength maximum end");
+                RequireColorApproximately(
+                    gpu.noiseAmountsLUT.GetPixel(0, 0),
+                    new Color(0.25f, 60f, 0.4f, 0.1f),
+                    "Noise Amounts minimum start");
+                RequireColorApproximately(
+                    gpu.noiseAmountsLUT.GetPixel(
+                        gpu.noiseAmountsLUT.width - 1, 1),
+                    new Color(1.75f, 120f, 0.4f, 0.3f),
+                    "Noise Amounts maximum end");
+                RequireColorApproximately(
+                    gpu.noiseRemapLUT.GetPixel(0, 0),
+                    new Color(-1f, -0.25f, 0.1f, 0f),
+                    "Noise Remap minimum start");
+                RequireColorApproximately(
+                    gpu.noiseRemapLUT.GetPixel(
+                        gpu.noiseRemapLUT.width - 1, 1),
+                    new Color(1f, 0.5f, 0.8f, 0f),
+                    "Noise Remap maximum end");
+
+                noise.separateAxes = false;
+                noise.strength = 0.6f;
+                noise.remap = new ParticleSystem.MinMaxCurve(
+                    1f, AnimationCurve.Constant(0f, 1f, 0.25f));
+                ShurikenConverter.Convert(owner);
+                generatedTextures[3] = gpu.noiseStrengthLUT;
+                generatedTextures[4] = gpu.noiseAmountsLUT;
+                generatedTextures[5] = gpu.noiseRemapLUT;
+                Require(!gpu.noiseSeparateAxes,
+                    "Noise shared-axis state was not remapped.");
+                RequireColorApproximately(
+                    gpu.noiseStrengthLUT.GetPixel(0, 0),
+                    new Color(0.6f, 0.6f, 0.6f, 0f),
+                    "Noise shared Strength");
+                RequireColorApproximately(
+                    gpu.noiseRemapLUT.GetPixel(0, 0),
+                    new Color(0.25f, 0.25f, 0.25f, 0f),
+                    "Noise shared Remap");
+
+                noise.enabled = false;
+                ShurikenConverter.Convert(owner);
+                Require(!gpu.noiseEnabled && !gpu.noiseRemapEnabled,
+                    "Disabled Noise state was not remapped.");
+                Require(gpu.noiseStrengthLUT ==
+                        MinMaxCurveVector3LUTBuilder.GetDefaultUnitVectorLUT(),
+                    "Disabled Noise did not restore the unit Strength LUT.");
+                Require(gpu.noiseAmountsLUT ==
+                        MinMaxCurveVector3LUTBuilder.GetDefaultNoiseAmountsLUT(),
+                    "Disabled Noise did not restore the default Amounts LUT.");
+                Require(gpu.noiseRemapLUT ==
+                        MinMaxCurveVector3LUTBuilder.GetDefaultSignedIdentityLUT(),
+                    "Disabled Noise did not restore the identity Remap LUT.");
             }
             finally
             {

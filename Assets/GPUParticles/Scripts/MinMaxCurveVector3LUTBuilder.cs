@@ -11,6 +11,9 @@ namespace GPUParticles
     {
         static Texture2D s_DefaultZeroLut;
         static Texture2D s_DefaultVelocityLut;
+        static Texture2D s_DefaultUnitVectorLut;
+        static Texture2D s_DefaultNoiseAmountsLut;
+        static Texture2D s_DefaultSignedIdentityLut;
 
         public static Texture2D Build(
             ParticleSystem.MinMaxCurve x,
@@ -132,6 +135,71 @@ namespace GPUParticles
             texture.SetPixels(pixels);
             texture.Apply(false, false);
             s_DefaultVelocityLut = texture;
+            return texture;
+        }
+
+        public static Texture2D GetDefaultUnitVectorLUT(int resolution = 2)
+        {
+            if (s_DefaultUnitVectorLut != null) return s_DefaultUnitVectorLut;
+
+            s_DefaultUnitVectorLut = CreateDefaultLUT(
+                "MinMaxCurveVector3_LUT_DefaultUnitVector",
+                resolution,
+                _ => new Color(1f, 1f, 1f, 0f));
+            return s_DefaultUnitVectorLut;
+        }
+
+        public static Texture2D GetDefaultNoiseAmountsLUT(int resolution = 2)
+        {
+            if (s_DefaultNoiseAmountsLut != null) return s_DefaultNoiseAmountsLut;
+
+            s_DefaultNoiseAmountsLut = CreateDefaultLUT(
+                "MinMaxCurveVector4_LUT_DefaultNoiseAmounts",
+                resolution,
+                _ => new Color(1f, 0f, 0f, 0f));
+            return s_DefaultNoiseAmountsLut;
+        }
+
+        public static Texture2D GetDefaultSignedIdentityLUT(int resolution = 2)
+        {
+            if (s_DefaultSignedIdentityLut != null)
+            {
+                return s_DefaultSignedIdentityLut;
+            }
+
+            int width = Mathf.Max(2, resolution);
+            s_DefaultSignedIdentityLut = CreateDefaultLUT(
+                "MinMaxCurveVector3_LUT_DefaultSignedIdentity",
+                width,
+                index =>
+                {
+                    float value = Mathf.Lerp(-1f, 1f, index % width / (width - 1f));
+                    return new Color(value, value, value, 0f);
+                });
+            return s_DefaultSignedIdentityLut;
+        }
+
+        static Texture2D CreateDefaultLUT(
+            string name,
+            int resolution,
+            System.Func<int, Color> pixelFactory)
+        {
+            resolution = Mathf.Max(2, resolution);
+            var texture = new Texture2D(
+                resolution, 2, TextureFormat.RGBAHalf, false, true)
+            {
+                name = name,
+                wrapMode = TextureWrapMode.Clamp,
+                filterMode = FilterMode.Bilinear,
+                hideFlags = HideFlags.HideAndDontSave
+            };
+            var pixels = new Color[resolution * 2];
+            for (int i = 0; i < pixels.Length; i++)
+            {
+                pixels[i] = pixelFactory(i);
+            }
+            texture.SetPixels(pixels);
+            texture.Apply(false, false);
             return texture;
         }
 

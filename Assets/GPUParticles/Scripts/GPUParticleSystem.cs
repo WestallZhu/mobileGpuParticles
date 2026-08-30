@@ -193,6 +193,23 @@ namespace GPUParticles
         public Texture2D lifetimeByEmitterSpeedLUT;
         public Vector2 lifetimeByEmitterSpeedRange = new Vector2(0f, 1f);
 
+        [Header("Noise")]
+        public bool noiseEnabled;
+        public bool noiseSeparateAxes;
+        public Texture2D noiseStrengthLUT;
+        [Min(0.0001f)] public float noiseFrequency = 0.5f;
+        public bool noiseDamping = true;
+        public ParticleSystemNoiseQuality noiseQuality =
+            ParticleSystemNoiseQuality.High;
+        [Range(1, 4)] public int noiseOctaveCount = 1;
+        [Min(0f)] public float noiseOctaveMultiplier = 0.5f;
+        [Min(1f)] public float noiseOctaveScale = 2f;
+        [Tooltip("RGBA: Position Amount, Rotation Amount (degrees/second), " +
+                 "Size Amount, and Scroll Speed over particle lifetime.")]
+        public Texture2D noiseAmountsLUT;
+        public bool noiseRemapEnabled;
+        public Texture2D noiseRemapLUT;
+
         [Header("Texture Sheet Animation (Grid / UV0)")]
         public bool textureSheetAnimationEnabled;
         public ParticleSystemAnimationMode textureSheetMode =
@@ -512,6 +529,35 @@ namespace GPUParticles
             Shader.PropertyToID("_LifetimeByEmitterSpeedEnabled");
         static readonly int _LifetimeByEmitterSpeedRange =
             Shader.PropertyToID("_LifetimeByEmitterSpeedRange");
+        static readonly int _NoiseEnabled = Shader.PropertyToID("_NoiseEnabled");
+        static readonly int _NoiseSeparateAxes =
+            Shader.PropertyToID("_NoiseSeparateAxes");
+        static readonly int _NoiseStrengthLUT =
+            Shader.PropertyToID("_NoiseStrengthLUT");
+        static readonly int _NoiseStrengthLUTInvWidth =
+            Shader.PropertyToID("_NoiseStrengthLUTInvWidth");
+        static readonly int _NoiseAmountsLUT =
+            Shader.PropertyToID("_NoiseAmountsLUT");
+        static readonly int _NoiseAmountsLUTInvWidth =
+            Shader.PropertyToID("_NoiseAmountsLUTInvWidth");
+        static readonly int _NoiseRemapEnabled =
+            Shader.PropertyToID("_NoiseRemapEnabled");
+        static readonly int _NoiseRemapLUT =
+            Shader.PropertyToID("_NoiseRemapLUT");
+        static readonly int _NoiseRemapLUTInvWidth =
+            Shader.PropertyToID("_NoiseRemapLUTInvWidth");
+        static readonly int _NoiseFrequency =
+            Shader.PropertyToID("_NoiseFrequency");
+        static readonly int _NoiseDamping =
+            Shader.PropertyToID("_NoiseDamping");
+        static readonly int _NoiseQuality =
+            Shader.PropertyToID("_NoiseQuality");
+        static readonly int _NoiseOctaveCount =
+            Shader.PropertyToID("_NoiseOctaveCount");
+        static readonly int _NoiseOctaveMultiplier =
+            Shader.PropertyToID("_NoiseOctaveMultiplier");
+        static readonly int _NoiseOctaveScale =
+            Shader.PropertyToID("_NoiseOctaveScale");
         static readonly int _ColorOverLifetimeMode = Shader.PropertyToID("_ColorOverLifetimeMode");
         static readonly int _GradLUTInvWidth = Shader.PropertyToID("_GradLUTInvWidth");
         static readonly int _SizeLUTInvWidth = Shader.PropertyToID("_SizeLUTInvWidth");
@@ -705,6 +751,10 @@ namespace GPUParticles
                 0f,
                 shapeRandomPositionAmount);
             shapeArcSpread = Mathf.Clamp01(shapeArcSpread);
+            noiseFrequency = Mathf.Max(0.0001f, noiseFrequency);
+            noiseOctaveCount = Mathf.Clamp(noiseOctaveCount, 1, 4);
+            noiseOctaveMultiplier = Mathf.Max(0f, noiseOctaveMultiplier);
+            noiseOctaveScale = Mathf.Max(1f, noiseOctaveScale);
             Vector3 cullingSize = localCullingBounds.size;
             localCullingBounds.size = new Vector3(
                 Mathf.Max(0.0002f, Mathf.Abs(cullingSize.x)),
@@ -2797,6 +2847,15 @@ namespace GPUParticles
                 lifetimeByEmitterSpeedLUT != null
                     ? lifetimeByEmitterSpeedLUT
                     : CurveLUTBuilder.GetDefaultUnitLUT();
+            Texture2D selectedNoiseStrengthLUT = noiseStrengthLUT != null
+                ? noiseStrengthLUT
+                : MinMaxCurveVector3LUTBuilder.GetDefaultUnitVectorLUT();
+            Texture2D selectedNoiseAmountsLUT = noiseAmountsLUT != null
+                ? noiseAmountsLUT
+                : MinMaxCurveVector3LUTBuilder.GetDefaultNoiseAmountsLUT();
+            Texture2D selectedNoiseRemapLUT = noiseRemapLUT != null
+                ? noiseRemapLUT
+                : MinMaxCurveVector3LUTBuilder.GetDefaultSignedIdentityLUT();
 
             simulateProperties.SetTexture("_GradLUT", selectedColorOverLifetimeLUT);
             simulateProperties.SetTexture(
@@ -2828,6 +2887,12 @@ namespace GPUParticles
             simulateProperties.SetTexture(
                 _LifetimeByEmitterSpeedLUT,
                 selectedLifetimeByEmitterSpeedLUT);
+            simulateProperties.SetTexture(
+                _NoiseStrengthLUT, selectedNoiseStrengthLUT);
+            simulateProperties.SetTexture(
+                _NoiseAmountsLUT, selectedNoiseAmountsLUT);
+            simulateProperties.SetTexture(
+                _NoiseRemapLUT, selectedNoiseRemapLUT);
             simulateProperties.SetFloat(
                 _GradLUTInvWidth, InverseTextureWidth(selectedColorOverLifetimeLUT));
             simulateProperties.SetFloat(
@@ -2875,6 +2940,15 @@ namespace GPUParticles
             simulateProperties.SetFloat(
                 _LifetimeByEmitterSpeedLUTInvWidth,
                 InverseTextureWidth(selectedLifetimeByEmitterSpeedLUT));
+            simulateProperties.SetFloat(
+                _NoiseStrengthLUTInvWidth,
+                InverseTextureWidth(selectedNoiseStrengthLUT));
+            simulateProperties.SetFloat(
+                _NoiseAmountsLUTInvWidth,
+                InverseTextureWidth(selectedNoiseAmountsLUT));
+            simulateProperties.SetFloat(
+                _NoiseRemapLUTInvWidth,
+                InverseTextureWidth(selectedNoiseRemapLUT));
 
             simulateProperties.SetInt(_GridSize, gridSize);
             simulateProperties.SetInt(_MaxParticles, maxParticles);
@@ -3013,6 +3087,21 @@ namespace GPUParticles
                     lifetimeByEmitterSpeedRange.y,
                     0f,
                     0f));
+            simulateProperties.SetInt(_NoiseEnabled, noiseEnabled ? 1 : 0);
+            simulateProperties.SetInt(
+                _NoiseSeparateAxes, noiseSeparateAxes ? 1 : 0);
+            simulateProperties.SetInt(
+                _NoiseRemapEnabled, noiseRemapEnabled ? 1 : 0);
+            simulateProperties.SetFloat(
+                _NoiseFrequency, Mathf.Max(0.0001f, noiseFrequency));
+            simulateProperties.SetInt(_NoiseDamping, noiseDamping ? 1 : 0);
+            simulateProperties.SetInt(_NoiseQuality, (int)noiseQuality);
+            simulateProperties.SetInt(
+                _NoiseOctaveCount, Mathf.Clamp(noiseOctaveCount, 1, 4));
+            simulateProperties.SetFloat(
+                _NoiseOctaveMultiplier, Mathf.Max(0f, noiseOctaveMultiplier));
+            simulateProperties.SetFloat(
+                _NoiseOctaveScale, Mathf.Max(1f, noiseOctaveScale));
             simulateProperties.SetInt(_ColorOverLifetimeMode, (int)colorOverLifetimeMode);
             simulateProperties.SetInt(_ColorBySpeedEnabled, colorBySpeedEnabled ? 1 : 0);
             simulateProperties.SetInt(_ColorBySpeedMode, (int)colorBySpeedMode);

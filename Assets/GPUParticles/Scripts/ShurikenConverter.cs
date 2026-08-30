@@ -48,6 +48,7 @@ namespace GPUParticles
             ApplyLimitVelocityOverLifetime(ps, gpu);
             ApplyInheritVelocity(ps, gpu);
             ApplyLifetimeByEmitterSpeed(ps, gpu);
+            ApplyNoise(ps, gpu);
             ApplyTextureSheetAnimation(ps, gpu, owner);
 
             ApplyEmission(ps, gpu, owner);
@@ -314,6 +315,7 @@ namespace GPUParticles
             ApplyLimitVelocityOverLifetime(particleSystem, gpu);
             ApplyInheritVelocity(particleSystem, gpu);
             ApplyLifetimeByEmitterSpeed(particleSystem, gpu);
+            ApplyNoise(particleSystem, gpu);
             ApplyTextureSheetAnimation(particleSystem, gpu, gpuChild);
 
             ApplyEmission(particleSystem, gpu, gpuChild);
@@ -922,6 +924,74 @@ namespace GPUParticles
                     saveAsAsset: true,
                     assetName: "LifetimeByEmitterSpeed_LUT")
                 : CurveLUTBuilder.GetDefaultUnitLUT();
+        }
+
+        static void ApplyNoise(
+            ParticleSystem particleSystem,
+            GPUParticleSystem gpu)
+        {
+            var noise = particleSystem.noise;
+            gpu.noiseEnabled = noise.enabled;
+            gpu.noiseSeparateAxes = noise.separateAxes;
+            gpu.noiseFrequency = Mathf.Max(0.0001f, noise.frequency);
+            gpu.noiseDamping = noise.damping;
+            gpu.noiseQuality = noise.quality;
+            gpu.noiseOctaveCount = Mathf.Clamp(noise.octaveCount, 1, 4);
+            gpu.noiseOctaveMultiplier = Mathf.Max(0f, noise.octaveMultiplier);
+            gpu.noiseOctaveScale = Mathf.Max(1f, noise.octaveScale);
+            gpu.noiseRemapEnabled = noise.enabled && noise.remapEnabled;
+
+            if (!noise.enabled)
+            {
+                gpu.noiseStrengthLUT =
+                    MinMaxCurveVector3LUTBuilder.GetDefaultUnitVectorLUT();
+                gpu.noiseAmountsLUT =
+                    MinMaxCurveVector3LUTBuilder.GetDefaultNoiseAmountsLUT();
+                gpu.noiseRemapLUT =
+                    MinMaxCurveVector3LUTBuilder.GetDefaultSignedIdentityLUT();
+                return;
+            }
+
+            ParticleSystem.MinMaxCurve strengthX = noise.separateAxes
+                ? noise.strengthX
+                : noise.strength;
+            ParticleSystem.MinMaxCurve strengthY = noise.separateAxes
+                ? noise.strengthY
+                : noise.strength;
+            ParticleSystem.MinMaxCurve strengthZ = noise.separateAxes
+                ? noise.strengthZ
+                : noise.strength;
+            gpu.noiseStrengthLUT = MinMaxCurveVector3LUTBuilder.Build(
+                strengthX,
+                strengthY,
+                strengthZ,
+                saveAsAsset: true,
+                assetName: "NoiseStrength_LUT");
+            gpu.noiseAmountsLUT = MinMaxCurveVector3LUTBuilder.Build(
+                noise.positionAmount,
+                noise.rotationAmount,
+                noise.sizeAmount,
+                noise.scrollSpeed,
+                saveAsAsset: true,
+                assetName: "NoiseAmounts_LUT");
+
+            ParticleSystem.MinMaxCurve remapX = noise.separateAxes
+                ? noise.remapX
+                : noise.remap;
+            ParticleSystem.MinMaxCurve remapY = noise.separateAxes
+                ? noise.remapY
+                : noise.remap;
+            ParticleSystem.MinMaxCurve remapZ = noise.separateAxes
+                ? noise.remapZ
+                : noise.remap;
+            gpu.noiseRemapLUT = noise.remapEnabled
+                ? MinMaxCurveVector3LUTBuilder.Build(
+                    remapX,
+                    remapY,
+                    remapZ,
+                    saveAsAsset: true,
+                    assetName: "NoiseRemap_LUT")
+                : MinMaxCurveVector3LUTBuilder.GetDefaultSignedIdentityLUT();
         }
 
         static void ApplyTextureSheetAnimation(

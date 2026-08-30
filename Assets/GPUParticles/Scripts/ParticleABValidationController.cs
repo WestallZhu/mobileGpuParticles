@@ -52,6 +52,9 @@ namespace GPUParticles
         ShapeArcLoopPoint,
         ShapeArcPingPongPoint,
         ShapeArcBurstSpreadPoint,
+        NoiseCurlPositionPoint,
+        NoiseSeparateAxesRemapPoint,
+        NoiseRotationSizePoint,
         TextureSheetLifetimePoint,
         TextureSheetSpeedPoint,
         TextureSheetFPSPoint,
@@ -181,6 +184,15 @@ namespace GPUParticles
         float maximumGPUShapeArcGridError;
         int shurikenShapeArcBinMask;
         int gpuShapeArcBinMask;
+        float maximumShurikenNoiseKinematicsError;
+        float maximumGPUNoiseKinematicsError;
+        float maximumShurikenNoiseRotationError;
+        float maximumGPUNoiseRotationError;
+        float maximumGPUNoiseSizeError;
+        float maximumNoiseSizePixelError;
+        int noiseSizeClassificationFailures;
+        bool hasCurrentShurikenNoiseSizeBounds;
+        MarkerPixelBounds currentShurikenNoiseSizeBounds;
         int maximumShurikenParticleCount;
         int maximumGPUParticleCount;
         int textureSheetComparableSamples;
@@ -265,6 +277,9 @@ namespace GPUParticles
         Texture2D profileRotationLUT;
         Texture2D profileRotationBySpeedLUT;
         Texture2D profileShapeArcSpeedLUT;
+        Texture2D profileNoiseStrengthLUT;
+        Texture2D profileNoiseAmountsLUT;
+        Texture2D profileNoiseRemapLUT;
         Gradient profileColorMinimumGradient;
         Gradient profileColorMaximumGradient;
         AnimationCurve profileStartLifetimeMinimumCurve;
@@ -387,6 +402,12 @@ namespace GPUParticles
         ObservedRange gpuShapeDirectionZRange;
         ObservedRange shurikenShapeArcAngleRange;
         ObservedRange gpuShapeArcAngleRange;
+        ObservedRange shurikenNoiseXRange;
+        ObservedRange shurikenNoiseYRange;
+        ObservedRange shurikenNoiseZRange;
+        ObservedRange gpuNoiseXRange;
+        ObservedRange gpuNoiseYRange;
+        ObservedRange gpuNoiseZRange;
         ObservedRange shurikenLifetimeColorBlendRange;
         ObservedRange gpuLifetimeColorBlendRange;
         ObservedRange shurikenLifetimeSizeBlendRange;
@@ -561,6 +582,18 @@ namespace GPUParticles
             {
                 Destroy(profileShapeArcSpeedLUT);
             }
+            if (profileNoiseStrengthLUT != null)
+            {
+                Destroy(profileNoiseStrengthLUT);
+            }
+            if (profileNoiseAmountsLUT != null)
+            {
+                Destroy(profileNoiseAmountsLUT);
+            }
+            if (profileNoiseRemapLUT != null)
+            {
+                Destroy(profileNoiseRemapLUT);
+            }
             RestoreGravityOverride();
             DestroyCustomSimulationSpaces();
             DestroyStopActionProbes();
@@ -712,6 +745,12 @@ namespace GPUParticles
             if (IsShapeProfile())
             {
                 ConfigureShapeProfile();
+                return;
+            }
+
+            if (IsNoiseProfile())
+            {
+                ConfigureNoiseProfile();
                 return;
             }
 
@@ -1043,6 +1082,8 @@ namespace GPUParticles
             limitVelocity.enabled = false;
             var inheritVelocity = shuriken.inheritVelocity;
             inheritVelocity.enabled = false;
+            var noise = shuriken.noise;
+            noise.enabled = false;
             var lifetimeByEmitterSpeed = shuriken.lifetimeByEmitterSpeed;
             lifetimeByEmitterSpeed.enabled = false;
 
@@ -2655,6 +2696,188 @@ namespace GPUParticles
             gpuParticles.sizeBySpeedLUT = profileSizeLUT;
         }
 
+        void ConfigureNoiseProfile()
+        {
+            bool curlProfile = validationProfile ==
+                ParticleABValidationProfile.NoiseCurlPositionPoint;
+            bool axesProfile = validationProfile ==
+                ParticleABValidationProfile.NoiseSeparateAxesRemapPoint;
+            ConfigureEmissionPointBase(4f, curlProfile);
+
+            var main = shuriken.main;
+            main.startLifetime = 4f;
+            main.startSpeed = 0f;
+            main.startSize = curlProfile ? 0.3f : 1.5f;
+            main.startRotation = 0f;
+            gpuParticles.SetStartLifetimeRange(4f, 4f);
+            gpuParticles.SetStartSpeedRange(0f, 0f);
+            gpuParticles.SetStartSizeRange(
+                main.startSize.constant,
+                main.startSize.constant);
+            gpuParticles.SetStartRotationRange(0f, 0f);
+
+            var emission = shuriken.emission;
+            emission.rateOverDistance = 0f;
+            ParticleSystem.Burst[] bursts;
+            if (curlProfile)
+            {
+                emission.rateOverTime = 12f;
+                bursts = Array.Empty<ParticleSystem.Burst>();
+            }
+            else
+            {
+                emission.rateOverTime = 0f;
+                bursts = new[] { new ParticleSystem.Burst(0f, 1) };
+            }
+            emission.SetBursts(bursts);
+            gpuParticles.SetEmissionRateOverTime(emission.rateOverTime);
+            gpuParticles.SetEmissionRateOverDistance(emission.rateOverDistance);
+            gpuParticles.SetEmissionBursts(bursts);
+
+            var noise = shuriken.noise;
+            noise.enabled = true;
+            noise.separateAxes = axesProfile;
+            noise.frequency = curlProfile ? 0.45f : 0.5f;
+            noise.damping = curlProfile;
+            noise.quality = curlProfile
+                ? ParticleSystemNoiseQuality.High
+                : ParticleSystemNoiseQuality.Medium;
+            noise.octaveCount = curlProfile ? 2 : 1;
+            noise.octaveMultiplier = 0.5f;
+            noise.octaveScale = 2f;
+
+            ParticleSystem.MinMaxCurve strengthX;
+            ParticleSystem.MinMaxCurve strengthY;
+            ParticleSystem.MinMaxCurve strengthZ;
+            if (curlProfile)
+            {
+                var strength = new ParticleSystem.MinMaxCurve(
+                    1f,
+                    AnimationCurve.Linear(0f, 0.25f, 1f, 0.65f));
+                noise.strength = strength;
+                strengthX = strength;
+                strengthY = strength;
+                strengthZ = strength;
+            }
+            else if (axesProfile)
+            {
+                strengthX = new ParticleSystem.MinMaxCurve(1f);
+                strengthY = new ParticleSystem.MinMaxCurve(0f);
+                strengthZ = new ParticleSystem.MinMaxCurve(0f);
+                noise.strengthX = strengthX;
+                noise.strengthY = strengthY;
+                noise.strengthZ = strengthZ;
+            }
+            else
+            {
+                var strength = new ParticleSystem.MinMaxCurve(1f);
+                noise.strength = strength;
+                strengthX = strength;
+                strengthY = strength;
+                strengthZ = strength;
+            }
+
+            ParticleSystem.MinMaxCurve positionAmount =
+                new ParticleSystem.MinMaxCurve(
+                    validationProfile ==
+                    ParticleABValidationProfile.NoiseRotationSizePoint
+                        ? 0f
+                        : 1f);
+            ParticleSystem.MinMaxCurve rotationAmount =
+                new ParticleSystem.MinMaxCurve(
+                    validationProfile ==
+                    ParticleABValidationProfile.NoiseRotationSizePoint
+                        ? 90f
+                        : 0f);
+            ParticleSystem.MinMaxCurve sizeAmount =
+                new ParticleSystem.MinMaxCurve(
+                    validationProfile ==
+                    ParticleABValidationProfile.NoiseRotationSizePoint
+                        ? 0.5f
+                        : 0f);
+            ParticleSystem.MinMaxCurve scrollSpeed =
+                new ParticleSystem.MinMaxCurve(curlProfile ? 0.2f : 0f);
+            noise.positionAmount = positionAmount;
+            noise.rotationAmount = rotationAmount;
+            noise.sizeAmount = sizeAmount;
+            noise.scrollSpeed = scrollSpeed;
+
+            bool remapEnabled = !curlProfile;
+            noise.remapEnabled = remapEnabled;
+            ParticleSystem.MinMaxCurve remap = new ParticleSystem.MinMaxCurve(
+                1f,
+                AnimationCurve.Constant(0f, 1f, 1f));
+            if (remapEnabled)
+            {
+                if (noise.separateAxes)
+                {
+                    noise.remapX = remap;
+                    noise.remapY = remap;
+                    noise.remapZ = remap;
+                }
+                else
+                {
+                    noise.remap = remap;
+                }
+            }
+
+            gpuParticles.noiseEnabled = true;
+            gpuParticles.noiseSeparateAxes = noise.separateAxes;
+            gpuParticles.noiseFrequency = noise.frequency;
+            gpuParticles.noiseDamping = noise.damping;
+            gpuParticles.noiseQuality = noise.quality;
+            gpuParticles.noiseOctaveCount = noise.octaveCount;
+            gpuParticles.noiseOctaveMultiplier = noise.octaveMultiplier;
+            gpuParticles.noiseOctaveScale = noise.octaveScale;
+            gpuParticles.noiseRemapEnabled = remapEnabled;
+
+            if (profileNoiseStrengthLUT != null)
+            {
+                Destroy(profileNoiseStrengthLUT);
+            }
+            if (profileNoiseAmountsLUT != null)
+            {
+                Destroy(profileNoiseAmountsLUT);
+            }
+            if (profileNoiseRemapLUT != null)
+            {
+                Destroy(profileNoiseRemapLUT);
+            }
+            profileNoiseStrengthLUT = MinMaxCurveVector3LUTBuilder.Build(
+                strengthX,
+                strengthY,
+                strengthZ,
+                assetName: "NoiseStrength_Profile_LUT");
+            profileNoiseAmountsLUT = MinMaxCurveVector3LUTBuilder.Build(
+                positionAmount,
+                rotationAmount,
+                sizeAmount,
+                scrollSpeed,
+                assetName: "NoiseAmounts_Profile_LUT");
+            profileNoiseRemapLUT = remapEnabled
+                ? MinMaxCurveVector3LUTBuilder.Build(
+                    remap,
+                    remap,
+                    remap,
+                    assetName: "NoiseRemap_Profile_LUT")
+                : null;
+            gpuParticles.noiseStrengthLUT = profileNoiseStrengthLUT;
+            gpuParticles.noiseAmountsLUT = profileNoiseAmountsLUT;
+            gpuParticles.noiseRemapLUT = profileNoiseRemapLUT != null
+                ? profileNoiseRemapLUT
+                : MinMaxCurveVector3LUTBuilder.GetDefaultSignedIdentityLUT();
+        }
+
+        bool IsNoiseProfile()
+        {
+            return validationProfile ==
+                       ParticleABValidationProfile.NoiseCurlPositionPoint ||
+                   validationProfile ==
+                       ParticleABValidationProfile.NoiseSeparateAxesRemapPoint ||
+                   validationProfile ==
+                       ParticleABValidationProfile.NoiseRotationSizePoint;
+        }
+
         void ConfigureTextureSheetAnimationProfile(
             ParticleSystemAnimationTimeMode timeMode)
         {
@@ -3834,6 +4057,9 @@ namespace GPUParticles
             var inheritVelocity = shuriken.inheritVelocity;
             inheritVelocity.enabled = false;
 
+            var noise = shuriken.noise;
+            noise.enabled = false;
+
             if (shurikenRenderer != null)
             {
                 shurikenRenderer.minParticleSize = 0f;
@@ -3921,6 +4147,21 @@ namespace GPUParticles
             gpuParticles.SetLifetimeByEmitterSpeedRange(new Vector2(0f, 1f));
             gpuParticles.lifetimeByEmitterSpeedLUT =
                 CurveLUTBuilder.GetDefaultUnitLUT();
+            gpuParticles.noiseEnabled = false;
+            gpuParticles.noiseSeparateAxes = false;
+            gpuParticles.noiseFrequency = 0.5f;
+            gpuParticles.noiseDamping = true;
+            gpuParticles.noiseQuality = ParticleSystemNoiseQuality.High;
+            gpuParticles.noiseOctaveCount = 1;
+            gpuParticles.noiseOctaveMultiplier = 0.5f;
+            gpuParticles.noiseOctaveScale = 2f;
+            gpuParticles.noiseStrengthLUT =
+                MinMaxCurveVector3LUTBuilder.GetDefaultUnitVectorLUT();
+            gpuParticles.noiseAmountsLUT =
+                MinMaxCurveVector3LUTBuilder.GetDefaultNoiseAmountsLUT();
+            gpuParticles.noiseRemapEnabled = false;
+            gpuParticles.noiseRemapLUT =
+                MinMaxCurveVector3LUTBuilder.GetDefaultSignedIdentityLUT();
             gpuParticles.screenSpaceSizeClampEnabled = false;
             gpuParticles.minParticleSize = 0f;
             gpuParticles.maxParticleSize = 0.5f;
@@ -4356,6 +4597,15 @@ namespace GPUParticles
             maximumGPUShapeGeometryError = 0f;
             maximumShurikenShapeArcGridError = 0f;
             maximumGPUShapeArcGridError = 0f;
+            maximumShurikenNoiseKinematicsError = 0f;
+            maximumGPUNoiseKinematicsError = 0f;
+            maximumShurikenNoiseRotationError = 0f;
+            maximumGPUNoiseRotationError = 0f;
+            maximumGPUNoiseSizeError = 0f;
+            maximumNoiseSizePixelError = 0f;
+            noiseSizeClassificationFailures = 0;
+            hasCurrentShurikenNoiseSizeBounds = false;
+            currentShurikenNoiseSizeBounds = default;
             shurikenShapeArcBinMask = 0;
             gpuShapeArcBinMask = 0;
             maximumShurikenParticleCount = 0;
@@ -4467,6 +4717,12 @@ namespace GPUParticles
             gpuCulledCountRange.Reset();
             shurikenCulledMeanAgeRange.Reset();
             gpuCulledMeanAgeRange.Reset();
+            shurikenNoiseXRange.Reset();
+            shurikenNoiseYRange.Reset();
+            shurikenNoiseZRange.Reset();
+            gpuNoiseXRange.Reset();
+            gpuNoiseYRange.Reset();
+            gpuNoiseZRange.Reset();
             captureActive = true;
 
             Debug.Log($"Particle A/B RT capture started: {sessionFolder}", this);
@@ -4547,6 +4803,12 @@ namespace GPUParticles
                 ? ClassifyRendererScreenSize(cameraImage)
                 : -1;
             ObserveRendererScreenSize(mode, screenSizePixels);
+            MarkerPixelBounds noiseSizeBounds = validationProfile ==
+                                                    ParticleABValidationProfile.NoiseRotationSizePoint &&
+                                                mode != ParticleABDisplayMode.Both
+                ? ClassifyWhiteParticleBounds(cameraImage)
+                : default;
+            ObserveNoiseSizeBounds(mode, noiseSizeBounds);
             MarkerPixelBounds scalingBounds = IsScalingModeProfile() &&
                                                mode != ParticleABDisplayMode.Both
                 ? ClassifyMarkerBounds(cameraImage)
@@ -4604,6 +4866,87 @@ namespace GPUParticles
                 MaximumX = maximumX,
                 MaximumY = maximumY
             };
+        }
+
+        static MarkerPixelBounds ClassifyWhiteParticleBounds(Texture2D image)
+        {
+            Color32[] pixels = image.GetPixels32();
+            int minimumX = image.width;
+            int minimumY = image.height;
+            int maximumX = -1;
+            int maximumY = -1;
+            int markerPixels = 0;
+            for (int y = 0; y < image.height; y++)
+            {
+                int row = y * image.width;
+                for (int x = 0; x < image.width; x++)
+                {
+                    Color32 pixel = pixels[row + x];
+                    if (pixel.r < 180 || pixel.g < 180 || pixel.b < 180)
+                    {
+                        continue;
+                    }
+
+                    markerPixels++;
+                    minimumX = Mathf.Min(minimumX, x);
+                    minimumY = Mathf.Min(minimumY, y);
+                    maximumX = Mathf.Max(maximumX, x);
+                    maximumY = Mathf.Max(maximumY, y);
+                }
+            }
+
+            if (markerPixels < 32 || maximumX < minimumX || maximumY < minimumY)
+            {
+                return default;
+            }
+            return new MarkerPixelBounds
+            {
+                Valid = true,
+                MinimumX = minimumX,
+                MinimumY = minimumY,
+                MaximumX = maximumX,
+                MaximumY = maximumY
+            };
+        }
+
+        void ObserveNoiseSizeBounds(
+            ParticleABDisplayMode mode,
+            MarkerPixelBounds bounds)
+        {
+            if (validationProfile !=
+                    ParticleABValidationProfile.NoiseRotationSizePoint ||
+                mode == ParticleABDisplayMode.Both)
+            {
+                return;
+            }
+
+            if (mode == ParticleABDisplayMode.ShurikenOnly)
+            {
+                hasCurrentShurikenNoiseSizeBounds = bounds.Valid;
+                currentShurikenNoiseSizeBounds = bounds;
+                if (!bounds.Valid)
+                {
+                    noiseSizeClassificationFailures++;
+                }
+                return;
+            }
+
+            if (!bounds.Valid || !hasCurrentShurikenNoiseSizeBounds)
+            {
+                noiseSizeClassificationFailures++;
+            }
+            else
+            {
+                maximumNoiseSizePixelError = Mathf.Max(
+                    maximumNoiseSizePixelError,
+                    Mathf.Max(
+                        Mathf.Abs(
+                            currentShurikenNoiseSizeBounds.Width - bounds.Width),
+                        Mathf.Abs(
+                            currentShurikenNoiseSizeBounds.Height - bounds.Height)));
+            }
+            hasCurrentShurikenNoiseSizeBounds = false;
+            currentShurikenNoiseSizeBounds = default;
         }
 
         void ObserveRendererScreenSize(
@@ -4916,6 +5259,21 @@ namespace GPUParticles
                     float age = particle.startLifetime - particle.remainingLifetime;
                     shurikenAgeSum += age;
                     shurikenLifetimeSum += particle.startLifetime;
+                    if (IsNoiseProfile())
+                    {
+                        ObserveNoisePosition(false, shurikenPosition, age);
+                        if (validationProfile ==
+                            ParticleABValidationProfile.NoiseRotationSizePoint)
+                        {
+                            float expectedRotationDegrees = age * 45f;
+                            float rotationError = Mathf.Abs(Mathf.DeltaAngle(
+                                expectedRotationDegrees,
+                                particle.rotation)) * Mathf.Deg2Rad;
+                            maximumShurikenNoiseRotationError = Mathf.Max(
+                                maximumShurikenNoiseRotationError,
+                                rotationError);
+                        }
+                    }
                     if (IsShapeProfile())
                     {
                         ObserveShapeSample(
@@ -5231,6 +5589,30 @@ namespace GPUParticles
                     out _);
                 gpuAgeSum += age;
                 gpuLifetimeSum += particleStartLifetime;
+                if (IsNoiseProfile())
+                {
+                    ObserveNoisePosition(true, gpuPosition, age);
+                    if (validationProfile ==
+                        ParticleABValidationProfile.NoiseRotationSizePoint)
+                    {
+                        float actualRotation =
+                            gpuParticles.ResolveParticleRotationRadians(
+                                i,
+                                positionLife.a,
+                                gpuRotationPhases[i].r,
+                                birthEmitterVelocityWS);
+                        float expectedRotation = age * 45f * Mathf.Deg2Rad;
+                        float rotationError = Mathf.Abs(Mathf.DeltaAngle(
+                            expectedRotation * Mathf.Rad2Deg,
+                            actualRotation * Mathf.Rad2Deg)) * Mathf.Deg2Rad;
+                        maximumGPUNoiseRotationError = Mathf.Max(
+                            maximumGPUNoiseRotationError,
+                            rotationError);
+                        maximumGPUNoiseSizeError = Mathf.Max(
+                            maximumGPUNoiseSizeError,
+                            Mathf.Abs(velocitySize.a - 1.875f));
+                    }
+                }
                 if (IsShapeProfile())
                 {
                     ObserveShapeSample(
@@ -6794,6 +7176,64 @@ namespace GPUParticles
                 : float.PositiveInfinity;
         }
 
+        void ObserveNoisePosition(bool gpuSample, Vector3 position, float age)
+        {
+            if (gpuSample)
+            {
+                gpuNoiseXRange.Observe(position.x);
+                gpuNoiseYRange.Observe(position.y);
+                gpuNoiseZRange.Observe(position.z);
+            }
+            else
+            {
+                shurikenNoiseXRange.Observe(position.x);
+                shurikenNoiseYRange.Observe(position.y);
+                shurikenNoiseZRange.Observe(position.z);
+            }
+
+            if (validationProfile !=
+                ParticleABValidationProfile.NoiseSeparateAxesRemapPoint)
+            {
+                return;
+            }
+
+            Vector3 expectedPosition = Vector3.right * age;
+            float error = (position - expectedPosition).magnitude;
+            if (gpuSample)
+            {
+                maximumGPUNoiseKinematicsError = Mathf.Max(
+                    maximumGPUNoiseKinematicsError,
+                    error);
+            }
+            else
+            {
+                maximumShurikenNoiseKinematicsError = Mathf.Max(
+                    maximumShurikenNoiseKinematicsError,
+                    error);
+            }
+        }
+
+        static bool NoiseRangePass(ObservedRange range, float minimumSpread)
+        {
+            return range.HasSamples &&
+                   !float.IsNaN(range.Minimum) &&
+                   !float.IsNaN(range.Maximum) &&
+                   Mathf.Abs(range.Minimum) <= 8f &&
+                   Mathf.Abs(range.Maximum) <= 8f &&
+                   ObservedSpread(range) >= minimumSpread;
+        }
+
+        bool NoiseCurlRangesPass()
+        {
+            const float minimumSpread = 0.02f;
+            return NoiseRangePass(shurikenNoiseXRange, minimumSpread) &&
+                   NoiseRangePass(shurikenNoiseYRange, minimumSpread) &&
+                   NoiseRangePass(shurikenNoiseZRange, minimumSpread) &&
+                   NoiseRangePass(gpuNoiseXRange, minimumSpread) &&
+                   NoiseRangePass(gpuNoiseYRange, minimumSpread) &&
+                   NoiseRangePass(gpuNoiseZRange, minimumSpread);
+        }
+
         void ObservePrewarmMetrics(
             int shurikenCount,
             int gpuCount,
@@ -7307,6 +7747,29 @@ namespace GPUParticles
                                             maximumGPURotationError <= 0.01f;
                     break;
 
+                case ParticleABValidationProfile.NoiseCurlPositionPoint:
+                    profileSpecificPassed = maximumShurikenParticleCount > 0 &&
+                                            maximumGPUParticleCount > 0 &&
+                                            NoiseCurlRangesPass();
+                    break;
+
+                case ParticleABValidationProfile.NoiseSeparateAxesRemapPoint:
+                    profileSpecificPassed = maximumShurikenParticleCount == 1 &&
+                                            maximumGPUParticleCount == 1 &&
+                                            maximumShurikenNoiseKinematicsError <= 0.03f &&
+                                            maximumGPUNoiseKinematicsError <= 0.03f;
+                    break;
+
+                case ParticleABValidationProfile.NoiseRotationSizePoint:
+                    profileSpecificPassed = maximumShurikenParticleCount == 1 &&
+                                            maximumGPUParticleCount == 1 &&
+                                            maximumShurikenNoiseRotationError <= 0.03f &&
+                                            maximumGPUNoiseRotationError <= 0.03f &&
+                                            maximumGPUNoiseSizeError <= 0.03f &&
+                                            noiseSizeClassificationFailures == 0 &&
+                                            maximumNoiseSizePixelError <= 3f;
+                    break;
+
                 case ParticleABValidationProfile.ShapeSpherePoint:
                 case ParticleABValidationProfile.ShapeCirclePoint:
                 case ParticleABValidationProfile.ShapeDonutPoint:
@@ -7519,6 +7982,26 @@ namespace GPUParticles
                 $"maxMeanAgeError={maximumMeanAgeError:R}; " +
                 $"maxShurikenMeanAge={maximumShurikenMeanAge:R}; " +
                 $"maxGPUMeanAge={maximumGPUMeanAge:R}; " +
+                $"maxShurikenNoiseKinematicsError=" +
+                $"{maximumShurikenNoiseKinematicsError:R}; " +
+                $"maxGPUNoiseKinematicsError=" +
+                $"{maximumGPUNoiseKinematicsError:R}; " +
+                $"maxShurikenNoiseRotationError=" +
+                $"{maximumShurikenNoiseRotationError:R}; " +
+                $"maxGPUNoiseRotationError=" +
+                $"{maximumGPUNoiseRotationError:R}; " +
+                $"maxGPUNoiseSizeError={maximumGPUNoiseSizeError:R}; " +
+                $"maxNoiseSizePixelError={maximumNoiseSizePixelError:R}; " +
+                $"noiseSizeClassificationFailures=" +
+                $"{noiseSizeClassificationFailures}; " +
+                $"shurikenNoiseRanges=" +
+                $"({FormatRange(shurikenNoiseXRange)}," +
+                $"{FormatRange(shurikenNoiseYRange)}," +
+                $"{FormatRange(shurikenNoiseZRange)}); " +
+                $"gpuNoiseRanges=" +
+                $"({FormatRange(gpuNoiseXRange)}," +
+                $"{FormatRange(gpuNoiseYRange)}," +
+                $"{FormatRange(gpuNoiseZRange)}); " +
                 $"playbackInitialStopped={playbackInitialStopped}; " +
                 $"playbackStateMismatchCount={playbackStateMismatchCount}; " +
                 $"playbackEmptyViolationCount={playbackEmptyViolationCount}; " +
