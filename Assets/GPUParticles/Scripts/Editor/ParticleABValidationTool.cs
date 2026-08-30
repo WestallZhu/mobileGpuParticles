@@ -485,6 +485,37 @@ namespace GPUParticles.Editor
                 ParticleABValidationProfile.InheritVelocityCurrentPoint);
         }
 
+        [MenuItem("Tools/GPU Particles/Run Emitter Velocity Custom A-B RT Capture")]
+        public static void RunEmitterVelocityCustomCaptureMenu()
+        {
+            StartEmitterVelocityCaptureMenu(
+                ParticleABValidationProfile.EmitterVelocityCustomPoint);
+        }
+
+        [MenuItem("Tools/GPU Particles/Run Emitter Velocity Rigidbody A-B RT Capture")]
+        public static void RunEmitterVelocityRigidbodyCaptureMenu()
+        {
+            StartEmitterVelocityCaptureMenu(
+                ParticleABValidationProfile.EmitterVelocityRigidbodyPoint);
+        }
+
+        static void StartEmitterVelocityCaptureMenu(
+            ParticleABValidationProfile profile)
+        {
+            if (EditorApplication.isPlaying)
+            {
+                Debug.LogWarning(
+                    "Stop Play Mode before starting a deterministic A/B capture.");
+                return;
+            }
+
+            if (!EditorSceneManager.SaveCurrentModifiedScenesIfUserWantsTo())
+            {
+                return;
+            }
+            StartCapture(false, profile);
+        }
+
         [MenuItem("Tools/GPU Particles/Run Lifetime by Emitter Speed A-B RT Capture")]
         public static void RunLifetimeByEmitterSpeedCaptureMenu()
         {
@@ -951,6 +982,22 @@ namespace GPUParticles.Editor
                 ParticleABValidationProfile.InheritVelocityCurrentPoint);
         }
 
+        public static void RunBatchEmitterVelocityCustomCapture()
+        {
+            ValidateCommonFeatureMapping();
+            StartCapture(
+                true,
+                ParticleABValidationProfile.EmitterVelocityCustomPoint);
+        }
+
+        public static void RunBatchEmitterVelocityRigidbodyCapture()
+        {
+            ValidateCommonFeatureMapping();
+            StartCapture(
+                true,
+                ParticleABValidationProfile.EmitterVelocityRigidbodyPoint);
+        }
+
         public static void RunBatchLifetimeByEmitterSpeedCapture()
         {
             ValidateCommonFeatureMapping();
@@ -1212,6 +1259,8 @@ namespace GPUParticles.Editor
                 case ParticleABValidationProfile.LimitVelocityOverLifetimeAxesPoint: return 2.5f;
                 case ParticleABValidationProfile.InheritVelocityInitialPoint: return 3.2f;
                 case ParticleABValidationProfile.InheritVelocityCurrentPoint: return 3.2f;
+                case ParticleABValidationProfile.EmitterVelocityCustomPoint: return 2.5f;
+                case ParticleABValidationProfile.EmitterVelocityRigidbodyPoint: return 2.5f;
                 case ParticleABValidationProfile.LifetimeByEmitterSpeedPoint: return 4.2f;
                 case ParticleABValidationProfile.ShapeSpherePoint:
                 case ParticleABValidationProfile.ShapeCirclePoint:
@@ -1288,6 +1337,8 @@ namespace GPUParticles.Editor
                     profile == ParticleABValidationProfile.VelocitySpeedModifierPoint ||
                    profile == ParticleABValidationProfile.InheritVelocityInitialPoint ||
                    profile == ParticleABValidationProfile.InheritVelocityCurrentPoint ||
+                   profile == ParticleABValidationProfile.EmitterVelocityCustomPoint ||
+                   profile == ParticleABValidationProfile.EmitterVelocityRigidbodyPoint ||
                    profile == ParticleABValidationProfile.LifetimeByEmitterSpeedPoint ||
                    profile == ParticleABValidationProfile.TextureSheetLifetimePoint ||
                    profile == ParticleABValidationProfile.TextureSheetSpeedPoint ||
@@ -1377,6 +1428,10 @@ namespace GPUParticles.Editor
                     return "TestResults/ParticleInheritVelocityInitial";
                 case ParticleABValidationProfile.InheritVelocityCurrentPoint:
                     return "TestResults/ParticleInheritVelocityCurrent";
+                case ParticleABValidationProfile.EmitterVelocityCustomPoint:
+                    return "TestResults/ParticleEmitterVelocityCustom";
+                case ParticleABValidationProfile.EmitterVelocityRigidbodyPoint:
+                    return "TestResults/ParticleEmitterVelocityRigidbody";
                 case ParticleABValidationProfile.LifetimeByEmitterSpeedPoint:
                     return "TestResults/ParticleLifetimeByEmitterSpeed";
                 case ParticleABValidationProfile.ShapeSpherePoint:
@@ -1552,7 +1607,8 @@ namespace GPUParticles.Editor
                 main.simulationSpace = ParticleSystemSimulationSpace.Custom;
                 main.customSimulationSpace = customSpaceObject.transform;
                 main.emitterVelocityMode =
-                    ParticleSystemEmitterVelocityMode.Transform;
+                    ParticleSystemEmitterVelocityMode.Custom;
+                main.emitterVelocity = new Vector3(1.25f, -2.5f, 3.75f);
 
                 var rotationOverLifetime = shuriken.rotationOverLifetime;
                 rotationOverLifetime.enabled = true;
@@ -1751,6 +1807,25 @@ namespace GPUParticles.Editor
                 Require(
                     gpu.scalingMode == ParticleSystemScalingMode.Local,
                     "Main Scaling Mode Local was not mapped.");
+                Require(
+                    gpu.emitterVelocityMode ==
+                    ParticleSystemEmitterVelocityMode.Custom,
+                    "Main Emitter Velocity Mode was not mapped.");
+                RequireApproximately(
+                    gpu.customEmitterVelocity.x,
+                    1.25f,
+                    "Main Custom Emitter Velocity X");
+                RequireApproximately(
+                    gpu.customEmitterVelocity.y,
+                    -2.5f,
+                    "Main Custom Emitter Velocity Y");
+                RequireApproximately(
+                    gpu.customEmitterVelocity.z,
+                    3.75f,
+                    "Main Custom Emitter Velocity Z");
+                Require(
+                    gpu.emitterVelocitySource == shuriken,
+                    "Main Emitter Velocity source was not mapped.");
                 Require(gpu.screenSpaceSizeClampEnabled,
                     "Renderer screen-space size clamp was not enabled.");
                 RequireApproximately(

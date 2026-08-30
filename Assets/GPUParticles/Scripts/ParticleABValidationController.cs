@@ -27,6 +27,8 @@ namespace GPUParticles
         LimitVelocityOverLifetimeAxesPoint,
         InheritVelocityInitialPoint,
         InheritVelocityCurrentPoint,
+        EmitterVelocityCustomPoint,
+        EmitterVelocityRigidbodyPoint,
         RotationOverLifetimeCurvePoint,
         RotationBySpeedCurvePoint,
         ColorSizeOverLifetimeRandomizedPoint,
@@ -872,6 +874,22 @@ namespace GPUParticles
             {
                 ConfigureInheritVelocityProfile(
                     ParticleSystemInheritVelocityMode.Current);
+                return;
+            }
+
+            if (validationProfile ==
+                ParticleABValidationProfile.EmitterVelocityCustomPoint)
+            {
+                ConfigureEmitterVelocityProfile(
+                    ParticleSystemEmitterVelocityMode.Custom);
+                return;
+            }
+
+            if (validationProfile ==
+                ParticleABValidationProfile.EmitterVelocityRigidbodyPoint)
+            {
+                ConfigureEmitterVelocityProfile(
+                    ParticleSystemEmitterVelocityMode.Rigidbody);
                 return;
             }
 
@@ -2194,6 +2212,77 @@ namespace GPUParticles
             gpuParticles.pivot = new Vector2(0.35f, 0.15f);
         }
 
+        void ConfigureEmitterVelocityProfile(
+            ParticleSystemEmitterVelocityMode mode)
+        {
+            ConfigureEmissionPointBase(4f, true);
+
+            Vector3 emitterVelocity = mode ==
+                    ParticleSystemEmitterVelocityMode.Custom
+                ? new Vector3(1.5f, 0.75f, 0f)
+                : new Vector3(1.25f, 0.5f, 0f);
+
+            var main = shuriken.main;
+            main.startLifetime = 3f;
+            main.startSpeed = 0f;
+            main.simulationSpace = ParticleSystemSimulationSpace.World;
+            main.emitterVelocityMode = mode;
+            if (mode == ParticleSystemEmitterVelocityMode.Custom)
+            {
+                main.emitterVelocity = emitterVelocity;
+            }
+
+            gpuParticles.SetStartLifetimeRange(3f, 3f);
+            gpuParticles.SetStartSpeedRange(0f, 0f);
+            gpuParticles.simulationSpace = SimulationSpace.World;
+            gpuParticles.emitterVelocityMode = mode;
+            gpuParticles.customEmitterVelocity = emitterVelocity;
+            gpuParticles.emitterVelocitySource = mode ==
+                    ParticleSystemEmitterVelocityMode.Rigidbody
+                ? shuriken
+                : null;
+
+            if (mode == ParticleSystemEmitterVelocityMode.Rigidbody)
+            {
+                Rigidbody body = shuriken.GetComponent<Rigidbody>();
+                if (body == null)
+                {
+                    body = shuriken.gameObject.AddComponent<Rigidbody>();
+                }
+                body.useGravity = false;
+                body.drag = 0f;
+                body.angularDrag = 0f;
+                body.constraints = RigidbodyConstraints.FreezeRotation;
+                body.velocity = emitterVelocity;
+            }
+
+            var emission = shuriken.emission;
+            emission.rateOverTime = 0f;
+            emission.rateOverDistance = 8f;
+            emission.SetBursts(Array.Empty<ParticleSystem.Burst>());
+            gpuParticles.SetEmissionRateOverTime(emission.rateOverTime);
+            gpuParticles.SetEmissionRateOverDistance(
+                emission.rateOverDistance);
+            gpuParticles.SetEmissionBursts(
+                Array.Empty<ParticleSystem.Burst>());
+
+            var inherit = shuriken.inheritVelocity;
+            inherit.enabled = true;
+            inherit.mode = ParticleSystemInheritVelocityMode.Initial;
+            inherit.curve = 1f;
+
+            if (profileInheritVelocityLUT != null)
+            {
+                Destroy(profileInheritVelocityLUT);
+            }
+            profileInheritVelocityLUT = CurveLUTBuilder.BuildSigned(
+                inherit.curve,
+                assetName: "EmitterVelocity_Profile_LUT");
+            gpuParticles.inheritVelocityEnabled = true;
+            gpuParticles.inheritVelocityMode = inherit.mode;
+            gpuParticles.inheritVelocityLUT = profileInheritVelocityLUT;
+        }
+
         void ConfigureRotationOverLifetimeProfile()
         {
             ConfigureEmissionPointBase(5f, true);
@@ -3486,6 +3575,10 @@ namespace GPUParticles
             gpuParticles.useUnscaledTime = false;
             gpuParticles.simulationSpace = SimulationSpace.Local;
             gpuParticles.customSimulationSpace = null;
+            gpuParticles.emitterVelocityMode =
+                ParticleSystemEmitterVelocityMode.Transform;
+            gpuParticles.customEmitterVelocity = Vector3.zero;
+            gpuParticles.emitterVelocitySource = null;
             gpuParticles.scalingMode = ParticleSystemScalingMode.Hierarchy;
             gpuParticles.stopAction = ParticleSystemStopAction.None;
             gpuParticles.stopActionTarget = null;
@@ -3737,7 +3830,16 @@ namespace GPUParticles
             return validationProfile ==
                        ParticleABValidationProfile.InheritVelocityInitialPoint ||
                    validationProfile ==
-                       ParticleABValidationProfile.InheritVelocityCurrentPoint;
+                       ParticleABValidationProfile.InheritVelocityCurrentPoint ||
+                   IsEmitterVelocityProfile();
+        }
+
+        bool IsEmitterVelocityProfile()
+        {
+            return validationProfile ==
+                       ParticleABValidationProfile.EmitterVelocityCustomPoint ||
+                   validationProfile ==
+                       ParticleABValidationProfile.EmitterVelocityRigidbodyPoint;
         }
 
         bool IsLifetimeByEmitterSpeedProfile()
@@ -6527,6 +6629,17 @@ namespace GPUParticles
                                             gpuSpeedRange.Covers(0f, 2f);
                     break;
 
+                case ParticleABValidationProfile.EmitterVelocityCustomPoint:
+                case ParticleABValidationProfile.EmitterVelocityRigidbodyPoint:
+                    profileSpecificPassed = maximumMeanSpeedError <= 0.04f &&
+                                            maximumMeanVelocityError <= 0.05f &&
+                                            maximumMeanPositionError <= 0.06f &&
+                                            maximumShurikenParticleCount > 0 &&
+                                            maximumGPUParticleCount > 0 &&
+                                            shurikenSpeedRange.HasSamples &&
+                                            gpuSpeedRange.HasSamples;
+                    break;
+
                 case ParticleABValidationProfile.LifetimeByEmitterSpeedPoint:
                     profileSpecificPassed = maximumMeanSpeedError <= 0.001f &&
                                             maximumShurikenParticleCount > 0 &&
@@ -6645,6 +6758,8 @@ namespace GPUParticles
                     : validationProfile ==
                         ParticleABValidationProfile.StopActionCallbackPoint
                         ? 1
+                    : IsEmitterVelocityProfile()
+                        ? 1
                     : 0;
             float allowedMeanAgeError = validationProfile ==
                     ParticleABValidationProfile.StartLifetimeCurvePoint
@@ -6660,6 +6775,8 @@ namespace GPUParticles
                         ? 0.05f
                     : validationProfile ==
                         ParticleABValidationProfile.StopActionCallbackPoint
+                        ? 0.03f
+                    : IsEmitterVelocityProfile()
                         ? 0.03f
                     : 0.001f;
             bool passed = maximumCountDelta <= allowedCountDelta &&

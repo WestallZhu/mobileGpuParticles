@@ -98,6 +98,13 @@ namespace GPUParticles
         public float rotationOverLifetime = 0.0f;
         public SimulationSpace simulationSpace = SimulationSpace.Local;
         public Transform customSimulationSpace;
+        public ParticleSystemEmitterVelocityMode emitterVelocityMode =
+            ParticleSystemEmitterVelocityMode.Transform;
+        [Tooltip("Custom emitter velocity in world space.")]
+        public Vector3 customEmitterVelocity;
+        [Tooltip("Optional Shuriken source used to resolve Rigidbody " +
+                 "emitter velocity after child conversion.")]
+        public ParticleSystem emitterVelocitySource;
 
         [Header("Main Random Between Two Constants")]
         public bool randomizeStartLifetime;
@@ -2266,6 +2273,37 @@ namespace GPUParticles
                    Matrix4x4.Rotate(Quaternion.Inverse(transform.rotation));
         }
 
+        Vector3 ResolveEmitterVelocityWS(Vector3 transformVelocityWS)
+        {
+            switch (emitterVelocityMode)
+            {
+                case ParticleSystemEmitterVelocityMode.Custom:
+                    return customEmitterVelocity;
+
+                case ParticleSystemEmitterVelocityMode.Rigidbody:
+                    if (emitterVelocitySource != null)
+                    {
+                        return emitterVelocitySource.main.emitterVelocity;
+                    }
+
+                    if (TryGetComponent(out Rigidbody rigidbody))
+                    {
+                        return rigidbody.velocity;
+                    }
+
+                    if (TryGetComponent(out Rigidbody2D rigidbody2D))
+                    {
+                        Vector2 velocity = rigidbody2D.velocity;
+                        return new Vector3(velocity.x, velocity.y, 0f);
+                    }
+
+                    return Vector3.zero;
+
+                default:
+                    return transformVelocityWS;
+            }
+        }
+
         internal void SimulateStep(CommandBuffer cmd, float dt)
         {
             SimulateStep(
@@ -2300,11 +2338,12 @@ namespace GPUParticles
             Vector3 emitterPreviousPositionWS = previousEmitterPositionValid
                 ? previousEmitterPositionWS
                 : emitterCurrentPositionWS;
-            float emitterDistance = Vector3.Distance(
-                emitterPreviousPositionWS, emitterCurrentPositionWS);
-            Vector3 emitterVelocityWS = dt > 1e-6f
+            Vector3 transformEmitterVelocityWS = dt > 1e-6f
                 ? (emitterCurrentPositionWS - emitterPreviousPositionWS) / dt
                 : Vector3.zero;
+            Vector3 emitterVelocityWS = ResolveEmitterVelocityWS(
+                transformEmitterVelocityWS);
+            float emitterDistance = emitterVelocityWS.magnitude * dt;
             Vector3 emitterVelocityBeforeStepWS = previousEmitterVelocityWS;
             float stepStart = emissionTime;
             float stepEnd = stepStart + dt;

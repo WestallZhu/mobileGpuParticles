@@ -34,6 +34,8 @@ namespace GPUParticles
         private ParticleSystemSimulationSpace cachedSimulationSpace;
         private Transform cachedCustomSimulationSpace;
         private ParticleSystemScalingMode cachedScalingMode;
+        private ParticleSystemEmitterVelocityMode cachedEmitterVelocityMode;
+        private Vector3 cachedCustomEmitterVelocity;
         private PlaybackSyncState cachedPlaybackState =
             PlaybackSyncState.Unknown;
 
@@ -208,6 +210,8 @@ namespace GPUParticles
             cachedSimulationSpace = main.simulationSpace;
             cachedCustomSimulationSpace = main.customSimulationSpace;
             cachedScalingMode = main.scalingMode;
+            cachedEmitterVelocityMode = main.emitterVelocityMode;
+            cachedCustomEmitterVelocity = main.emitterVelocity;
             var rotationOverLifetime = sourceParticleSystem.rotationOverLifetime;
             cachedRotationOverLifetime =
                 rotationOverLifetime.enabled &&
@@ -303,6 +307,36 @@ namespace GPUParticles
             {
                 targetGPUParticleSystem.scalingMode = main.scalingMode;
                 cachedScalingMode = main.scalingMode;
+            }
+
+            if (force ||
+                targetGPUParticleSystem.emitterVelocitySource !=
+                sourceParticleSystem)
+            {
+                targetGPUParticleSystem.emitterVelocitySource =
+                    sourceParticleSystem;
+            }
+
+            if (force ||
+                main.emitterVelocityMode != cachedEmitterVelocityMode)
+            {
+                targetGPUParticleSystem.emitterVelocityMode =
+                    main.emitterVelocityMode;
+                cachedEmitterVelocityMode = main.emitterVelocityMode;
+            }
+
+            if (main.emitterVelocityMode ==
+                ParticleSystemEmitterVelocityMode.Custom)
+            {
+                Vector3 customEmitterVelocity = main.emitterVelocity;
+                if (force ||
+                    (customEmitterVelocity - cachedCustomEmitterVelocity)
+                    .sqrMagnitude > 1e-8f)
+                {
+                    targetGPUParticleSystem.customEmitterVelocity =
+                        customEmitterVelocity;
+                    cachedCustomEmitterVelocity = customEmitterVelocity;
+                }
             }
 
             if (force || main.playOnAwake != cachedPlayOnAwake)

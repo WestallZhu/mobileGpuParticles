@@ -33,6 +33,7 @@ namespace GPUParticles
             gpu.customSimulationSpace = main.customSimulationSpace;
             gpu.scalingMode = main.scalingMode;
             gpu.scalingSource = null;
+            ApplyEmitterVelocity(ps, gpu);
             ApplyMainRanges(ps, gpu, owner);
             gpu.simulationSpeed = main.simulationSpeed;
             gpu.useUnscaledTime = main.useUnscaledTime;
@@ -44,8 +45,8 @@ namespace GPUParticles
             ApplyForceOverLifetime(ps, gpu, owner);
             ApplyVelocityOverLifetime(ps, gpu, owner);
             ApplyLimitVelocityOverLifetime(ps, gpu);
-            ApplyInheritVelocity(ps, gpu, owner);
-            ApplyLifetimeByEmitterSpeed(ps, gpu, owner);
+            ApplyInheritVelocity(ps, gpu);
+            ApplyLifetimeByEmitterSpeed(ps, gpu);
             ApplyTextureSheetAnimation(ps, gpu, owner);
 
             ApplyEmission(ps, gpu, owner);
@@ -291,6 +292,7 @@ namespace GPUParticles
             gpu.customSimulationSpace = main.customSimulationSpace;
             gpu.scalingMode = main.scalingMode;
             gpu.scalingSource = originalOwner.transform;
+            ApplyEmitterVelocity(particleSystem, gpu);
             ApplyMainRanges(particleSystem, gpu, gpuChild);
             gpu.simulationSpeed = main.simulationSpeed;
             gpu.useUnscaledTime = main.useUnscaledTime;
@@ -302,8 +304,8 @@ namespace GPUParticles
             ApplyForceOverLifetime(particleSystem, gpu, gpuChild);
             ApplyVelocityOverLifetime(particleSystem, gpu, gpuChild);
             ApplyLimitVelocityOverLifetime(particleSystem, gpu);
-            ApplyInheritVelocity(particleSystem, gpu, gpuChild);
-            ApplyLifetimeByEmitterSpeed(particleSystem, gpu, gpuChild);
+            ApplyInheritVelocity(particleSystem, gpu);
+            ApplyLifetimeByEmitterSpeed(particleSystem, gpu);
             ApplyTextureSheetAnimation(particleSystem, gpu, gpuChild);
 
             ApplyEmission(particleSystem, gpu, gpuChild);
@@ -868,10 +870,19 @@ namespace GPUParticles
                 : LimitVelocityLUTBuilder.GetDefaultZeroLUT();
         }
 
+        static void ApplyEmitterVelocity(
+            ParticleSystem particleSystem,
+            GPUParticleSystem gpu)
+        {
+            var main = particleSystem.main;
+            gpu.emitterVelocityMode = main.emitterVelocityMode;
+            gpu.customEmitterVelocity = main.emitterVelocity;
+            gpu.emitterVelocitySource = particleSystem;
+        }
+
         static void ApplyInheritVelocity(
             ParticleSystem particleSystem,
-            GPUParticleSystem gpu,
-            Object context)
+            GPUParticleSystem gpu)
         {
             var inherit = particleSystem.inheritVelocity;
             gpu.inheritVelocityEnabled = inherit.enabled;
@@ -882,24 +893,11 @@ namespace GPUParticles
                     saveAsAsset: true,
                     assetName: "InheritVelocity_LUT")
                 : CurveLUTBuilder.GetDefaultZeroLUT();
-
-            if (!inherit.enabled) return;
-
-            var main = particleSystem.main;
-            if (main.emitterVelocityMode !=
-                ParticleSystemEmitterVelocityMode.Transform)
-            {
-                Debug.LogWarning(
-                    "Inherit Velocity currently derives emitter velocity from Transform movement; " +
-                    "Rigidbody and Custom modes are not supported.",
-                    context);
-            }
         }
 
         static void ApplyLifetimeByEmitterSpeed(
             ParticleSystem particleSystem,
-            GPUParticleSystem gpu,
-            Object context)
+            GPUParticleSystem gpu)
         {
             var lifetime = particleSystem.lifetimeByEmitterSpeed;
             gpu.lifetimeByEmitterSpeedEnabled = lifetime.enabled;
@@ -910,18 +908,6 @@ namespace GPUParticles
                     saveAsAsset: true,
                     assetName: "LifetimeByEmitterSpeed_LUT")
                 : CurveLUTBuilder.GetDefaultUnitLUT();
-
-            if (!lifetime.enabled) return;
-
-            var main = particleSystem.main;
-            if (main.emitterVelocityMode !=
-                ParticleSystemEmitterVelocityMode.Transform)
-            {
-                Debug.LogWarning(
-                    "Lifetime by Emitter Speed currently derives emitter velocity " +
-                    "from Transform movement; Rigidbody and Custom modes are not supported.",
-                    context);
-            }
         }
 
         static void ApplyTextureSheetAnimation(
@@ -1053,15 +1039,6 @@ namespace GPUParticles
             var bursts = new ParticleSystem.Burst[emission.burstCount];
             emission.GetBursts(bursts);
             gpu.SetEmissionBursts(bursts);
-
-            if (HasNonZeroRate(emission.rateOverDistance) &&
-                main.emitterVelocityMode != ParticleSystemEmitterVelocityMode.Transform)
-            {
-                Debug.LogWarning(
-                    "Emission Rate over Distance currently measures Transform movement; " +
-                    "Rigidbody and Custom emitter velocity modes are not supported.",
-                    context);
-            }
         }
 
         static SimulationSpace ConvertSimulationSpace(
