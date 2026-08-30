@@ -20,6 +20,7 @@ namespace GPUParticles
         private float cachedStartSize;
         private Color cachedStartColor;
         private float cachedGravityModifier;
+        private ParticleSystemGravitySource cachedGravitySource;
         private float cachedSimulationSpeed;
         private bool cachedUseUnscaledTime;
         private bool cachedPlayOnAwake;
@@ -192,6 +193,7 @@ namespace GPUParticles
             cachedStartSize = main.startSize.mode == ParticleSystemCurveMode.Constant ? main.startSize.constant : cachedStartSize;
             cachedStartColor = main.startColor.mode == ParticleSystemGradientMode.Color ? main.startColor.color : cachedStartColor;
             cachedGravityModifier = main.gravityModifier.mode == ParticleSystemCurveMode.Constant ? main.gravityModifier.constant : cachedGravityModifier;
+            cachedGravitySource = main.gravitySource;
             cachedSimulationSpeed = main.simulationSpeed;
             cachedUseUnscaledTime = main.useUnscaledTime;
             cachedPlayOnAwake = main.playOnAwake;
@@ -455,6 +457,12 @@ namespace GPUParticles
                         CurveLUTBuilder.GetDefaultZeroLUT();
                 }
                 lastGravityModifierLUTUpdate = Time.realtimeSinceStartup;
+            }
+
+            if (force || main.gravitySource != cachedGravitySource)
+            {
+                targetGPUParticleSystem.gravitySource = main.gravitySource;
+                cachedGravitySource = main.gravitySource;
             }
 
             // Simulation Speed

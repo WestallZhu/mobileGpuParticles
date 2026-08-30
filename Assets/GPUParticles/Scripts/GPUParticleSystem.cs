@@ -75,6 +75,8 @@ namespace GPUParticles
         public ParticleSystemCurveMode gravityModifierMode =
             ParticleSystemCurveMode.Constant;
         public Texture2D gravityModifierLUT;
+        public ParticleSystemGravitySource gravitySource =
+            ParticleSystemGravitySource.Physics3D;
         [Min(0.0f)] public float simulationSpeed = 1.0f;
         public bool useUnscaledTime;
         public bool playOnAwake = true;
@@ -2357,11 +2359,12 @@ namespace GPUParticles
             simulateProperties.SetInt(
                 _StartColorMode, (int)selectedStartColorMode);
 
-            Vector3 gWorld = Physics.gravity * gravityModifier;
-            Vector3 gWorldMin = Physics.gravity * gravityModifierMin;
+            Vector3 gravityWorld = ResolveGravityWorld();
+            Vector3 gWorld = gravityWorld * gravityModifier;
+            Vector3 gWorldMin = gravityWorld * gravityModifierMin;
             Vector3 gravityBase = simulationSpace == SimulationSpace.World
-                ? Physics.gravity
-                : transform.InverseTransformDirection(Physics.gravity);
+                ? gravityWorld
+                : transform.InverseTransformDirection(gravityWorld);
             Vector3 gSim = simulationSpace == SimulationSpace.World
                 ? gWorld
                 : transform.InverseTransformDirection(gWorld);
@@ -2581,6 +2584,17 @@ namespace GPUParticles
 
             ping = dst;
             simulationTick++;
+        }
+
+        Vector3 ResolveGravityWorld()
+        {
+            if (gravitySource == ParticleSystemGravitySource.Physics2D)
+            {
+                Vector2 gravity2D = Physics2D.gravity;
+                return new Vector3(gravity2D.x, gravity2D.y, 0f);
+            }
+
+            return Physics.gravity;
         }
 
         internal void Render(CommandBuffer cmd, Camera camera)

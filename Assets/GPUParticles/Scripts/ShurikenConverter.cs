@@ -595,6 +595,7 @@ namespace GPUParticles
                     saveAsAsset: true,
                     assetName: "GravityModifier_LUT")
                 : CurveLUTBuilder.GetDefaultZeroLUT();
+            gpu.gravitySource = main.gravitySource;
 
             ParticleSystem.MinMaxCurve startRotation = main.startRotation3D
                 ? main.startRotationZ

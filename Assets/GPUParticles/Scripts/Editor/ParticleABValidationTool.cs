@@ -274,6 +274,13 @@ namespace GPUParticles.Editor
                 ParticleABValidationProfile.FlipRotationPoint);
         }
 
+        [MenuItem("Tools/GPU Particles/Run Gravity Source 2D A-B RT Capture")]
+        public static void RunGravitySource2DCaptureMenu()
+        {
+            StartStartSizeCapture(
+                ParticleABValidationProfile.GravitySource2DPoint);
+        }
+
         static void StartStartSizeCapture(
             ParticleABValidationProfile profile)
         {
@@ -820,6 +827,12 @@ namespace GPUParticles.Editor
             StartCapture(true, ParticleABValidationProfile.FlipRotationPoint);
         }
 
+        public static void RunBatchGravitySource2DCapture()
+        {
+            ValidateCommonFeatureMapping();
+            StartCapture(true, ParticleABValidationProfile.GravitySource2DPoint);
+        }
+
         public static void RunBatchGravityModifierCurveCapture()
         {
             ValidateCommonFeatureMapping();
@@ -1147,6 +1160,8 @@ namespace GPUParticles.Editor
                     return 1f;
                 case ParticleABValidationProfile.FlipRotationPoint:
                     return 1.5f;
+                case ParticleABValidationProfile.GravitySource2DPoint:
+                    return 2.2f;
                 case ParticleABValidationProfile.StartLifetimeCurvePoint:
                 case ParticleABValidationProfile.StartLifetimeTwoCurvesPoint:
                     return 4.5f;
@@ -1192,6 +1207,10 @@ namespace GPUParticles.Editor
                 return 10f;
             }
             if (profile == ParticleABValidationProfile.FlipRotationPoint)
+            {
+                return 10f;
+            }
+            if (profile == ParticleABValidationProfile.GravitySource2DPoint)
             {
                 return 10f;
             }
@@ -1281,6 +1300,8 @@ namespace GPUParticles.Editor
                     return "TestResults/ParticlePrewarm";
                 case ParticleABValidationProfile.FlipRotationPoint:
                     return "TestResults/ParticleFlipRotation";
+                case ParticleABValidationProfile.GravitySource2DPoint:
+                    return "TestResults/ParticleGravitySource2D";
                 case ParticleABValidationProfile.GravityModifierCurvePoint:
                     return "TestResults/ParticleGravityModifierCurve";
                 case ParticleABValidationProfile.GravityModifierTwoCurvesPoint:
@@ -1411,6 +1432,7 @@ namespace GPUParticles.Editor
                 main.playOnAwake = false;
                 main.prewarm = true;
                 main.flipRotation = 0.65f;
+                main.gravitySource = ParticleSystemGravitySource.Physics2D;
                 main.scalingMode = ParticleSystemScalingMode.Local;
                 var shurikenRenderer =
                     owner.GetComponent<ParticleSystemRenderer>();
@@ -1651,6 +1673,9 @@ namespace GPUParticles.Editor
                     gpu.flipRotation,
                     0.65f,
                     "Main Flip Rotation");
+                Require(
+                    gpu.gravitySource == ParticleSystemGravitySource.Physics2D,
+                    "Main Gravity Source was not mapped.");
                 Require(
                     gpu.scalingMode == ParticleSystemScalingMode.Local,
                     "Main Scaling Mode Local was not mapped.");

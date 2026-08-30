@@ -65,7 +65,8 @@ namespace GPUParticles
         ScalingShapePoint,
         PlaybackLifecyclePoint,
         PrewarmPoint,
-        FlipRotationPoint
+        FlipRotationPoint,
+        GravitySource2DPoint
     }
 
     [DisallowMultipleComponent]
@@ -173,6 +174,9 @@ namespace GPUParticles
         int prewarmRestartGPUCount;
         float prewarmRestartShurikenMeanAge;
         float prewarmRestartGPUMeanAge;
+        bool gravityOverrideActive;
+        Vector3 savedPhysicsGravity;
+        Vector2 savedPhysics2DGravity;
         Texture2D profileForceLUT;
         Texture2D profileVelocityLUT;
         Texture2D profileVelocityOrbitalLUT;
@@ -241,6 +245,11 @@ namespace GPUParticles
         const float FlipRotationStartRadians = 0.5235988f;
         const float FlipRotationLifetimeRadiansPerSecond = 0.7853982f;
         const float FlipRotationBySpeedRadiansPerSecond = 0.5235988f;
+        const float GravitySourceModifier = 1.25f;
+        static readonly Vector3 GravitySourcePhysics3D =
+            new Vector3(6f, 2f, 5f);
+        static readonly Vector2 GravitySourcePhysics2D =
+            new Vector2(-3f, -4f);
         const float RendererClampMinimum = 0.04f;
         const float RendererClampMaximum = 0.12f;
         const float RendererClampTravel = 120f;
@@ -456,6 +465,7 @@ namespace GPUParticles
             }
             if (profileRotationLUT != null) Destroy(profileRotationLUT);
             if (profileRotationBySpeedLUT != null) Destroy(profileRotationBySpeedLUT);
+            RestoreGravityOverride();
             ReleaseCameraCaptureTarget();
         }
 
@@ -551,6 +561,12 @@ namespace GPUParticles
             if (validationProfile == ParticleABValidationProfile.FlipRotationPoint)
             {
                 ConfigureFlipRotationProfile();
+                return;
+            }
+
+            if (validationProfile == ParticleABValidationProfile.GravitySource2DPoint)
+            {
+                ConfigureGravitySource2DProfile();
                 return;
             }
 
@@ -831,6 +847,7 @@ namespace GPUParticles
             main.startRotation = 0f;
             main.flipRotation = 0f;
             main.gravityModifier = 0f;
+            main.gravitySource = ParticleSystemGravitySource.Physics3D;
             main.simulationSpeed = 1f;
             main.simulationSpace = ParticleSystemSimulationSpace.Local;
 
@@ -887,6 +904,7 @@ namespace GPUParticles
             gpuParticles.rotationOverLifetimeIntegralLUT =
                 CurveLUTBuilder.GetDefaultZeroLUT();
             gpuParticles.gravityModifier = 0f;
+            gpuParticles.gravitySource = ParticleSystemGravitySource.Physics3D;
             gpuParticles.simulationSpeed = 1f;
             gpuParticles.simulationSpace = SimulationSpace.Local;
             gpuParticles.colorOverLifetimeMode = ParticleSystemGradientMode.Gradient;
@@ -2731,6 +2749,59 @@ namespace GPUParticles
             gpuParticles.rotationBySpeedLUT = CurveLUTBuilder.GetDefaultZeroLUT();
         }
 
+        void ConfigureGravitySource2DProfile()
+        {
+            ApplyGravitySourceOverride();
+            ConfigureEmissionPointBase(5f, true);
+
+            var main = shuriken.main;
+            main.startLifetime = 3f;
+            main.startSpeed = 0f;
+            main.startSize = 0.6f;
+            main.gravityModifier = GravitySourceModifier;
+            main.gravitySource = ParticleSystemGravitySource.Physics2D;
+            main.simulationSpace = ParticleSystemSimulationSpace.World;
+
+            var emission = shuriken.emission;
+            emission.rateOverTime = 20f;
+            emission.rateOverDistance = 0f;
+            emission.SetBursts(Array.Empty<ParticleSystem.Burst>());
+
+            gpuParticles.SetStartLifetimeRange(3f, 3f);
+            gpuParticles.SetStartSpeedRange(0f, 0f);
+            gpuParticles.SetStartSizeRange(0.6f, 0.6f);
+            gpuParticles.SetGravityModifierRange(
+                GravitySourceModifier,
+                GravitySourceModifier);
+            gpuParticles.gravitySource = ParticleSystemGravitySource.Physics2D;
+            gpuParticles.simulationSpace = SimulationSpace.World;
+            gpuParticles.SetEmissionRateOverTime(emission.rateOverTime);
+            gpuParticles.SetEmissionRateOverDistance(emission.rateOverDistance);
+            gpuParticles.SetEmissionBursts(Array.Empty<ParticleSystem.Burst>());
+        }
+
+        void ApplyGravitySourceOverride()
+        {
+            if (!gravityOverrideActive)
+            {
+                savedPhysicsGravity = Physics.gravity;
+                savedPhysics2DGravity = Physics2D.gravity;
+                gravityOverrideActive = true;
+            }
+
+            Physics.gravity = GravitySourcePhysics3D;
+            Physics2D.gravity = GravitySourcePhysics2D;
+        }
+
+        void RestoreGravityOverride()
+        {
+            if (!gravityOverrideActive) return;
+
+            Physics.gravity = savedPhysicsGravity;
+            Physics2D.gravity = savedPhysics2DGravity;
+            gravityOverrideActive = false;
+        }
+
         void ConfigureFlipRotationProfile()
         {
             ConfigureEmissionPointBase(5f, true);
@@ -3010,6 +3081,7 @@ namespace GPUParticles
             main.startRotation = 0f;
             main.flipRotation = 0f;
             main.gravityModifier = 0f;
+            main.gravitySource = ParticleSystemGravitySource.Physics3D;
             main.simulationSpeed = 1f;
             main.useUnscaledTime = false;
             main.simulationSpace = ParticleSystemSimulationSpace.Local;
@@ -3062,6 +3134,7 @@ namespace GPUParticles
             gpuParticles.startColorLUT =
                 GradientLUTBuilder.GetDefaultWhiteLUT();
             gpuParticles.SetGravityModifierRange(0f, 0f);
+            gpuParticles.gravitySource = ParticleSystemGravitySource.Physics3D;
             gpuParticles.SetStartRotationRange(0f, 0f);
             gpuParticles.flipRotation = 0f;
             gpuParticles.SetRotationOverLifetimeRange(0f, 0f);
@@ -4011,6 +4084,14 @@ namespace GPUParticles
                             (shurikenVelocity - ValidationForce * age).magnitude);
                     }
                     else if (validationProfile ==
+                             ParticleABValidationProfile.GravitySource2DPoint)
+                    {
+                        maximumForceKinematicsError = Mathf.Max(
+                            maximumForceKinematicsError,
+                            (shurikenVelocity -
+                             GravitySourceExpectedVelocity(age)).magnitude);
+                    }
+                    else if (validationProfile ==
                              ParticleABValidationProfile.VelocitySpeedModifierPoint)
                     {
                         Vector3 displacement =
@@ -4312,6 +4393,14 @@ namespace GPUParticles
                 {
                     maximumForceKinematicsError = Mathf.Max(maximumForceKinematicsError,
                         (gpuVelocity - ValidationForce * age).magnitude);
+                }
+                else if (validationProfile ==
+                         ParticleABValidationProfile.GravitySource2DPoint)
+                {
+                    maximumForceKinematicsError = Mathf.Max(
+                        maximumForceKinematicsError,
+                        (gpuVelocity -
+                         GravitySourceExpectedVelocity(age)).magnitude);
                 }
                 else if (validationProfile ==
                          ParticleABValidationProfile.VelocitySpeedModifierPoint)
@@ -5098,6 +5187,15 @@ namespace GPUParticles
                     FlipRotationBySpeedRadiansPerSecond) * age;
         }
 
+        static Vector3 GravitySourceExpectedVelocity(float age)
+        {
+            age = Mathf.Max(0f, age);
+            return new Vector3(
+                GravitySourcePhysics2D.x,
+                GravitySourcePhysics2D.y,
+                0f) * GravitySourceModifier * age;
+        }
+
         static float LimitVelocityProfileExpectedSpeed(float age)
         {
             const float frameDeltaTime = 1f / 60f;
@@ -5813,6 +5911,15 @@ namespace GPUParticles
                         gpuStartRotationRange.Maximum >= 0.5f;
                     break;
 
+                case ParticleABValidationProfile.GravitySource2DPoint:
+                    profileSpecificPassed =
+                        maximumMeanSpeedError <= 0.001f &&
+                        maximumMeanVelocityError <= 0.001f &&
+                        maximumForceKinematicsError <= 0.005f &&
+                        maximumShurikenParticleCount > 0 &&
+                        maximumGPUParticleCount > 0;
+                    break;
+
                 case ParticleABValidationProfile.UnscaledTimePoint:
                     profileSpecificPassed = maximumMeanSpeedError <= 0.001f &&
                                             maximumMeanAgeError <= 0.001f &&
@@ -6219,6 +6326,7 @@ namespace GPUParticles
                 $"gpuStartRotationBlendRange=" +
                 $"{FormatRange(gpuStartRotationBlendRange)}", this);
             Debug.Log($"PARTICLE_AB_CAPTURE_COMPLETE:{sessionFolder}", this);
+            RestoreGravityOverride();
 
 #if UNITY_EDITOR
             if (exitEditorWhenCaptureCompletes && Application.isBatchMode)
