@@ -23,6 +23,8 @@ namespace GPUParticles
         private bool cachedMaterialAlphaPremultiply;
         private bool cachedMaterialAlphaModulate;
         private bool cachedMaterialZWrite;
+        private bool cachedMaterialAlphaClip;
+        private float cachedMaterialAlphaCutoff;
         private bool cachedTextureSheetFrameBlending;
 
         // 缓存上次的值以检测变化
@@ -1882,6 +1884,24 @@ namespace GPUParticles
             {
                 targetGPUParticleSystem.materialZWrite = zWrite;
                 cachedMaterialZWrite = zWrite;
+            }
+
+            bool alphaClip =
+                ShurikenConverter.UsesAlphaClipping(material);
+            if (force || alphaClip != cachedMaterialAlphaClip)
+            {
+                targetGPUParticleSystem.materialAlphaClip = alphaClip;
+                cachedMaterialAlphaClip = alphaClip;
+            }
+
+            float alphaCutoff =
+                ShurikenConverter.GetMaterialAlphaCutoff(material);
+            if (force ||
+                Mathf.Abs(
+                    alphaCutoff - cachedMaterialAlphaCutoff) > 0.0001f)
+            {
+                targetGPUParticleSystem.materialAlphaCutoff = alphaCutoff;
+                cachedMaterialAlphaCutoff = alphaCutoff;
             }
 
             bool frameBlending =

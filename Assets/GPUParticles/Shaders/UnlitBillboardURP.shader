@@ -12,6 +12,8 @@ Shader "GPUParticles/UnlitBillboardURP"
         [HideInInspector] _AlphaPremultiply("Alpha Premultiply", Float) = 0
         [HideInInspector] _AlphaModulate("Alpha Modulate", Float) = 0
         [Toggle] _ZWrite("Z Write", Float) = 0
+        [Toggle] _AlphaClip("Alpha Clip", Float) = 0
+        _Cutoff("Alpha Cutoff", Range(0,1)) = 0.5
         _MinAlphaCull("MinAlphaCull", Range(0,1)) = 0.001
     }
     SubShader
@@ -124,7 +126,8 @@ Shader "GPUParticles/UnlitBillboardURP"
                 int   _ParticleColorMode;
                 int   _AlphaPremultiply;
                 int   _AlphaModulate;
-                float _padMaterialColor;
+                int   _AlphaClip;
+                float _Cutoff;
 
                 // emitter transforms (for LS->WS)
                 float4x4 _EmitterLocalToWorld;
@@ -1120,6 +1123,10 @@ Shader "GPUParticles/UnlitBillboardURP"
                 }
                 baseCol *= _BaseColor;
                 float4 result = MixParticleColor(baseCol, i.col);
+                if (_AlphaClip != 0)
+                {
+                    clip(result.a - _Cutoff);
+                }
                 if (_AlphaModulate != 0)
                 {
                     result.rgb = lerp(1.0.xxx, result.rgb, result.a);

@@ -514,6 +514,8 @@ namespace GPUParticles
             gpu.materialZWrite = material != null &&
                 material.HasProperty("_ZWrite") &&
                 material.GetFloat("_ZWrite") > 0.5f;
+            gpu.materialAlphaClip = UsesAlphaClipping(material);
+            gpu.materialAlphaCutoff = GetMaterialAlphaCutoff(material);
             gpu.textureSheetFrameBlending = UsesFlipbookBlending(material);
         }
 
@@ -633,6 +635,19 @@ namespace GPUParticles
                 ? (BlendMode)Mathf.RoundToInt(
                     material.GetFloat(propertyName))
                 : fallback;
+        }
+
+        internal static bool UsesAlphaClipping(Material material)
+        {
+            return material != null &&
+                material.IsKeywordEnabled("_ALPHATEST_ON");
+        }
+
+        internal static float GetMaterialAlphaCutoff(Material material)
+        {
+            return material != null && material.HasProperty("_Cutoff")
+                ? Mathf.Clamp01(material.GetFloat("_Cutoff"))
+                : 0.5f;
         }
 
         internal static bool UsesFlipbookBlending(Material material)

@@ -269,6 +269,8 @@ namespace GPUParticles
         public bool materialAlphaPremultiply;
         public bool materialAlphaModulate;
         public bool materialZWrite;
+        public bool materialAlphaClip;
+        [Range(0f, 1f)] public float materialAlphaCutoff = 0.5f;
         [Range(0,1)] public float minAlphaCull = 0.001f;
         public bool renderEnabled = true;
 
@@ -775,6 +777,10 @@ namespace GPUParticles
             Shader.PropertyToID("_AlphaModulate");
         static readonly int _MaterialZWrite =
             Shader.PropertyToID("_ZWrite");
+        static readonly int _MaterialAlphaClip =
+            Shader.PropertyToID("_AlphaClip");
+        static readonly int _MaterialAlphaCutoff =
+            Shader.PropertyToID("_Cutoff");
         static readonly int _TextureSheetFrameLUTInvWidth =
             Shader.PropertyToID("_TextureSheetFrameLUTInvWidth");
         static readonly int _TextureSheetStartLUTInvWidth =
@@ -3489,6 +3495,12 @@ namespace GPUParticles
             renderMaterial.SetInt(
                 _MaterialZWrite,
                 materialZWrite ? 1 : 0);
+            renderMaterial.SetInt(
+                _MaterialAlphaClip,
+                materialAlphaClip ? 1 : 0);
+            renderMaterial.SetFloat(
+                _MaterialAlphaCutoff,
+                Mathf.Clamp01(materialAlphaCutoff));
 
             renderMaterial.SetInt(_GridSize, gridSize);
             renderMaterial.SetInt(_MaxParticles, maxParticles);

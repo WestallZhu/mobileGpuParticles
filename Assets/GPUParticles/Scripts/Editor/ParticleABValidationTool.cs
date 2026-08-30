@@ -706,6 +706,13 @@ namespace GPUParticles.Editor
                 ParticleABValidationProfile.MaterialBlendModesPoint);
         }
 
+        [MenuItem("Tools/GPU Particles/Run Material Alpha Clip A-B RT Capture")]
+        public static void RunMaterialAlphaClipCaptureMenu()
+        {
+            StartTextureSheetCaptureMenu(
+                ParticleABValidationProfile.MaterialAlphaClipPoint);
+        }
+
         [MenuItem("Tools/GPU Particles/Run Shape Sphere A-B RT Capture")]
         public static void RunShapeSphereCaptureMenu()
         {
@@ -1434,6 +1441,14 @@ namespace GPUParticles.Editor
                 ParticleABValidationProfile.MaterialBlendModesPoint);
         }
 
+        public static void RunBatchMaterialAlphaClipCapture()
+        {
+            ValidateCommonFeatureMapping();
+            StartCapture(
+                true,
+                ParticleABValidationProfile.MaterialAlphaClipPoint);
+        }
+
         public static void RunBatchRotationOverLifetimeCapture()
         {
             ValidateCommonFeatureMapping();
@@ -1655,6 +1670,8 @@ namespace GPUParticles.Editor
                     return 3f;
                 case ParticleABValidationProfile.MaterialBlendModesPoint:
                     return 2.4f;
+                case ParticleABValidationProfile.MaterialAlphaClipPoint:
+                    return 2.4f;
                 case ParticleABValidationProfile.RotationOverLifetimeCurvePoint: return 2.5f;
                 case ParticleABValidationProfile.RotationBySpeedCurvePoint: return 2.5f;
                 case ParticleABValidationProfile.ColorSizeOverLifetimeRandomizedPoint: return 2f;
@@ -1758,7 +1775,8 @@ namespace GPUParticles.Editor
                    profile == ParticleABValidationProfile.TextureSheetBlendSpeedPoint ||
                    profile == ParticleABValidationProfile.TextureSheetBlendFPSPoint ||
                    profile == ParticleABValidationProfile.MaterialColorModesPoint ||
-                   profile == ParticleABValidationProfile.MaterialBlendModesPoint
+                   profile == ParticleABValidationProfile.MaterialBlendModesPoint ||
+                   profile == ParticleABValidationProfile.MaterialAlphaClipPoint
                 ? 20f
                 : 5f;
         }
@@ -1911,6 +1929,8 @@ namespace GPUParticles.Editor
                     return "TestResults/ParticleMaterialColorModes";
                 case ParticleABValidationProfile.MaterialBlendModesPoint:
                     return "TestResults/ParticleMaterialBlendModes";
+                case ParticleABValidationProfile.MaterialAlphaClipPoint:
+                    return "TestResults/ParticleMaterialAlphaClip";
                 case ParticleABValidationProfile.RotationOverLifetimeCurvePoint:
                     return "TestResults/ParticleRotationOverLifetime";
                 case ParticleABValidationProfile.RotationBySpeedCurvePoint:
@@ -3450,6 +3470,7 @@ namespace GPUParticles.Editor
                 ValidateTextureSheetFrameBlendingMapping();
                 ValidateMaterialColorMapping();
                 ValidateMaterialBlendMapping();
+                ValidateMaterialAlphaClipMapping();
                 Debug.Log("PARTICLE_COMMON_FEATURE_MAPPING_RESULT:PASS");
             }
             finally
@@ -4373,6 +4394,63 @@ namespace GPUParticles.Editor
                     "Material ZWrite was not mapped.");
                 Require(gpu.materialAlphaPremultiply,
                     "Material premultiply keyword was not mapped.");
+            }
+            finally
+            {
+                Object.DestroyImmediate(owner);
+                Object.DestroyImmediate(material);
+            }
+        }
+
+        static void ValidateMaterialAlphaClipMapping()
+        {
+            var owner = new GameObject(
+                "ParticleMaterialAlphaClipMappingValidation");
+            owner.SetActive(false);
+            Material material = null;
+            try
+            {
+                var shuriken = owner.AddComponent<ParticleSystem>();
+                ParticleSystem.MainModule main = shuriken.main;
+                main.playOnAwake = false;
+                var renderer = owner.GetComponent<ParticleSystemRenderer>();
+
+                Shader shader = Shader.Find(
+                    "Universal Render Pipeline/Particles/Unlit");
+                Require(shader != null,
+                    "URP particle shader was not found for alpha clip mapping.");
+                material = new Material(shader);
+                material.SetFloat(
+                    "_Surface",
+                    (float)BaseShaderGUI.SurfaceType.Transparent);
+                material.SetFloat(
+                    "_Blend", (float)BaseShaderGUI.BlendMode.Alpha);
+                material.SetFloat("_AlphaClip", 1f);
+                material.SetFloat("_Cutoff", 0.63f);
+                BaseShaderGUI.SetupMaterialBlendMode(material);
+                renderer.sharedMaterial = material;
+
+                ShurikenConverter.Convert(owner);
+                var gpu = owner.GetComponent<GPUParticleSystem>();
+                Require(gpu != null,
+                    "Alpha clip conversion did not create a GPU system.");
+                Require(gpu.materialAlphaClip,
+                    "Enabled material Alpha Clip was not mapped.");
+                RequireApproximately(
+                    gpu.materialAlphaCutoff,
+                    0.63f,
+                    "Material Alpha Cutoff");
+
+                material.SetFloat("_AlphaClip", 0f);
+                material.SetFloat("_Cutoff", 0.17f);
+                BaseShaderGUI.SetupMaterialBlendMode(material);
+                ShurikenConverter.ApplyMaterialParameters(renderer, gpu);
+                Require(!gpu.materialAlphaClip,
+                    "Disabled material Alpha Clip was not remapped.");
+                RequireApproximately(
+                    gpu.materialAlphaCutoff,
+                    0.17f,
+                    "Updated Material Alpha Cutoff");
             }
             finally
             {
