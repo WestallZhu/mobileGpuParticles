@@ -41,6 +41,8 @@ Shader "Hidden/GPUParticles/SimulateMRT"
             TEXTURE2D(_VelocityOverLifetimeLUT); SAMPLER(sampler_VelocityOverLifetimeLUT);
             TEXTURE2D(_LimitVelocityLUT); SAMPLER(sampler_LimitVelocityLUT);
             TEXTURE2D(_InheritVelocityLUT); SAMPLER(sampler_InheritVelocityLUT);
+            TEXTURE2D(_LifetimeByEmitterSpeedLUT);
+            SAMPLER(sampler_LifetimeByEmitterSpeedLUT);
 
             // --- Params ---
             CBUFFER_START(UnityPerMaterial)
@@ -90,6 +92,9 @@ Shader "Hidden/GPUParticles/SimulateMRT"
                 int     _InheritVelocityEnabled;
                 int     _InheritVelocityMode;           // 0 Initial, 1 Current
                 float   _InheritVelocityLUTInvWidth;
+                int     _LifetimeByEmitterSpeedEnabled;
+                float2  _LifetimeByEmitterSpeedRange;
+                float   _LifetimeByEmitterSpeedLUTInvWidth;
                 int     _ColorOverLifetimeMode;
                 int     _ColorBySpeedEnabled;
                 int     _ColorBySpeedMode;
@@ -666,6 +671,34 @@ Shader "Hidden/GPUParticles/SimulateMRT"
                 return saturate((speed - speedRange.x) / width);
             }
 
+            float LifetimeByEmitterSpeedMultiplier(
+                uint id,
+                float3 birthEmitterVelocityWS)
+            {
+                if (_LifetimeByEmitterSpeedEnabled == 0)
+                {
+                    return 1.0;
+                }
+
+                float speedPosition = SpeedRangePosition(
+                    length(birthEmitterVelocityWS),
+                    _LifetimeByEmitterSpeedRange);
+                float lutPosition = LUTPosition(
+                    speedPosition,
+                    _LifetimeByEmitterSpeedLUTInvWidth);
+                float minimum = SAMPLE_TEXTURE2D_LOD(
+                    _LifetimeByEmitterSpeedLUT,
+                    sampler_LifetimeByEmitterSpeedLUT,
+                    float2(lutPosition, 0.25), 0).r;
+                float maximum = SAMPLE_TEXTURE2D_LOD(
+                    _LifetimeByEmitterSpeedLUT,
+                    sampler_LifetimeByEmitterSpeedLUT,
+                    float2(lutPosition, 0.75), 0).r;
+                return max(
+                    0.0,
+                    lerp(minimum, maximum, Hash01(id ^ 0x94D049BBu)));
+            }
+
             float4 ColorBySpeed(uint id, float speedPosition)
             {
                 float randomValue = Hash01(id ^ 0x7F4A7C15u);
@@ -743,8 +776,12 @@ Shader "Hidden/GPUParticles/SimulateMRT"
                 float rotationPhase = curModuleState.x;
                 float3 birthEmitterVelocityWS = curModuleState.yzw;
 
-                float particleStartLifetime = RandomRange(
+                float baseParticleStartLifetime = RandomRange(
                     id, 0x68E31DA4u, _RandomizeStartLifetime, _StartLifetimeMin, _StartLifetime);
+                float particleStartLifetime = baseParticleStartLifetime *
+                    LifetimeByEmitterSpeedMultiplier(
+                        id,
+                        birthEmitterVelocityWS);
                 float particleStartSpeed = RandomRange(
                     id, 0xB5297A4Du, _RandomizeStartSpeed, _StartSpeedMin, _StartSpeed);
                 float particleStartSize = RandomRange(
@@ -1070,14 +1107,19 @@ Shader "Hidden/GPUParticles/SimulateMRT"
                     // finalize spawn in sim space
                     pos  = ToSimSpacePos(posL);
                     vel  = ToSimSpaceVec(velL);
-                    life = particleStartLifetime;
                     rotationPhase = 0.0;
                     birthEmitterVelocityWS =
-                        _InheritVelocityEnabled != 0 &&
-                        _InheritVelocityMode == 0 &&
-                        _SimulationSpace == 1
+                        _LifetimeByEmitterSpeedEnabled != 0 ||
+                        (_InheritVelocityEnabled != 0 &&
+                         _InheritVelocityMode == 0 &&
+                         _SimulationSpace == 1)
                             ? _EmitterVelocityWS
                             : 0.0;
+                    particleStartLifetime = baseParticleStartLifetime *
+                        LifetimeByEmitterSpeedMultiplier(
+                            id,
+                            birthEmitterVelocityWS);
+                    life = particleStartLifetime;
                     
                     float tSpawn = 0.0;
                     float4 lutColSpawn = ColorOverLifetime(id, tSpawn);

@@ -36,6 +36,7 @@ namespace GPUParticles
             ApplyVelocityOverLifetime(ps, gpu, owner);
             ApplyLimitVelocityOverLifetime(ps, gpu);
             ApplyInheritVelocity(ps, gpu, owner);
+            ApplyLifetimeByEmitterSpeed(ps, gpu, owner);
 
             ApplyEmission(ps, gpu, owner);
             ApplyColorAndSizeOverLifetime(ps, gpu, owner);
@@ -273,6 +274,7 @@ namespace GPUParticles
             ApplyVelocityOverLifetime(particleSystem, gpu, gpuChild);
             ApplyLimitVelocityOverLifetime(particleSystem, gpu);
             ApplyInheritVelocity(particleSystem, gpu, gpuChild);
+            ApplyLifetimeByEmitterSpeed(particleSystem, gpu, gpuChild);
 
             ApplyEmission(particleSystem, gpu, gpuChild);
             ApplyColorAndSizeOverLifetime(particleSystem, gpu, gpuChild);
@@ -788,6 +790,34 @@ namespace GPUParticles
                 Debug.LogWarning(
                     "Inherit Velocity currently derives emitter velocity from Transform movement; " +
                     "Rigidbody and Custom modes are not supported.",
+                    context);
+            }
+        }
+
+        static void ApplyLifetimeByEmitterSpeed(
+            ParticleSystem particleSystem,
+            GPUParticleSystem gpu,
+            Object context)
+        {
+            var lifetime = particleSystem.lifetimeByEmitterSpeed;
+            gpu.lifetimeByEmitterSpeedEnabled = lifetime.enabled;
+            gpu.SetLifetimeByEmitterSpeedRange(lifetime.range);
+            gpu.lifetimeByEmitterSpeedLUT = lifetime.enabled
+                ? CurveLUTBuilder.Build(
+                    lifetime.curve,
+                    saveAsAsset: true,
+                    assetName: "LifetimeByEmitterSpeed_LUT")
+                : CurveLUTBuilder.GetDefaultUnitLUT();
+
+            if (!lifetime.enabled) return;
+
+            var main = particleSystem.main;
+            if (main.emitterVelocityMode !=
+                ParticleSystemEmitterVelocityMode.Transform)
+            {
+                Debug.LogWarning(
+                    "Lifetime by Emitter Speed currently derives emitter velocity " +
+                    "from Transform movement; Rigidbody and Custom modes are not supported.",
                     context);
             }
         }

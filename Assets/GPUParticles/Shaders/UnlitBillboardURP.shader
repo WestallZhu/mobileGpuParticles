@@ -28,6 +28,8 @@ Shader "GPUParticles/UnlitBillboardURP"
             TEXTURE2D(_BaseMap);    SAMPLER(sampler_BaseMap);
             TEXTURE2D(_RotationOverLifetimeIntegralLUT);
             SAMPLER(sampler_RotationOverLifetimeIntegralLUT);
+            TEXTURE2D(_LifetimeByEmitterSpeedLUT);
+            SAMPLER(sampler_LifetimeByEmitterSpeedLUT);
 
             CBUFFER_START(UnityPerMaterial)
                 int   _GridSize;
@@ -36,6 +38,9 @@ Shader "GPUParticles/UnlitBillboardURP"
                 float _StartLifetime;
                 float _StartLifetimeMin;
                 int   _RandomizeStartLifetime;
+                int   _LifetimeByEmitterSpeedEnabled;
+                float2 _LifetimeByEmitterSpeedRange;
+                float _LifetimeByEmitterSpeedLUTInvWidth;
                 float _StartRotation;
                 float _StartRotationMin;
                 int   _RandomizeStartRotation;
@@ -111,6 +116,44 @@ Shader "GPUParticles/UnlitBillboardURP"
                     sampler_RotationOverLifetimeIntegralLUT,
                     float2(x, 0.75), 0).r;
                 return lerp(minimum, maximum, Hash01(id ^ 0xD3A2646Cu));
+            }
+
+            float SpeedRangePosition(float speed, float2 speedRange)
+            {
+                float width = speedRange.y - speedRange.x;
+                if (width <= 1e-6)
+                {
+                    return speed > speedRange.x ? 1.0 : 0.0;
+                }
+                return saturate((speed - speedRange.x) / width);
+            }
+
+            float LifetimeByEmitterSpeedMultiplier(
+                uint id,
+                float3 birthEmitterVelocityWS)
+            {
+                if (_LifetimeByEmitterSpeedEnabled == 0)
+                {
+                    return 1.0;
+                }
+
+                float speedPosition = SpeedRangePosition(
+                    length(birthEmitterVelocityWS),
+                    _LifetimeByEmitterSpeedRange);
+                float x = LUTCoordinate(
+                    speedPosition,
+                    _LifetimeByEmitterSpeedLUTInvWidth);
+                float minimum = SAMPLE_TEXTURE2D_LOD(
+                    _LifetimeByEmitterSpeedLUT,
+                    sampler_LifetimeByEmitterSpeedLUT,
+                    float2(x, 0.25), 0).r;
+                float maximum = SAMPLE_TEXTURE2D_LOD(
+                    _LifetimeByEmitterSpeedLUT,
+                    sampler_LifetimeByEmitterSpeedLUT,
+                    float2(x, 0.75), 0).r;
+                return max(
+                    0.0,
+                    lerp(minimum, maximum, Hash01(id ^ 0x94D049BBu)));
             }
 
             float3 Ortho(float3 v){ return normalize( any(abs(v) > 0.0) ? (abs(v.z)<0.999?cross(v,float3(0,0,1)):cross(v,float3(0,1,0))) : float3(1,0,0) ); }
@@ -229,8 +272,9 @@ Shader "GPUParticles/UnlitBillboardURP"
                 float4 posLife = SAMPLE_TEXTURE2D_LOD(_CurPosLife, sampler_CurPosLife, tuv, 0);
                 float4 velSize = SAMPLE_TEXTURE2D_LOD(_CurVelSize, sampler_CurVelSize, tuv, 0);
                 float4 pcol    = SAMPLE_TEXTURE2D_LOD(_CurColor,   sampler_CurColor,   tuv, 0);
-                float rotationBySpeedPhase = SAMPLE_TEXTURE2D_LOD(
-                    _CurRotationPhase, sampler_CurRotationPhase, tuv, 0).r;
+                float4 moduleState = SAMPLE_TEXTURE2D_LOD(
+                    _CurRotationPhase, sampler_CurRotationPhase, tuv, 0);
+                float rotationBySpeedPhase = moduleState.r;
 
                 float3 posWS, velWS; ToWS(posLife.xyz, velSize.xyz, posWS, velWS);
 
@@ -298,7 +342,10 @@ Shader "GPUParticles/UnlitBillboardURP"
                 {
                     float particleStartLifetime = RandomRange(
                         quadId, 0x68E31DA4u, _RandomizeStartLifetime,
-                        _StartLifetimeMin, _StartLifetime);
+                        _StartLifetimeMin, _StartLifetime) *
+                        LifetimeByEmitterSpeedMultiplier(
+                            quadId,
+                            moduleState.gba);
                     float particleStartRotation = RandomRange(
                         quadId, 0x165667B1u, _RandomizeStartRotation,
                         _StartRotationMin, _StartRotation);

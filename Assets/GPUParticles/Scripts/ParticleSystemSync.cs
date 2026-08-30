@@ -49,6 +49,7 @@ namespace GPUParticles
         private float lastVelocityLUTUpdate = 0f;
         private float lastLimitVelocityLUTUpdate = 0f;
         private float lastInheritVelocityLUTUpdate = 0f;
+        private float lastLifetimeByEmitterSpeedLUTUpdate = 0f;
         private float lastColorBySpeedLUTUpdate = 0f;
         private float lastSizeBySpeedLUTUpdate = 0f;
         private float lastRotationLUTUpdate = 0f;
@@ -58,6 +59,7 @@ namespace GPUParticles
         private Texture2D generatedVelocityLUT;
         private Texture2D generatedLimitVelocityLUT;
         private Texture2D generatedInheritVelocityLUT;
+        private Texture2D generatedLifetimeByEmitterSpeedLUT;
         private Texture2D generatedColorLUT;
         private Texture2D generatedSizeLUT;
         private Texture2D generatedColorBySpeedLUT;
@@ -106,6 +108,7 @@ namespace GPUParticles
             SyncVelocityOverLifetime(true);
             SyncLimitVelocityOverLifetime(true);
             SyncInheritVelocity(true);
+            SyncLifetimeByEmitterSpeed(true);
             SyncRendererParameters(true);
             SyncRotationParameters(true);
             SyncMaterialParameters(true);
@@ -174,6 +177,7 @@ namespace GPUParticles
             SyncVelocityOverLifetime();
             SyncLimitVelocityOverLifetime();
             SyncInheritVelocity();
+            SyncLifetimeByEmitterSpeed();
             SyncRendererParameters();
             SyncRotationParameters();
             SyncMaterialParameters();
@@ -577,12 +581,46 @@ namespace GPUParticles
             lastInheritVelocityLUTUpdate = Time.realtimeSinceStartup;
         }
 
+        void SyncLifetimeByEmitterSpeed(bool forceUpdate = false)
+        {
+            var lifetime = sourceParticleSystem.lifetimeByEmitterSpeed;
+            bool timeToUpdate =
+                Time.realtimeSinceStartup -
+                lastLifetimeByEmitterSpeedLUTUpdate > LUT_UPDATE_INTERVAL;
+            if (!forceUpdate && !timeToUpdate) return;
+
+            targetGPUParticleSystem.lifetimeByEmitterSpeedEnabled =
+                lifetime.enabled;
+            targetGPUParticleSystem.SetLifetimeByEmitterSpeedRange(
+                lifetime.range);
+
+            DestroyGeneratedLifetimeByEmitterSpeedLUT();
+            if (lifetime.enabled)
+            {
+                generatedLifetimeByEmitterSpeedLUT =
+                    CurveLUTBuilder.Build(
+                        lifetime.curve,
+                        assetName: "LifetimeByEmitterSpeed_LUT");
+                targetGPUParticleSystem.lifetimeByEmitterSpeedLUT =
+                    generatedLifetimeByEmitterSpeedLUT;
+            }
+            else
+            {
+                targetGPUParticleSystem.lifetimeByEmitterSpeedLUT =
+                    CurveLUTBuilder.GetDefaultUnitLUT();
+            }
+
+            lastLifetimeByEmitterSpeedLUTUpdate =
+                Time.realtimeSinceStartup;
+        }
+
         void OnDestroy()
         {
             DestroyGeneratedForceLUT();
             DestroyGeneratedVelocityLUT();
             DestroyGeneratedLimitVelocityLUT();
             DestroyGeneratedInheritVelocityLUT();
+            DestroyGeneratedLifetimeByEmitterSpeedLUT();
             DestroyGeneratedColorLUT();
             DestroyGeneratedSizeLUT();
             DestroyGeneratedColorBySpeedLUT();
@@ -625,6 +663,21 @@ namespace GPUParticles
             if (Application.isPlaying) Destroy(generatedInheritVelocityLUT);
             else DestroyImmediate(generatedInheritVelocityLUT);
             generatedInheritVelocityLUT = null;
+        }
+
+        void DestroyGeneratedLifetimeByEmitterSpeedLUT()
+        {
+            if (generatedLifetimeByEmitterSpeedLUT == null) return;
+
+            if (Application.isPlaying)
+            {
+                Destroy(generatedLifetimeByEmitterSpeedLUT);
+            }
+            else
+            {
+                DestroyImmediate(generatedLifetimeByEmitterSpeedLUT);
+            }
+            generatedLifetimeByEmitterSpeedLUT = null;
         }
 
         void DestroyGeneratedColorLUT()
