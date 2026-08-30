@@ -31,6 +31,7 @@ namespace GPUParticles
         private bool cachedEmissionEnabled;
         private int cachedMaxParticles;
         private ParticleSystemSimulationSpace cachedSimulationSpace;
+        private Transform cachedCustomSimulationSpace;
         private ParticleSystemScalingMode cachedScalingMode;
         private PlaybackSyncState cachedPlaybackState =
             PlaybackSyncState.Unknown;
@@ -203,6 +204,7 @@ namespace GPUParticles
             cachedEmissionEnabled = emission.enabled;
             cachedMaxParticles = main.maxParticles;
             cachedSimulationSpace = main.simulationSpace;
+            cachedCustomSimulationSpace = main.customSimulationSpace;
             cachedScalingMode = main.scalingMode;
             var rotationOverLifetime = sourceParticleSystem.rotationOverLifetime;
             cachedRotationOverLifetime =
@@ -278,12 +280,21 @@ namespace GPUParticles
             }
 
             // Simulation Space
-            if (force || main.simulationSpace != cachedSimulationSpace)
+            if (force ||
+                main.simulationSpace != cachedSimulationSpace ||
+                main.customSimulationSpace != cachedCustomSimulationSpace)
             {
-                targetGPUParticleSystem.simulationSpace = main.simulationSpace == ParticleSystemSimulationSpace.World 
-                    ? SimulationSpace.World 
-                    : SimulationSpace.Local;
+                targetGPUParticleSystem.simulationSpace =
+                    main.simulationSpace == ParticleSystemSimulationSpace.World
+                        ? SimulationSpace.World
+                        : main.simulationSpace ==
+                          ParticleSystemSimulationSpace.Custom
+                            ? SimulationSpace.Custom
+                            : SimulationSpace.Local;
+                targetGPUParticleSystem.customSimulationSpace =
+                    main.customSimulationSpace;
                 cachedSimulationSpace = main.simulationSpace;
+                cachedCustomSimulationSpace = main.customSimulationSpace;
             }
 
             if (force || main.scalingMode != cachedScalingMode)

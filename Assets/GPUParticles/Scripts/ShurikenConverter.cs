@@ -29,7 +29,8 @@ namespace GPUParticles
 
             // ---- Main ----
             gpu.maxParticles = main.maxParticles;
-            gpu.simulationSpace = main.simulationSpace == ParticleSystemSimulationSpace.World ? SimulationSpace.World : SimulationSpace.Local;
+            gpu.simulationSpace = ConvertSimulationSpace(main.simulationSpace);
+            gpu.customSimulationSpace = main.customSimulationSpace;
             gpu.scalingMode = main.scalingMode;
             gpu.scalingSource = null;
             ApplyMainRanges(ps, gpu, owner);
@@ -284,7 +285,8 @@ namespace GPUParticles
 
             // ---- Main ----
             gpu.maxParticles = main.maxParticles;
-            gpu.simulationSpace = main.simulationSpace == ParticleSystemSimulationSpace.World ? SimulationSpace.World : SimulationSpace.Local;
+            gpu.simulationSpace = ConvertSimulationSpace(main.simulationSpace);
+            gpu.customSimulationSpace = main.customSimulationSpace;
             gpu.scalingMode = main.scalingMode;
             gpu.scalingSource = originalOwner.transform;
             ApplyMainRanges(particleSystem, gpu, gpuChild);
@@ -1055,6 +1057,20 @@ namespace GPUParticles
                     "Emission Rate over Distance currently measures Transform movement; " +
                     "Rigidbody and Custom emitter velocity modes are not supported.",
                     context);
+            }
+        }
+
+        static SimulationSpace ConvertSimulationSpace(
+            ParticleSystemSimulationSpace source)
+        {
+            switch (source)
+            {
+                case ParticleSystemSimulationSpace.World:
+                    return SimulationSpace.World;
+                case ParticleSystemSimulationSpace.Custom:
+                    return SimulationSpace.Custom;
+                default:
+                    return SimulationSpace.Local;
             }
         }
 

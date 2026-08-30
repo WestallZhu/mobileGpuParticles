@@ -88,7 +88,7 @@ Shader "Hidden/GPUParticles/SimulateMRT"
                 float3  _GravityBase;
                 int     _GravityModifierMode;
                 float   _GravityModifierLUTInvWidth;
-                int     _SimulationSpace;    // 0 Local, 1 World
+                int     _SimulationSpace;    // 0 Local, 1 World, 2 Custom
                 uint    _EmitStart;
                 uint    _EmitCount;
                 float   _EmitCarryPrev;
@@ -197,6 +197,12 @@ Shader "Hidden/GPUParticles/SimulateMRT"
                 // Emitter transforms
                 float4x4 _EmitterLocalToWorld;
                 float4x4 _EmitterWorldToLocal;
+                float4x4 _SimulationLocalToWorld;
+                float4x4 _SimulationWorldToLocal;
+                float4x4 _EmitterToSimulationDirection;
+                float4x4 _SimulationToEmitterDirection;
+                float4x4 _WorldToSimulationDirection;
+                float4x4 _SimulationToWorldDirection;
                 float4x4 _ShapeLocalToWorld;
                 float3 _EmitterPreviousPositionWS;
                 float _Pad19;
@@ -524,7 +530,7 @@ Shader "Hidden/GPUParticles/SimulateMRT"
                     return positionWS;
                 }
                 return mul(
-                    _EmitterWorldToLocal,
+                    _SimulationWorldToLocal,
                     float4(positionWS, 1.0)).xyz;
             }
             // Transform emitter-local vector (no translation) to world if needed
@@ -535,7 +541,35 @@ Shader "Hidden/GPUParticles/SimulateMRT"
                     float4 ws = mul(_EmitterLocalToWorld, float4(vLocal,0));
                     return ws.xyz;
                 }
+                if (_SimulationSpace == 2) // Custom
+                {
+                    return mul(
+                        _EmitterToSimulationDirection,
+                        float4(vLocal, 0.0)).xyz;
+                }
                 return vLocal;
+            }
+
+            float3 ToSimSpaceSpawnVelocity(float3 velocityLocal)
+            {
+                if (_SimulationSpace != 2)
+                {
+                    return ToSimSpaceVec(velocityLocal);
+                }
+
+                float speed = length(velocityLocal);
+                if (speed <= 1e-6)
+                {
+                    return 0.0;
+                }
+
+                float3 velocityWS = mul(
+                    _EmitterLocalToWorld,
+                    float4(velocityLocal, 0.0)).xyz;
+                float3 velocityCustom = mul(
+                    _SimulationWorldToLocal,
+                    float4(velocityWS, 0.0)).xyz;
+                return normalize(velocityCustom) * speed;
             }
 
             float3 SimPositionToEmitterLocal(float3 position)
@@ -544,7 +578,27 @@ Shader "Hidden/GPUParticles/SimulateMRT"
                 {
                     return mul(_EmitterWorldToLocal, float4(position, 1.0)).xyz;
                 }
+                if (_SimulationSpace == 2)
+                {
+                    float3 positionWS = mul(
+                        _SimulationLocalToWorld,
+                        float4(position, 1.0)).xyz;
+                    return mul(
+                        _EmitterWorldToLocal,
+                        float4(positionWS, 1.0)).xyz;
+                }
                 return position;
+            }
+
+            float3 WorldVectorToSimulationPositionSpace(float3 value)
+            {
+                if (_SimulationSpace == 1)
+                {
+                    return value;
+                }
+                return mul(
+                    _SimulationWorldToLocal,
+                    float4(value, 0.0)).xyz;
             }
 
             float3 ModuleVectorToSimSpace(float3 value, int moduleSpace)
@@ -555,6 +609,19 @@ Shader "Hidden/GPUParticles/SimulateMRT"
                     {
                         return mul(_EmitterWorldToLocal, float4(value, 0.0)).xyz;
                     }
+                    if (_SimulationSpace == 2)
+                    {
+                        return mul(
+                            _WorldToSimulationDirection,
+                            float4(value, 0.0)).xyz;
+                    }
+                    return value;
+                }
+
+                // Optional GPU-authored values can already be expressed in the
+                // active custom simulation frame.
+                if (moduleSpace == 2)
+                {
                     return value;
                 }
 
@@ -562,6 +629,12 @@ Shader "Hidden/GPUParticles/SimulateMRT"
                 if (_SimulationSpace == 1)
                 {
                     return mul(_EmitterLocalToWorld, float4(value, 0.0)).xyz;
+                }
+                if (_SimulationSpace == 2)
+                {
+                    return mul(
+                        _EmitterToSimulationDirection,
+                        float4(value, 0.0)).xyz;
                 }
                 return value;
             }
@@ -581,6 +654,17 @@ Shader "Hidden/GPUParticles/SimulateMRT"
                     {
                         return mul(_EmitterLocalToWorld, float4(value, 0.0)).xyz;
                     }
+                    if (_SimulationSpace == 2)
+                    {
+                        return mul(
+                            _SimulationToWorldDirection,
+                            float4(value, 0.0)).xyz;
+                    }
+                    return value;
+                }
+
+                if (limitSpace == 2)
+                {
                     return value;
                 }
 
@@ -588,6 +672,12 @@ Shader "Hidden/GPUParticles/SimulateMRT"
                 if (_SimulationSpace == 1)
                 {
                     return mul(_EmitterWorldToLocal, float4(value, 0.0)).xyz;
+                }
+                if (_SimulationSpace == 2)
+                {
+                    return mul(
+                        _SimulationToEmitterDirection,
+                        float4(value, 0.0)).xyz;
                 }
                 return value;
             }
@@ -721,7 +811,7 @@ Shader "Hidden/GPUParticles/SimulateMRT"
                 float3 birthEmitterVelocityWS,
                 float3 currentEmitterVelocityWS)
             {
-                if (_InheritVelocityEnabled == 0 || _SimulationSpace != 1)
+                if (_InheritVelocityEnabled == 0 || _SimulationSpace == 0)
                 {
                     return 0.0;
                 }
@@ -729,6 +819,12 @@ Shader "Hidden/GPUParticles/SimulateMRT"
                 float3 sourceVelocity = _InheritVelocityMode == 0
                     ? birthEmitterVelocityWS
                     : currentEmitterVelocityWS;
+                if (_SimulationSpace == 2)
+                {
+                    sourceVelocity = mul(
+                        _WorldToSimulationDirection,
+                        float4(sourceVelocity, 0.0)).xyz;
+                }
                 return sourceVelocity *
                     InheritVelocityMultiplier(id, normalizedAge);
             }
@@ -1490,13 +1586,13 @@ Shader "Hidden/GPUParticles/SimulateMRT"
 
                     // finalize spawn in sim space
                     pos  = ToSimSpacePos(posL);
-                    vel  = ToSimSpaceVec(velL);
+                    vel  = ToSimSpaceSpawnVelocity(velL);
                     rotationPhase = 0.0;
                     birthEmitterVelocityWS =
                         _LifetimeByEmitterSpeedEnabled != 0 ||
-                        (_InheritVelocityEnabled != 0 &&
-                         _InheritVelocityMode == 0 &&
-                         _SimulationSpace == 1)
+                         (_InheritVelocityEnabled != 0 &&
+                          _InheritVelocityMode == 0 &&
+                         _SimulationSpace != 0)
                             ? _EmitterVelocityWS
                             : 0.0;
                     particleStartLifetime = baseParticleStartLifetime *
@@ -1528,14 +1624,16 @@ Shader "Hidden/GPUParticles/SimulateMRT"
                     // world-space birth back to its sub-frame emitter position so
                     // moving Rate-over-Time, Rate-over-Distance and Burst particles
                     // are distributed along the actual emitter trajectory.
-                    if (_SimulationSpace == 1 && _DeltaTime > 1e-6)
+                    if (_SimulationSpace != 0 && _DeltaTime > 1e-6)
                     {
                         float spawnFraction = saturate(1.0 - stepDt / _DeltaTime);
                         float3 emitterPositionAtSpawn = lerp(
                             _EmitterPreviousPositionWS,
                             _EmitterCurrentPositionWS,
                             spawnFraction);
-                        pos += emitterPositionAtSpawn - _EmitterCurrentPositionWS;
+                        pos += WorldVectorToSimulationPositionSpace(
+                            emitterPositionAtSpawn -
+                            _EmitterCurrentPositionWS);
                     }
                 }
                
@@ -1604,7 +1702,7 @@ Shader "Hidden/GPUParticles/SimulateMRT"
                     // so rendering and by-speed modules see effective motion. Remove it
                     // before updating the underlying particle velocity.
                     if (!spawn && _InheritVelocityEnabled != 0 &&
-                        _SimulationSpace == 1)
+                        _SimulationSpace != 0)
                     {
                         vel -= InheritVelocityContribution(
                             id,

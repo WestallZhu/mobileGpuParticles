@@ -5,7 +5,7 @@ using System.Collections.Generic;
 
 namespace GPUParticles
 {
-    public enum SimulationSpace { Local = 0, World = 1 }
+    public enum SimulationSpace { Local = 0, World = 1, Custom = 2 }
 
     public enum ShapeTypeGPU { Sphere = 0, Hemisphere = 1, Cone = 2, Donut = 3, Box = 4, Circle = 5, Edge = 6, Rectangle = 7, Point = 8 }
     public enum ShapeEmitFromGPU
@@ -92,6 +92,7 @@ namespace GPUParticles
         [Range(0f, 1f)] public float flipRotation;
         public float rotationOverLifetime = 0.0f;
         public SimulationSpace simulationSpace = SimulationSpace.Local;
+        public Transform customSimulationSpace;
 
         [Header("Main Random Between Two Constants")]
         public bool randomizeStartLifetime;
@@ -523,6 +524,18 @@ namespace GPUParticles
 
         static readonly int _EmitterLocalToWorld = Shader.PropertyToID("_EmitterLocalToWorld");
         static readonly int _EmitterWorldToLocal = Shader.PropertyToID("_EmitterWorldToLocal");
+        static readonly int _SimulationLocalToWorld =
+            Shader.PropertyToID("_SimulationLocalToWorld");
+        static readonly int _SimulationWorldToLocal =
+            Shader.PropertyToID("_SimulationWorldToLocal");
+        static readonly int _EmitterToSimulationDirection =
+            Shader.PropertyToID("_EmitterToSimulationDirection");
+        static readonly int _SimulationToEmitterDirection =
+            Shader.PropertyToID("_SimulationToEmitterDirection");
+        static readonly int _WorldToSimulationDirection =
+            Shader.PropertyToID("_WorldToSimulationDirection");
+        static readonly int _SimulationToWorldDirection =
+            Shader.PropertyToID("_SimulationToWorldDirection");
         static readonly int _ShapeLocalToWorld = Shader.PropertyToID("_ShapeLocalToWorld");
         static readonly int _EmitterPreviousPositionWS = Shader.PropertyToID("_EmitterPreviousPositionWS");
         static readonly int _EmitterCurrentPositionWS = Shader.PropertyToID("_EmitterCurrentPositionWS");
@@ -2062,6 +2075,73 @@ namespace GPUParticles
             }
         }
 
+        Matrix4x4 SimulationLocalToWorldMatrix(
+            Matrix4x4 particleLocalToWorld)
+        {
+            if (simulationSpace == SimulationSpace.World)
+            {
+                return Matrix4x4.identity;
+            }
+
+            if (simulationSpace == SimulationSpace.Custom &&
+                customSimulationSpace != null)
+            {
+                return customSimulationSpace.localToWorldMatrix;
+            }
+
+            return particleLocalToWorld;
+        }
+
+        Quaternion SimulationRotation()
+        {
+            if (simulationSpace == SimulationSpace.World)
+            {
+                return Quaternion.identity;
+            }
+
+            if (simulationSpace == SimulationSpace.Custom &&
+                customSimulationSpace != null)
+            {
+                return customSimulationSpace.rotation;
+            }
+
+            return transform.rotation;
+        }
+
+        Vector3 WorldDirectionToSimulation(Vector3 directionWorld)
+        {
+            if (simulationSpace == SimulationSpace.World)
+            {
+                return directionWorld;
+            }
+
+            if (simulationSpace == SimulationSpace.Custom &&
+                customSimulationSpace != null)
+            {
+                return customSimulationSpace.InverseTransformDirection(
+                    directionWorld);
+            }
+
+            return transform.InverseTransformDirection(directionWorld);
+        }
+
+        Vector3 WorldAccelerationToSimulation(
+            Vector3 accelerationWorld,
+            Matrix4x4 simulationWorldToLocal)
+        {
+            if (simulationSpace == SimulationSpace.Custom &&
+                customSimulationSpace != null)
+            {
+                // Particle positions and velocities are stored in custom-space
+                // coordinate units. Account for its scale so transforming the
+                // integrated result back to world preserves world acceleration.
+                return simulationWorldToLocal.MultiplyVector(
+                    accelerationWorld);
+            }
+
+            return WorldDirectionToSimulation(accelerationWorld);
+        }
+
         Matrix4x4 ShapeLocalToWorldMatrix(Matrix4x4 particleLocalToWorld)
         {
             return scalingMode == ParticleSystemScalingMode.Local
@@ -2093,6 +2173,19 @@ namespace GPUParticles
             lastSimulationDeltaTime = dt;
             Matrix4x4 particleLocalToWorld = ParticleLocalToWorldMatrix();
             Matrix4x4 particleWorldToLocal = particleLocalToWorld.inverse;
+            Matrix4x4 simulationLocalToWorld =
+                SimulationLocalToWorldMatrix(particleLocalToWorld);
+            Matrix4x4 simulationWorldToLocal =
+                simulationLocalToWorld.inverse;
+            Quaternion simulationRotation = SimulationRotation();
+            Matrix4x4 emitterToSimulationDirection = Matrix4x4.Rotate(
+                Quaternion.Inverse(simulationRotation) * transform.rotation);
+            Matrix4x4 simulationToEmitterDirection = Matrix4x4.Rotate(
+                Quaternion.Inverse(transform.rotation) * simulationRotation);
+            Matrix4x4 worldToSimulationDirection = Matrix4x4.Rotate(
+                Quaternion.Inverse(simulationRotation));
+            Matrix4x4 simulationToWorldDirection = Matrix4x4.Rotate(
+                simulationRotation);
             Matrix4x4 shapeLocalToWorld =
                 ShapeLocalToWorldMatrix(particleLocalToWorld);
             Vector3 emitterCurrentPositionWS = transform.position;
@@ -2362,15 +2455,15 @@ namespace GPUParticles
             Vector3 gravityWorld = ResolveGravityWorld();
             Vector3 gWorld = gravityWorld * gravityModifier;
             Vector3 gWorldMin = gravityWorld * gravityModifierMin;
-            Vector3 gravityBase = simulationSpace == SimulationSpace.World
-                ? gravityWorld
-                : transform.InverseTransformDirection(gravityWorld);
-            Vector3 gSim = simulationSpace == SimulationSpace.World
-                ? gWorld
-                : transform.InverseTransformDirection(gWorld);
-            Vector3 gSimMin = simulationSpace == SimulationSpace.World
-                ? gWorldMin
-                : transform.InverseTransformDirection(gWorldMin);
+            Vector3 gravityBase = WorldAccelerationToSimulation(
+                gravityWorld,
+                simulationWorldToLocal);
+            Vector3 gSim = WorldAccelerationToSimulation(
+                gWorld,
+                simulationWorldToLocal);
+            Vector3 gSimMin = WorldAccelerationToSimulation(
+                gWorldMin,
+                simulationWorldToLocal);
             simulateProperties.SetVector(_GravityWS, new Vector4(gSim.x, gSim.y, gSim.z, 0));
             simulateProperties.SetVector(_GravityWSMin,
                 new Vector4(gSimMin.x, gSimMin.y, gSimMin.z, 0));
@@ -2476,8 +2569,10 @@ namespace GPUParticles
                     0f,
                     0f));
 
-            Vector3 dirInitW = initialDirectionWS.sqrMagnitude > 1e-6f ? initialDirectionWS.normalized : transform.forward;
-            Vector3 dirInitSim = (simulationSpace == SimulationSpace.World) ? dirInitW : transform.InverseTransformDirection(dirInitW);
+            Vector3 dirInitW = initialDirectionWS.sqrMagnitude > 1e-6f
+                ? initialDirectionWS.normalized
+                : transform.forward;
+            Vector3 dirInitSim = WorldDirectionToSimulation(dirInitW);
             simulateProperties.SetVector(_InitialDir, new Vector4(dirInitSim.x, dirInitSim.y, dirInitSim.z, 0));
 
             simulateProperties.SetInt(_ShapeType, (int)shapeType);
@@ -2546,6 +2641,22 @@ namespace GPUParticles
 
             simulateProperties.SetMatrix(_EmitterLocalToWorld, particleLocalToWorld);
             simulateProperties.SetMatrix(_EmitterWorldToLocal, particleWorldToLocal);
+            simulateProperties.SetMatrix(
+                _SimulationLocalToWorld, simulationLocalToWorld);
+            simulateProperties.SetMatrix(
+                _SimulationWorldToLocal, simulationWorldToLocal);
+            simulateProperties.SetMatrix(
+                _EmitterToSimulationDirection,
+                emitterToSimulationDirection);
+            simulateProperties.SetMatrix(
+                _SimulationToEmitterDirection,
+                simulationToEmitterDirection);
+            simulateProperties.SetMatrix(
+                _WorldToSimulationDirection,
+                worldToSimulationDirection);
+            simulateProperties.SetMatrix(
+                _SimulationToWorldDirection,
+                simulationToWorldDirection);
             simulateProperties.SetMatrix(_ShapeLocalToWorld, shapeLocalToWorld);
             simulateProperties.SetVector(_EmitterPreviousPositionWS,
                 new Vector4(
@@ -2839,9 +2950,11 @@ namespace GPUParticles
             renderMaterial.SetInt(
                 _UseRotationOverLifetimeIntegralLUT, useRotationIntegralLUT ? 1 : 0);
             Matrix4x4 particleLocalToWorld = ParticleLocalToWorldMatrix();
+            Matrix4x4 simulationLocalToWorld =
+                SimulationLocalToWorldMatrix(particleLocalToWorld);
             renderMaterial.SetMatrix(
                 _EmitterLocalToWorld_Render,
-                particleLocalToWorld);
+                simulationLocalToWorld);
             renderMaterial.SetMatrix(
                 _ParticleScaleWorld,
                 ParticleScaleWorldMatrix(particleLocalToWorld));

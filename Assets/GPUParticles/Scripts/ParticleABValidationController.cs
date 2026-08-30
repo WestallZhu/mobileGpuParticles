@@ -66,7 +66,8 @@ namespace GPUParticles
         PlaybackLifecyclePoint,
         PrewarmPoint,
         FlipRotationPoint,
-        GravitySource2DPoint
+        GravitySource2DPoint,
+        CustomSimulationSpacePoint
     }
 
     [DisallowMultipleComponent]
@@ -177,6 +178,8 @@ namespace GPUParticles
         bool gravityOverrideActive;
         Vector3 savedPhysicsGravity;
         Vector2 savedPhysics2DGravity;
+        GameObject shurikenCustomSpaceObject;
+        GameObject gpuCustomSpaceObject;
         Texture2D profileForceLUT;
         Texture2D profileVelocityLUT;
         Texture2D profileVelocityOrbitalLUT;
@@ -250,6 +253,12 @@ namespace GPUParticles
             new Vector3(6f, 2f, 5f);
         static readonly Vector2 GravitySourcePhysics2D =
             new Vector2(-3f, -4f);
+        static readonly Vector3 CustomSpaceBaseOffset =
+            new Vector3(0.75f, 0.4f, 0.2f);
+        static readonly Vector3 CustomSpaceBaseEuler =
+            new Vector3(18f, -28f, 32f);
+        static readonly Vector3 CustomSpaceBaseScale =
+            new Vector3(1.2f, 0.8f, 1.4f);
         const float RendererClampMinimum = 0.04f;
         const float RendererClampMaximum = 0.12f;
         const float RendererClampTravel = 120f;
@@ -284,6 +293,8 @@ namespace GPUParticles
         };
         Vector3 shurikenBasePositionWS;
         Vector3 gpuBasePositionWS;
+        ObservedRange shurikenCustomWorldXRange;
+        ObservedRange gpuCustomWorldXRange;
         ObservedRange shurikenLifetimeRange;
         ObservedRange gpuLifetimeRange;
         ObservedRange shurikenSpeedRange;
@@ -466,6 +477,7 @@ namespace GPUParticles
             if (profileRotationLUT != null) Destroy(profileRotationLUT);
             if (profileRotationBySpeedLUT != null) Destroy(profileRotationBySpeedLUT);
             RestoreGravityOverride();
+            DestroyCustomSimulationSpaces();
             ReleaseCameraCaptureTarget();
         }
 
@@ -478,6 +490,11 @@ namespace GPUParticles
             {
                 float nextSimulationTime = (playbackFrame + 1f) / fixedFrameRate;
                 MoveValidationEmitters(nextSimulationTime);
+            }
+            if (captureActive && IsCustomSimulationSpaceProfile())
+            {
+                float nextSimulationTime = (playbackFrame + 1f) / fixedFrameRate;
+                MoveValidationCustomSpaces(nextSimulationTime);
             }
 
             if (Input.GetKeyDown(KeyCode.B)) SetDisplayMode(ParticleABDisplayMode.Both);
@@ -567,6 +584,13 @@ namespace GPUParticles
             if (validationProfile == ParticleABValidationProfile.GravitySource2DPoint)
             {
                 ConfigureGravitySource2DProfile();
+                return;
+            }
+
+            if (validationProfile ==
+                ParticleABValidationProfile.CustomSimulationSpacePoint)
+            {
+                ConfigureCustomSimulationSpaceProfile();
                 return;
             }
 
@@ -850,6 +874,7 @@ namespace GPUParticles
             main.gravitySource = ParticleSystemGravitySource.Physics3D;
             main.simulationSpeed = 1f;
             main.simulationSpace = ParticleSystemSimulationSpace.Local;
+            main.customSimulationSpace = null;
 
             var emission = shuriken.emission;
             emission.enabled = true;
@@ -907,6 +932,7 @@ namespace GPUParticles
             gpuParticles.gravitySource = ParticleSystemGravitySource.Physics3D;
             gpuParticles.simulationSpeed = 1f;
             gpuParticles.simulationSpace = SimulationSpace.Local;
+            gpuParticles.customSimulationSpace = null;
             gpuParticles.colorOverLifetimeMode = ParticleSystemGradientMode.Gradient;
             gpuParticles.colorOverLifetimeLUT = GradientLUTBuilder.GetDefaultWhiteLUT();
             gpuParticles.sizeOverLifetimeSeparateAxes = false;
@@ -2780,6 +2806,80 @@ namespace GPUParticles
             gpuParticles.SetEmissionBursts(Array.Empty<ParticleSystem.Burst>());
         }
 
+        void ConfigureCustomSimulationSpaceProfile()
+        {
+            ConfigureEmissionPointBase(4f, true);
+            DestroyCustomSimulationSpaces();
+
+            shuriken.transform.rotation = Quaternion.identity;
+            shuriken.transform.localScale = Vector3.one;
+            gpuParticles.transform.rotation = Quaternion.identity;
+            gpuParticles.transform.localScale = Vector3.one;
+            gpuParticles.transform.position = shurikenBasePositionWS;
+            gpuBasePositionWS = shurikenBasePositionWS;
+
+            shurikenCustomSpaceObject = new GameObject(
+                "Shuriken Custom Simulation Space");
+            gpuCustomSpaceObject = new GameObject(
+                "GPU Custom Simulation Space");
+            MoveValidationCustomSpaces(0f);
+
+            var main = shuriken.main;
+            main.startLifetime = 3.5f;
+            main.startSpeed = 1.5f;
+            main.startSize = 0.5f;
+            main.gravityModifier = 0.12f;
+            main.simulationSpace = ParticleSystemSimulationSpace.Custom;
+            main.customSimulationSpace =
+                shurikenCustomSpaceObject.transform;
+
+            var emission = shuriken.emission;
+            emission.rateOverTime = 18f;
+            emission.rateOverDistance = 0f;
+            emission.SetBursts(Array.Empty<ParticleSystem.Burst>());
+
+            gpuParticles.SetStartLifetimeRange(3.5f, 3.5f);
+            gpuParticles.SetStartSpeedRange(1.5f, 1.5f);
+            gpuParticles.SetStartSizeRange(0.5f, 0.5f);
+            gpuParticles.SetGravityModifierRange(0.12f, 0.12f);
+            gpuParticles.simulationSpace = SimulationSpace.Custom;
+            gpuParticles.customSimulationSpace =
+                gpuCustomSpaceObject.transform;
+            gpuParticles.initialDirectionWS = Vector3.forward;
+            gpuParticles.SetEmissionRateOverTime(emission.rateOverTime);
+            gpuParticles.SetEmissionRateOverDistance(emission.rateOverDistance);
+            gpuParticles.SetEmissionBursts(Array.Empty<ParticleSystem.Burst>());
+        }
+
+        void DestroyCustomSimulationSpaces()
+        {
+            if (shurikenCustomSpaceObject != null)
+            {
+                if (Application.isPlaying)
+                {
+                    Destroy(shurikenCustomSpaceObject);
+                }
+                else
+                {
+                    DestroyImmediate(shurikenCustomSpaceObject);
+                }
+                shurikenCustomSpaceObject = null;
+            }
+
+            if (gpuCustomSpaceObject != null)
+            {
+                if (Application.isPlaying)
+                {
+                    Destroy(gpuCustomSpaceObject);
+                }
+                else
+                {
+                    DestroyImmediate(gpuCustomSpaceObject);
+                }
+                gpuCustomSpaceObject = null;
+            }
+        }
+
         void ApplyGravitySourceOverride()
         {
             if (!gravityOverrideActive)
@@ -3085,6 +3185,7 @@ namespace GPUParticles
             main.simulationSpeed = 1f;
             main.useUnscaledTime = false;
             main.simulationSpace = ParticleSystemSimulationSpace.Local;
+            main.customSimulationSpace = null;
             main.scalingMode = ParticleSystemScalingMode.Hierarchy;
             main.emitterVelocityMode =
                 ParticleSystemEmitterVelocityMode.Transform;
@@ -3143,6 +3244,7 @@ namespace GPUParticles
             gpuParticles.simulationSpeed = 1f;
             gpuParticles.useUnscaledTime = false;
             gpuParticles.simulationSpace = SimulationSpace.Local;
+            gpuParticles.customSimulationSpace = null;
             gpuParticles.scalingMode = ParticleSystemScalingMode.Hierarchy;
             gpuParticles.scalingSource = shuriken.transform;
             gpuParticles.colorOverLifetimeMode = ParticleSystemGradientMode.Gradient;
@@ -3194,6 +3296,7 @@ namespace GPUParticles
                 ? UnscaledTimeScale
                 : 1f;
             MoveValidationEmitters(0f);
+            MoveValidationCustomSpaces(0f);
 
             if (shuriken != null)
             {
@@ -3286,6 +3389,53 @@ namespace GPUParticles
             }
         }
 
+        void MoveValidationCustomSpaces(float elapsed)
+        {
+            if (!IsCustomSimulationSpaceProfile()) return;
+            if (shurikenCustomSpaceObject == null ||
+                gpuCustomSpaceObject == null)
+            {
+                return;
+            }
+
+            elapsed = Mathf.Max(0f, elapsed);
+            float phase = elapsed * 1.35f;
+            Vector3 animatedOffset = CustomSpaceBaseOffset + new Vector3(
+                Mathf.Sin(phase) * 1.4f,
+                Mathf.Cos(phase * 0.8f) * 0.65f,
+                Mathf.Sin(phase * 0.55f) * 0.35f);
+            Quaternion animatedRotation = Quaternion.Euler(
+                CustomSpaceBaseEuler + new Vector3(
+                    Mathf.Sin(phase * 0.7f) * 18f,
+                    elapsed * 42f,
+                    Mathf.Cos(phase) * 24f));
+            Vector3 animatedScale = CustomSpaceBaseScale + new Vector3(
+                Mathf.Sin(phase * 0.9f) * 0.18f,
+                Mathf.Cos(phase * 1.1f) * 0.12f,
+                Mathf.Sin(phase * 0.6f) * 0.2f);
+
+            ApplyCustomSpaceTransform(
+                shurikenCustomSpaceObject.transform,
+                shurikenBasePositionWS + animatedOffset,
+                animatedRotation,
+                animatedScale);
+            ApplyCustomSpaceTransform(
+                gpuCustomSpaceObject.transform,
+                gpuBasePositionWS + animatedOffset,
+                animatedRotation,
+                animatedScale);
+        }
+
+        static void ApplyCustomSpaceTransform(
+            Transform target,
+            Vector3 position,
+            Quaternion rotation,
+            Vector3 scale)
+        {
+            target.SetPositionAndRotation(position, rotation);
+            target.localScale = scale;
+        }
+
         bool UsesMovingEmitterProfile()
         {
             return validationProfile ==
@@ -3297,6 +3447,12 @@ namespace GPUParticles
                    validationProfile ==
                        ParticleABValidationProfile.LifetimeByEmitterSpeedPoint ||
                    IsRendererScreenSizeClampProfile();
+        }
+
+        bool IsCustomSimulationSpaceProfile()
+        {
+            return validationProfile ==
+                ParticleABValidationProfile.CustomSimulationSpacePoint;
         }
 
         bool IsInheritVelocityProfile()
@@ -3978,8 +4134,21 @@ namespace GPUParticles
                 for (int i = 0; i < shurikenCount; i++)
                 {
                     ParticleSystem.Particle particle = shurikenParticles[i];
+                    Vector3 shurikenPosition = particle.position;
                     Vector3 shurikenVelocity = particle.totalVelocity;
-                    shurikenPositionSum += particle.position;
+                    if (IsCustomSimulationSpaceProfile() &&
+                        shuriken.main.customSimulationSpace != null)
+                    {
+                        Transform customSpace =
+                            shuriken.main.customSimulationSpace;
+                        shurikenPosition = customSpace.TransformPoint(
+                            shurikenPosition);
+                        shurikenVelocity = customSpace.TransformVector(
+                            shurikenVelocity);
+                        shurikenCustomWorldXRange.Observe(
+                            shurikenPosition.x - shurikenBasePositionWS.x);
+                    }
+                    shurikenPositionSum += shurikenPosition;
                     shurikenVelocitySum += shurikenVelocity;
                     shurikenSpeedSum += shurikenVelocity.magnitude;
                     Vector3 shurikenSize = particle.GetCurrentSize3D(shuriken);
@@ -4266,8 +4435,22 @@ namespace GPUParticles
 
                 Color velocitySize = gpuVelSize[i];
                 gpuCount++;
-                gpuPositionSum += new Vector3(positionLife.r, positionLife.g, positionLife.b);
+                Vector3 gpuPosition = new Vector3(
+                    positionLife.r,
+                    positionLife.g,
+                    positionLife.b);
                 Vector3 gpuVelocity = new Vector3(velocitySize.r, velocitySize.g, velocitySize.b);
+                if (IsCustomSimulationSpaceProfile() &&
+                    gpuParticles.customSimulationSpace != null)
+                {
+                    Transform customSpace =
+                        gpuParticles.customSimulationSpace;
+                    gpuPosition = customSpace.TransformPoint(gpuPosition);
+                    gpuVelocity = customSpace.TransformVector(gpuVelocity);
+                    gpuCustomWorldXRange.Observe(
+                        gpuPosition.x - gpuBasePositionWS.x);
+                }
+                gpuPositionSum += gpuPosition;
                 gpuVelocitySum += gpuVelocity;
                 gpuSpeedSum += gpuVelocity.magnitude;
                 gpuSizeSum += velocitySize.a;
@@ -4671,10 +4854,12 @@ namespace GPUParticles
                      ParticleABValidationProfile.LimitVelocityOverLifetimeAxesPoint ||
                  validationProfile ==
                      ParticleABValidationProfile.InheritVelocityInitialPoint ||
-                  validationProfile ==
-                      ParticleABValidationProfile.InheritVelocityCurrentPoint ||
-                  validationProfile ==
-                      ParticleABValidationProfile.UnscaledTimePoint) &&
+                   validationProfile ==
+                       ParticleABValidationProfile.InheritVelocityCurrentPoint ||
+                   validationProfile ==
+                       ParticleABValidationProfile.UnscaledTimePoint ||
+                   validationProfile ==
+                       ParticleABValidationProfile.CustomSimulationSpacePoint) &&
                 shurikenCount > 0 && gpuCount > 0)
             {
                 Vector3 shurikenMeanDisplacement =
@@ -5920,6 +6105,19 @@ namespace GPUParticles
                         maximumGPUParticleCount > 0;
                     break;
 
+                case ParticleABValidationProfile.CustomSimulationSpacePoint:
+                    profileSpecificPassed =
+                        maximumCountDelta == 0 &&
+                        maximumMeanAgeError <= 0.002f &&
+                        maximumMeanSpeedError <= 0.001f &&
+                        maximumMeanVelocityError <= 0.001f &&
+                        maximumMeanPositionError <= 0.04f &&
+                        maximumShurikenParticleCount > 0 &&
+                        maximumGPUParticleCount > 0 &&
+                        ObservedSpread(shurikenCustomWorldXRange) >= 1f &&
+                        ObservedSpread(gpuCustomWorldXRange) >= 1f;
+                    break;
+
                 case ParticleABValidationProfile.UnscaledTimePoint:
                     profileSpecificPassed = maximumMeanSpeedError <= 0.001f &&
                                             maximumMeanAgeError <= 0.001f &&
@@ -6324,7 +6522,11 @@ namespace GPUParticles
                 $"shurikenStartRotationBlendRange=" +
                 $"{FormatRange(shurikenStartRotationBlendRange)}; " +
                 $"gpuStartRotationBlendRange=" +
-                $"{FormatRange(gpuStartRotationBlendRange)}", this);
+                $"{FormatRange(gpuStartRotationBlendRange)}; " +
+                $"shurikenCustomWorldXRange=" +
+                $"{FormatRange(shurikenCustomWorldXRange)}; " +
+                $"gpuCustomWorldXRange=" +
+                $"{FormatRange(gpuCustomWorldXRange)}", this);
             Debug.Log($"PARTICLE_AB_CAPTURE_COMPLETE:{sessionFolder}", this);
             RestoreGravityOverride();
 

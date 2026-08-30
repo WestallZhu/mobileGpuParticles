@@ -281,6 +281,13 @@ namespace GPUParticles.Editor
                 ParticleABValidationProfile.GravitySource2DPoint);
         }
 
+        [MenuItem("Tools/GPU Particles/Run Custom Simulation Space A-B RT Capture")]
+        public static void RunCustomSimulationSpaceCaptureMenu()
+        {
+            StartStartSizeCapture(
+                ParticleABValidationProfile.CustomSimulationSpacePoint);
+        }
+
         static void StartStartSizeCapture(
             ParticleABValidationProfile profile)
         {
@@ -833,6 +840,14 @@ namespace GPUParticles.Editor
             StartCapture(true, ParticleABValidationProfile.GravitySource2DPoint);
         }
 
+        public static void RunBatchCustomSimulationSpaceCapture()
+        {
+            ValidateCommonFeatureMapping();
+            StartCapture(
+                true,
+                ParticleABValidationProfile.CustomSimulationSpacePoint);
+        }
+
         public static void RunBatchGravityModifierCurveCapture()
         {
             ValidateCommonFeatureMapping();
@@ -1162,6 +1177,8 @@ namespace GPUParticles.Editor
                     return 1.5f;
                 case ParticleABValidationProfile.GravitySource2DPoint:
                     return 2.2f;
+                case ParticleABValidationProfile.CustomSimulationSpacePoint:
+                    return 3.4f;
                 case ParticleABValidationProfile.StartLifetimeCurvePoint:
                 case ParticleABValidationProfile.StartLifetimeTwoCurvesPoint:
                     return 4.5f;
@@ -1211,6 +1228,11 @@ namespace GPUParticles.Editor
                 return 10f;
             }
             if (profile == ParticleABValidationProfile.GravitySource2DPoint)
+            {
+                return 10f;
+            }
+            if (profile ==
+                ParticleABValidationProfile.CustomSimulationSpacePoint)
             {
                 return 10f;
             }
@@ -1302,6 +1324,8 @@ namespace GPUParticles.Editor
                     return "TestResults/ParticleFlipRotation";
                 case ParticleABValidationProfile.GravitySource2DPoint:
                     return "TestResults/ParticleGravitySource2D";
+                case ParticleABValidationProfile.CustomSimulationSpacePoint:
+                    return "TestResults/ParticleCustomSimulationSpace";
                 case ParticleABValidationProfile.GravityModifierCurvePoint:
                     return "TestResults/ParticleGravityModifierCurve";
                 case ParticleABValidationProfile.GravityModifierTwoCurvesPoint:
@@ -1365,6 +1389,13 @@ namespace GPUParticles.Editor
         {
             var owner = new GameObject("ParticleCommonFeatureMappingValidation");
             owner.SetActive(false);
+            var customSpaceObject = new GameObject(
+                "ParticleCommonFeatureCustomSimulationSpace");
+            customSpaceObject.transform.SetParent(owner.transform, false);
+            customSpaceObject.transform.localPosition =
+                new Vector3(1f, 2f, 3f);
+            customSpaceObject.transform.localRotation =
+                Quaternion.Euler(10f, 20f, 30f);
             Texture2D firstForceLUT = null;
             Texture2D firstVelocityLUT = null;
             Texture2D firstVelocityOrbitalLUT = null;
@@ -1490,7 +1521,8 @@ namespace GPUParticles.Editor
                 main.duration = 2f;
                 main.loop = true;
                 main.startDelay = new ParticleSystem.MinMaxCurve(0.1f, 0.2f);
-                main.simulationSpace = ParticleSystemSimulationSpace.World;
+                main.simulationSpace = ParticleSystemSimulationSpace.Custom;
+                main.customSimulationSpace = customSpaceObject.transform;
                 main.emitterVelocityMode =
                     ParticleSystemEmitterVelocityMode.Transform;
 
@@ -1676,6 +1708,12 @@ namespace GPUParticles.Editor
                 Require(
                     gpu.gravitySource == ParticleSystemGravitySource.Physics2D,
                     "Main Gravity Source was not mapped.");
+                Require(
+                    gpu.simulationSpace == SimulationSpace.Custom,
+                    "Main Custom Simulation Space mode was not mapped.");
+                Require(
+                    gpu.customSimulationSpace == customSpaceObject.transform,
+                    "Main Custom Simulation Space Transform was not mapped.");
                 Require(
                     gpu.scalingMode == ParticleSystemScalingMode.Local,
                     "Main Scaling Mode Local was not mapped.");
