@@ -78,6 +78,7 @@ namespace GPUParticles
         [Min(0.0f)] public float simulationSpeed = 1.0f;
         public bool useUnscaledTime;
         public bool playOnAwake = true;
+        public bool prewarm;
         public ParticleSystemScalingMode scalingMode =
             ParticleSystemScalingMode.Hierarchy;
         [Tooltip("Optional source Transform used for Shuriken Local scaling when the GPU system is created as a child.")]
@@ -252,6 +253,7 @@ namespace GPUParticles
 
         Material simulateMaterial;
         Material renderMaterial;
+        MaterialPropertyBlock simulateProperties;
 
         RenderTexture[] posLife = new RenderTexture[2];
         RenderTexture[] velSize = new RenderTexture[2];
@@ -277,6 +279,8 @@ namespace GPUParticles
         PlaybackState resumeState = PlaybackState.Playing;
         float stoppingElapsed;
         float stoppingDuration;
+        bool prewarmPending;
+        const float PrewarmStep = 1f / 60f;
 
         enum PlaybackState
         {
@@ -629,6 +633,11 @@ namespace GPUParticles
 
         void EnsureMaterials()
         {
+            if (simulateProperties == null)
+            {
+                simulateProperties = new MaterialPropertyBlock();
+            }
+
             if (simulateMaterial == null)
             {
                 var sim = Shader.Find("Hidden/GPUParticles/SimulateMRT");
@@ -739,6 +748,7 @@ namespace GPUParticles
             resumeState = PlaybackState.Playing;
             stoppingElapsed = 0f;
             stoppingDuration = 0f;
+            prewarmPending = ShouldPrewarm();
             lastSimulatedFrame = -1;
         }
 
@@ -795,6 +805,7 @@ namespace GPUParticles
             resumeState = PlaybackState.Playing;
             stoppingElapsed = 0f;
             stoppingDuration = 0f;
+            prewarmPending = !resumeFromPause && ShouldPrewarm();
             lastSimulatedFrame = -1;
         }
 
@@ -818,6 +829,7 @@ namespace GPUParticles
             stoppingDuration = playbackState == PlaybackState.Stopping
                 ? MaximumParticleLifetime()
                 : 0f;
+            prewarmPending = false;
             lastSimulatedFrame = -1;
 
             if (stopBehavior ==
@@ -833,6 +845,7 @@ namespace GPUParticles
             PlaybackState savedResumeState = resumeState;
             float savedStoppingElapsed = stoppingElapsed;
             float savedStoppingDuration = stoppingDuration;
+            bool savedPrewarmPending = prewarmPending;
             float savedEmissionTime = emissionTime;
             float savedEmitCarry = emitCarry;
             float savedDistanceEmitCarry = distanceEmitCarry;
@@ -848,6 +861,7 @@ namespace GPUParticles
             resumeState = savedResumeState;
             stoppingElapsed = savedStoppingElapsed;
             stoppingDuration = savedStoppingDuration;
+            prewarmPending = savedPrewarmPending;
             emissionTime = savedEmissionTime;
             emitCarry = savedEmitCarry;
             distanceEmitCarry = savedDistanceEmitCarry;
@@ -884,6 +898,31 @@ namespace GPUParticles
             if (emissionTime < startDelay) return false;
             return emissionLooping ||
                    emissionTime < startDelay + Mathf.Max(0.05f, emissionDuration);
+        }
+
+        bool ShouldPrewarm()
+        {
+            return prewarm &&
+                   emissionLooping &&
+                   ResolveEmissionStartDelay() <= 1e-6f;
+        }
+
+        void ApplyPendingPrewarm(CommandBuffer cmd)
+        {
+            if (!prewarmPending) return;
+
+            prewarmPending = false;
+            float remaining = Mathf.Max(0.05f, emissionDuration);
+            while (remaining > PrewarmStep + 1e-6f)
+            {
+                SimulateStep(cmd, PrewarmStep, true);
+                remaining -= PrewarmStep;
+            }
+
+            if (remaining > 1e-6f)
+            {
+                SimulateStep(cmd, remaining, true);
+            }
         }
 
         float MaximumParticleLifetime()
@@ -1954,6 +1993,8 @@ namespace GPUParticles
                 lastSimulatedFrame = frame;
             }
 
+            ApplyPendingPrewarm(cmd);
+
             float dt = FrameDeltaTime();
             dt *= simulationSpeed;
             SimulateStep(
@@ -2123,10 +2164,11 @@ namespace GPUParticles
 
             int src = ping, dst = 1 - ping;
 
-            simulateMaterial.SetTexture(_CurPosLife, posLife[src]);
-            simulateMaterial.SetTexture(_CurVelSize, velSize[src]);
-            simulateMaterial.SetTexture(_CurColor,   colorRT[src]);
-            simulateMaterial.SetTexture(_CurRotationPhase, rotationPhaseRT[src]);
+            simulateProperties.Clear();
+            simulateProperties.SetTexture(_CurPosLife, posLife[src]);
+            simulateProperties.SetTexture(_CurVelSize, velSize[src]);
+            simulateProperties.SetTexture(_CurColor,   colorRT[src]);
+            simulateProperties.SetTexture(_CurRotationPhase, rotationPhaseRT[src]);
             Texture2D selectedStartLifetimeLUT = startLifetimeLUT != null
                 ? startLifetimeLUT
                 : CurveLUTBuilder.GetDefaultUnitLUT();
@@ -2182,122 +2224,122 @@ namespace GPUParticles
                     ? lifetimeByEmitterSpeedLUT
                     : CurveLUTBuilder.GetDefaultUnitLUT();
 
-            simulateMaterial.SetTexture("_GradLUT", selectedColorOverLifetimeLUT);
-            simulateMaterial.SetTexture(
+            simulateProperties.SetTexture("_GradLUT", selectedColorOverLifetimeLUT);
+            simulateProperties.SetTexture(
                 _StartLifetimeLUT, selectedStartLifetimeLUT);
-            simulateMaterial.SetTexture(_StartSpeedLUT, selectedStartSpeedLUT);
-            simulateMaterial.SetTexture(_StartSizeLUT, selectedStartSizeLUT);
-            simulateMaterial.SetTexture(_StartColorLUT, selectedStartColorLUT);
-            simulateMaterial.SetTexture(
+            simulateProperties.SetTexture(_StartSpeedLUT, selectedStartSpeedLUT);
+            simulateProperties.SetTexture(_StartSizeLUT, selectedStartSizeLUT);
+            simulateProperties.SetTexture(_StartColorLUT, selectedStartColorLUT);
+            simulateProperties.SetTexture(
                 _GravityModifierLUT, selectedGravityModifierLUT);
-            simulateMaterial.SetTexture("_SizeLUT", selectedSizeOverLifetimeLUT);
-            simulateMaterial.SetTexture(_ColorBySpeedLUT, selectedColorBySpeedLUT);
-            simulateMaterial.SetTexture(_SizeBySpeedLUT, selectedSizeBySpeedLUT);
-            simulateMaterial.SetTexture(
+            simulateProperties.SetTexture("_SizeLUT", selectedSizeOverLifetimeLUT);
+            simulateProperties.SetTexture(_ColorBySpeedLUT, selectedColorBySpeedLUT);
+            simulateProperties.SetTexture(_SizeBySpeedLUT, selectedSizeBySpeedLUT);
+            simulateProperties.SetTexture(
                 _RotationBySpeedLUT, selectedRotationBySpeedLUT);
-            simulateMaterial.SetTexture(
+            simulateProperties.SetTexture(
                 _ForceOverLifetimeLUT, selectedForceOverLifetimeLUT);
-            simulateMaterial.SetTexture(
+            simulateProperties.SetTexture(
                 _VelocityOverLifetimeLUT, selectedVelocityOverLifetimeLUT);
-            simulateMaterial.SetTexture(
+            simulateProperties.SetTexture(
                 _VelocityOverLifetimeOrbitalLUT,
                 selectedVelocityOverLifetimeOrbitalLUT);
-            simulateMaterial.SetTexture(
+            simulateProperties.SetTexture(
                 _VelocityOverLifetimeOrbitalOffsetLUT,
                 selectedVelocityOverLifetimeOrbitalOffsetLUT);
-            simulateMaterial.SetTexture(
+            simulateProperties.SetTexture(
                 _LimitVelocityLUT, selectedLimitVelocityLUT);
-            simulateMaterial.SetTexture(
+            simulateProperties.SetTexture(
                 _InheritVelocityLUT, selectedInheritVelocityLUT);
-            simulateMaterial.SetTexture(
+            simulateProperties.SetTexture(
                 _LifetimeByEmitterSpeedLUT,
                 selectedLifetimeByEmitterSpeedLUT);
-            simulateMaterial.SetFloat(
+            simulateProperties.SetFloat(
                 _GradLUTInvWidth, InverseTextureWidth(selectedColorOverLifetimeLUT));
-            simulateMaterial.SetFloat(
+            simulateProperties.SetFloat(
                 _StartLifetimeLUTInvWidth,
                 InverseTextureWidth(selectedStartLifetimeLUT));
-            simulateMaterial.SetFloat(
+            simulateProperties.SetFloat(
                 _StartSpeedLUTInvWidth,
                 InverseTextureWidth(selectedStartSpeedLUT));
-            simulateMaterial.SetFloat(
+            simulateProperties.SetFloat(
                 _StartSizeLUTInvWidth,
                 InverseTextureWidth(selectedStartSizeLUT));
-            simulateMaterial.SetFloat(
+            simulateProperties.SetFloat(
                 _StartColorLUTInvWidth,
                 InverseTextureWidth(selectedStartColorLUT));
-            simulateMaterial.SetFloat(
+            simulateProperties.SetFloat(
                 _GravityModifierLUTInvWidth,
                 InverseTextureWidth(selectedGravityModifierLUT));
-            simulateMaterial.SetFloat(
+            simulateProperties.SetFloat(
                 _SizeLUTInvWidth, InverseTextureWidth(selectedSizeOverLifetimeLUT));
-            simulateMaterial.SetFloat(
+            simulateProperties.SetFloat(
                 _ColorBySpeedLUTInvWidth, InverseTextureWidth(selectedColorBySpeedLUT));
-            simulateMaterial.SetFloat(
+            simulateProperties.SetFloat(
                 _SizeBySpeedLUTInvWidth, InverseTextureWidth(selectedSizeBySpeedLUT));
-            simulateMaterial.SetFloat(
+            simulateProperties.SetFloat(
                 _RotationBySpeedLUTInvWidth,
                 InverseTextureWidth(selectedRotationBySpeedLUT));
-            simulateMaterial.SetFloat(
+            simulateProperties.SetFloat(
                 _ForceOverLifetimeLUTInvWidth,
                 InverseTextureWidth(selectedForceOverLifetimeLUT));
-            simulateMaterial.SetFloat(
+            simulateProperties.SetFloat(
                 _VelocityOverLifetimeLUTInvWidth,
                 InverseTextureWidth(selectedVelocityOverLifetimeLUT));
-            simulateMaterial.SetFloat(
+            simulateProperties.SetFloat(
                 _VelocityOverLifetimeOrbitalLUTInvWidth,
                 InverseTextureWidth(selectedVelocityOverLifetimeOrbitalLUT));
-            simulateMaterial.SetFloat(
+            simulateProperties.SetFloat(
                 _VelocityOverLifetimeOrbitalOffsetLUTInvWidth,
                 InverseTextureWidth(selectedVelocityOverLifetimeOrbitalOffsetLUT));
-            simulateMaterial.SetFloat(
+            simulateProperties.SetFloat(
                 _LimitVelocityLUTInvWidth,
                 InverseTextureWidth(selectedLimitVelocityLUT));
-            simulateMaterial.SetFloat(
+            simulateProperties.SetFloat(
                 _InheritVelocityLUTInvWidth,
                 InverseTextureWidth(selectedInheritVelocityLUT));
-            simulateMaterial.SetFloat(
+            simulateProperties.SetFloat(
                 _LifetimeByEmitterSpeedLUTInvWidth,
                 InverseTextureWidth(selectedLifetimeByEmitterSpeedLUT));
 
-            simulateMaterial.SetInt(_GridSize, gridSize);
-            simulateMaterial.SetInt(_MaxParticles, maxParticles);
-            simulateMaterial.SetFloat(_DeltaTime, dt);
-            simulateMaterial.SetFloat(_StartLifetime, startLifetime);
-            simulateMaterial.SetFloat(_StartLifetimeMin, startLifetimeMin);
-            simulateMaterial.SetInt(_RandomizeStartLifetime, randomizeStartLifetime ? 1 : 0);
-            simulateMaterial.SetInt(
+            simulateProperties.SetInt(_GridSize, gridSize);
+            simulateProperties.SetInt(_MaxParticles, maxParticles);
+            simulateProperties.SetFloat(_DeltaTime, dt);
+            simulateProperties.SetFloat(_StartLifetime, startLifetime);
+            simulateProperties.SetFloat(_StartLifetimeMin, startLifetimeMin);
+            simulateProperties.SetInt(_RandomizeStartLifetime, randomizeStartLifetime ? 1 : 0);
+            simulateProperties.SetInt(
                 _StartLifetimeMode,
                 (int)EffectiveStartLifetimeMode());
-            simulateMaterial.SetFloat(_StartSpeed, startSpeed);
-            simulateMaterial.SetFloat(_StartSpeedMin, startSpeedMin);
-            simulateMaterial.SetInt(_RandomizeStartSpeed, randomizeStartSpeed ? 1 : 0);
+            simulateProperties.SetFloat(_StartSpeed, startSpeed);
+            simulateProperties.SetFloat(_StartSpeedMin, startSpeedMin);
+            simulateProperties.SetInt(_RandomizeStartSpeed, randomizeStartSpeed ? 1 : 0);
             ParticleSystemCurveMode selectedStartSpeedMode =
                 startSpeedMode == ParticleSystemCurveMode.Constant &&
                 randomizeStartSpeed
                     ? ParticleSystemCurveMode.TwoConstants
                     : startSpeedMode;
-            simulateMaterial.SetInt(
+            simulateProperties.SetInt(
                 _StartSpeedMode, (int)selectedStartSpeedMode);
-            simulateMaterial.SetFloat(_StartSize, startSize);
-            simulateMaterial.SetFloat(_StartSizeMin, startSizeMin);
-            simulateMaterial.SetInt(_RandomizeStartSize, randomizeStartSize ? 1 : 0);
+            simulateProperties.SetFloat(_StartSize, startSize);
+            simulateProperties.SetFloat(_StartSizeMin, startSizeMin);
+            simulateProperties.SetInt(_RandomizeStartSize, randomizeStartSize ? 1 : 0);
             ParticleSystemCurveMode selectedStartSizeMode =
                 startSizeMode == ParticleSystemCurveMode.Constant &&
                 randomizeStartSize
                     ? ParticleSystemCurveMode.TwoConstants
                     : startSizeMode;
-            simulateMaterial.SetInt(
+            simulateProperties.SetInt(
                 _StartSizeMode, (int)selectedStartSizeMode);
-            simulateMaterial.SetColor(_StartColor, startColor);
-            simulateMaterial.SetColor(_StartColorMin, startColorMin);
-            simulateMaterial.SetInt(_RandomizeStartColor, randomizeStartColor ? 1 : 0);
+            simulateProperties.SetColor(_StartColor, startColor);
+            simulateProperties.SetColor(_StartColorMin, startColorMin);
+            simulateProperties.SetInt(_RandomizeStartColor, randomizeStartColor ? 1 : 0);
             ParticleSystemGradientMode selectedStartColorMode =
                 startColorMode == ParticleSystemGradientMode.Color &&
                 randomizeStartColor
                     ? ParticleSystemGradientMode.TwoColors
                     : startColorMode;
-            simulateMaterial.SetInt(
+            simulateProperties.SetInt(
                 _StartColorMode, (int)selectedStartColorMode);
 
             Vector3 gWorld = Physics.gravity * gravityModifier;
@@ -2311,11 +2353,11 @@ namespace GPUParticles
             Vector3 gSimMin = simulationSpace == SimulationSpace.World
                 ? gWorldMin
                 : transform.InverseTransformDirection(gWorldMin);
-            simulateMaterial.SetVector(_GravityWS, new Vector4(gSim.x, gSim.y, gSim.z, 0));
-            simulateMaterial.SetVector(_GravityWSMin,
+            simulateProperties.SetVector(_GravityWS, new Vector4(gSim.x, gSim.y, gSim.z, 0));
+            simulateProperties.SetVector(_GravityWSMin,
                 new Vector4(gSimMin.x, gSimMin.y, gSimMin.z, 0));
-            simulateMaterial.SetInt(_RandomizeGravityModifier, randomizeGravityModifier ? 1 : 0);
-            simulateMaterial.SetVector(
+            simulateProperties.SetInt(_RandomizeGravityModifier, randomizeGravityModifier ? 1 : 0);
+            simulateProperties.SetVector(
                 _GravityBase,
                 new Vector4(gravityBase.x, gravityBase.y, gravityBase.z, 0f));
             ParticleSystemCurveMode selectedGravityModifierMode =
@@ -2323,92 +2365,92 @@ namespace GPUParticles
                 randomizeGravityModifier
                     ? ParticleSystemCurveMode.TwoConstants
                     : gravityModifierMode;
-            simulateMaterial.SetInt(
+            simulateProperties.SetInt(
                 _GravityModifierMode,
                 (int)selectedGravityModifierMode);
 
-            simulateMaterial.SetInt(_SimulationSpace, (int)simulationSpace);
-            simulateMaterial.SetInt(_EmitStart, emitStart);
-            simulateMaterial.SetInt(_EmitCount, emitCount);
-            simulateMaterial.SetFloat(_EmitCarryPrev, emitCarryPrev);
-            simulateMaterial.SetFloat(_EmissionRate, emissionRate);
-            simulateMaterial.SetInt(_ContinuousEmitCount, continuousEmitCount);
-            simulateMaterial.SetFloat(_ContinuousEmissionWindowStart, emissionWindowStart);
-            simulateMaterial.SetInt(_DistanceEmitCount, distanceEmitCount);
-            simulateMaterial.SetFloat(_EmissionTimeAfterStep, stepEnd);
-            simulateMaterial.SetFloat(_EmissionStartDelay, startDelay);
-            simulateMaterial.SetFloat(
+            simulateProperties.SetInt(_SimulationSpace, (int)simulationSpace);
+            simulateProperties.SetInt(_EmitStart, emitStart);
+            simulateProperties.SetInt(_EmitCount, emitCount);
+            simulateProperties.SetFloat(_EmitCarryPrev, emitCarryPrev);
+            simulateProperties.SetFloat(_EmissionRate, emissionRate);
+            simulateProperties.SetInt(_ContinuousEmitCount, continuousEmitCount);
+            simulateProperties.SetFloat(_ContinuousEmissionWindowStart, emissionWindowStart);
+            simulateProperties.SetInt(_DistanceEmitCount, distanceEmitCount);
+            simulateProperties.SetFloat(_EmissionTimeAfterStep, stepEnd);
+            simulateProperties.SetFloat(_EmissionStartDelay, startDelay);
+            simulateProperties.SetFloat(
                 _EmissionDuration, Mathf.Max(0.05f, emissionDuration));
-            simulateMaterial.SetInt(_EmissionLooping, emissionLooping ? 1 : 0);
-            simulateMaterial.SetVector(_BurstCounts0, new Vector4(
+            simulateProperties.SetInt(_EmissionLooping, emissionLooping ? 1 : 0);
+            simulateProperties.SetVector(_BurstCounts0, new Vector4(
                 stepBurstCounts[0], stepBurstCounts[1], stepBurstCounts[2], stepBurstCounts[3]));
-            simulateMaterial.SetVector(_BurstCounts1, new Vector4(
+            simulateProperties.SetVector(_BurstCounts1, new Vector4(
                 stepBurstCounts[4], stepBurstCounts[5], stepBurstCounts[6], stepBurstCounts[7]));
-            simulateMaterial.SetVector(_BurstAges0, new Vector4(
+            simulateProperties.SetVector(_BurstAges0, new Vector4(
                 stepBurstAges[0], stepBurstAges[1], stepBurstAges[2], stepBurstAges[3]));
-            simulateMaterial.SetVector(_BurstAges1, new Vector4(
+            simulateProperties.SetVector(_BurstAges1, new Vector4(
                 stepBurstAges[4], stepBurstAges[5], stepBurstAges[6], stepBurstAges[7]));
-            simulateMaterial.SetInt(_SimulationTick, unchecked((int)simulationTick));
-            simulateMaterial.SetInt(_ForceOverLifetimeEnabled, forceOverLifetimeEnabled ? 1 : 0);
-            simulateMaterial.SetInt(_ForceOverLifetimeSpace, (int)forceOverLifetimeSpace);
-            simulateMaterial.SetInt(_ForceOverLifetimeRandomized, forceOverLifetimeRandomized ? 1 : 0);
-            simulateMaterial.SetInt(
+            simulateProperties.SetInt(_SimulationTick, unchecked((int)simulationTick));
+            simulateProperties.SetInt(_ForceOverLifetimeEnabled, forceOverLifetimeEnabled ? 1 : 0);
+            simulateProperties.SetInt(_ForceOverLifetimeSpace, (int)forceOverLifetimeSpace);
+            simulateProperties.SetInt(_ForceOverLifetimeRandomized, forceOverLifetimeRandomized ? 1 : 0);
+            simulateProperties.SetInt(
                 _VelocityOverLifetimeEnabled, velocityOverLifetimeEnabled ? 1 : 0);
-            simulateMaterial.SetInt(
+            simulateProperties.SetInt(
                 _VelocityOverLifetimeSpace, (int)velocityOverLifetimeSpace);
-            simulateMaterial.SetInt(
+            simulateProperties.SetInt(
                 _VelocityOverLifetimeSpeedModifierEnabled,
                 velocityOverLifetimeSpeedModifierEnabled ? 1 : 0);
-            simulateMaterial.SetInt(
+            simulateProperties.SetInt(
                 _VelocityOverLifetimeOrbitalEnabled,
                 velocityOverLifetimeOrbitalEnabled ? 1 : 0);
-            simulateMaterial.SetInt(
+            simulateProperties.SetInt(
                 _LimitVelocityEnabled,
                 limitVelocityOverLifetimeEnabled ? 1 : 0);
-            simulateMaterial.SetInt(
+            simulateProperties.SetInt(
                 _LimitVelocitySeparateAxes,
                 limitVelocityOverLifetimeSeparateAxes ? 1 : 0);
-            simulateMaterial.SetInt(
+            simulateProperties.SetInt(
                 _LimitVelocitySpace,
                 (int)limitVelocityOverLifetimeSpace);
-            simulateMaterial.SetFloat(
+            simulateProperties.SetFloat(
                 _LimitVelocityDampen,
                 Mathf.Clamp01(limitVelocityOverLifetimeDampen));
-            simulateMaterial.SetInt(
+            simulateProperties.SetInt(
                 _LimitVelocityMultiplyDragBySize,
                 limitVelocityMultiplyDragBySize ? 1 : 0);
-            simulateMaterial.SetInt(
+            simulateProperties.SetInt(
                 _LimitVelocityMultiplyDragByVelocity,
                 limitVelocityMultiplyDragByVelocity ? 1 : 0);
-            simulateMaterial.SetInt(
+            simulateProperties.SetInt(
                 _InheritVelocityEnabled,
                 inheritVelocityEnabled ? 1 : 0);
-            simulateMaterial.SetInt(
+            simulateProperties.SetInt(
                 _InheritVelocityMode,
                 (int)inheritVelocityMode);
-            simulateMaterial.SetInt(
+            simulateProperties.SetInt(
                 _LifetimeByEmitterSpeedEnabled,
                 lifetimeByEmitterSpeedEnabled ? 1 : 0);
-            simulateMaterial.SetVector(
+            simulateProperties.SetVector(
                 _LifetimeByEmitterSpeedRange,
                 new Vector4(
                     lifetimeByEmitterSpeedRange.x,
                     lifetimeByEmitterSpeedRange.y,
                     0f,
                     0f));
-            simulateMaterial.SetInt(_ColorOverLifetimeMode, (int)colorOverLifetimeMode);
-            simulateMaterial.SetInt(_ColorBySpeedEnabled, colorBySpeedEnabled ? 1 : 0);
-            simulateMaterial.SetInt(_ColorBySpeedMode, (int)colorBySpeedMode);
-            simulateMaterial.SetVector(
+            simulateProperties.SetInt(_ColorOverLifetimeMode, (int)colorOverLifetimeMode);
+            simulateProperties.SetInt(_ColorBySpeedEnabled, colorBySpeedEnabled ? 1 : 0);
+            simulateProperties.SetInt(_ColorBySpeedMode, (int)colorBySpeedMode);
+            simulateProperties.SetVector(
                 _ColorBySpeedRange,
                 new Vector4(colorBySpeedRange.x, colorBySpeedRange.y, 0f, 0f));
-            simulateMaterial.SetInt(_SizeBySpeedEnabled, sizeBySpeedEnabled ? 1 : 0);
-            simulateMaterial.SetVector(
+            simulateProperties.SetInt(_SizeBySpeedEnabled, sizeBySpeedEnabled ? 1 : 0);
+            simulateProperties.SetVector(
                 _SizeBySpeedRange,
                 new Vector4(sizeBySpeedRange.x, sizeBySpeedRange.y, 0f, 0f));
-            simulateMaterial.SetInt(
+            simulateProperties.SetInt(
                 _RotationBySpeedEnabled, rotationBySpeedEnabled ? 1 : 0);
-            simulateMaterial.SetVector(
+            simulateProperties.SetVector(
                 _RotationBySpeedRange,
                 new Vector4(
                     rotationBySpeedRange.x,
@@ -2418,13 +2460,13 @@ namespace GPUParticles
 
             Vector3 dirInitW = initialDirectionWS.sqrMagnitude > 1e-6f ? initialDirectionWS.normalized : transform.forward;
             Vector3 dirInitSim = (simulationSpace == SimulationSpace.World) ? dirInitW : transform.InverseTransformDirection(dirInitW);
-            simulateMaterial.SetVector(_InitialDir, new Vector4(dirInitSim.x, dirInitSim.y, dirInitSim.z, 0));
+            simulateProperties.SetVector(_InitialDir, new Vector4(dirInitSim.x, dirInitSim.y, dirInitSim.z, 0));
 
-            simulateMaterial.SetInt(_ShapeType, (int)shapeType);
-            simulateMaterial.SetInt(_ShapeEmitFrom, (int)shapeEmitFrom);
-            simulateMaterial.SetInt(_AlignToDirection, alignToDirection ? 1 : 0);
-            simulateMaterial.SetFloat(_ShapeRadiusThickness, Mathf.Clamp01(shapeRadiusThickness));
-            simulateMaterial.SetFloat(_ShapeConeArcRad,
+            simulateProperties.SetInt(_ShapeType, (int)shapeType);
+            simulateProperties.SetInt(_ShapeEmitFrom, (int)shapeEmitFrom);
+            simulateProperties.SetInt(_AlignToDirection, alignToDirection ? 1 : 0);
+            simulateProperties.SetFloat(_ShapeRadiusThickness, Mathf.Clamp01(shapeRadiusThickness));
+            simulateProperties.SetFloat(_ShapeConeArcRad,
                 Mathf.Clamp(shapeConeArcDeg, 0f, 360f) * Mathf.Deg2Rad);
 
             float avgScale = (shapeLocalScale.x + shapeLocalScale.y + shapeLocalScale.z) / 3f;
@@ -2434,33 +2476,33 @@ namespace GPUParticles
             {
                 case ShapeTypeGPU.Sphere:
                 case ShapeTypeGPU.Hemisphere:
-                    simulateMaterial.SetFloat(_ShapeSphereRadius, Mathf.Max(0f, shapeSphereRadius * avgScale));
+                    simulateProperties.SetFloat(_ShapeSphereRadius, Mathf.Max(0f, shapeSphereRadius * avgScale));
                     break;
 
                 case ShapeTypeGPU.Cone:
-                    simulateMaterial.SetFloat(_ShapeConeAngleRad, shapeConeAngle * Mathf.Deg2Rad);
+                    simulateProperties.SetFloat(_ShapeConeAngleRad, shapeConeAngle * Mathf.Deg2Rad);
                     float coneRadiusScaled = shapeConeRadius * 0.5f * (shapeLocalScale.x + shapeLocalScale.y);
                     float coneLengthScaled = shapeConeLength * shapeLocalScale.z;
-                    simulateMaterial.SetFloat(_ShapeConeRadius, coneRadiusScaled);
-                    simulateMaterial.SetFloat(_ShapeConeLength, coneLengthScaled);
+                    simulateProperties.SetFloat(_ShapeConeRadius, coneRadiusScaled);
+                    simulateProperties.SetFloat(_ShapeConeLength, coneLengthScaled);
                     break;
 
                 case ShapeTypeGPU.Donut:
-                    simulateMaterial.SetFloat(_ShapeDonutRadius, Mathf.Max(0f, shapeDonutRadius * avgScale));
-                    simulateMaterial.SetFloat(_ShapeDonutThickness, Mathf.Max(0f, shapeDonutThickness * avgScale));
+                    simulateProperties.SetFloat(_ShapeDonutRadius, Mathf.Max(0f, shapeDonutRadius * avgScale));
+                    simulateProperties.SetFloat(_ShapeDonutThickness, Mathf.Max(0f, shapeDonutThickness * avgScale));
                     break;
 
                 case ShapeTypeGPU.Box:
                     Vector3 boxSizeScaled = Vector3.Scale(shapeBoxSize, shapeLocalScale);
-                    simulateMaterial.SetVector(_ShapeBoxSize, new Vector4(boxSizeScaled.x, boxSizeScaled.y, boxSizeScaled.z, 0));
+                    simulateProperties.SetVector(_ShapeBoxSize, new Vector4(boxSizeScaled.x, boxSizeScaled.y, boxSizeScaled.z, 0));
                     break;
 
                 case ShapeTypeGPU.Circle:
-                    simulateMaterial.SetFloat(_ShapeCircleRadius, Mathf.Max(0f, shapeCircleRadius * avgScale));
+                    simulateProperties.SetFloat(_ShapeCircleRadius, Mathf.Max(0f, shapeCircleRadius * avgScale));
                     break;
 
                 case ShapeTypeGPU.Edge:
-                    simulateMaterial.SetFloat(
+                    simulateProperties.SetFloat(
                         _ShapeEdgeLength,
                         Mathf.Max(0f, shapeEdgeLength * shapeLocalScale.x));
                     break;
@@ -2470,7 +2512,7 @@ namespace GPUParticles
                         shapeRectangleSize.x * shapeLocalScale.x,
                         shapeRectangleSize.y * shapeLocalScale.y
                     );
-                    simulateMaterial.SetVector(_ShapeRectangleSize, new Vector4(rectSizeScaled.x, rectSizeScaled.y, 0, 0));
+                    simulateProperties.SetVector(_ShapeRectangleSize, new Vector4(rectSizeScaled.x, rectSizeScaled.y, 0, 0));
                     break;
             }
 
@@ -2479,33 +2521,33 @@ namespace GPUParticles
             Vector3 upL = q * Vector3.up;
             Vector3 fwdL = q * Vector3.forward;
             Vector3 posL = shapeLocalPosition;
-            simulateMaterial.SetVector(_ShapePosL, new Vector4(posL.x, posL.y, posL.z, 0));
-            simulateMaterial.SetVector(_ShapeRightL, new Vector4(rightL.x, rightL.y, rightL.z, 0));
-            simulateMaterial.SetVector(_ShapeUpL, new Vector4(upL.x, upL.y, upL.z, 0));
-            simulateMaterial.SetVector(_ShapeFwdL, new Vector4(fwdL.x, fwdL.y, fwdL.z, 0));
+            simulateProperties.SetVector(_ShapePosL, new Vector4(posL.x, posL.y, posL.z, 0));
+            simulateProperties.SetVector(_ShapeRightL, new Vector4(rightL.x, rightL.y, rightL.z, 0));
+            simulateProperties.SetVector(_ShapeUpL, new Vector4(upL.x, upL.y, upL.z, 0));
+            simulateProperties.SetVector(_ShapeFwdL, new Vector4(fwdL.x, fwdL.y, fwdL.z, 0));
 
-            simulateMaterial.SetMatrix(_EmitterLocalToWorld, particleLocalToWorld);
-            simulateMaterial.SetMatrix(_EmitterWorldToLocal, particleWorldToLocal);
-            simulateMaterial.SetMatrix(_ShapeLocalToWorld, shapeLocalToWorld);
-            simulateMaterial.SetVector(_EmitterPreviousPositionWS,
+            simulateProperties.SetMatrix(_EmitterLocalToWorld, particleLocalToWorld);
+            simulateProperties.SetMatrix(_EmitterWorldToLocal, particleWorldToLocal);
+            simulateProperties.SetMatrix(_ShapeLocalToWorld, shapeLocalToWorld);
+            simulateProperties.SetVector(_EmitterPreviousPositionWS,
                 new Vector4(
                     emitterPreviousPositionWS.x,
                     emitterPreviousPositionWS.y,
                     emitterPreviousPositionWS.z,
                     0f));
-            simulateMaterial.SetVector(_EmitterCurrentPositionWS,
+            simulateProperties.SetVector(_EmitterCurrentPositionWS,
                 new Vector4(
                     emitterCurrentPositionWS.x,
                     emitterCurrentPositionWS.y,
                     emitterCurrentPositionWS.z,
                     0f));
-            simulateMaterial.SetVector(_EmitterPreviousVelocityWS,
+            simulateProperties.SetVector(_EmitterPreviousVelocityWS,
                 new Vector4(
                     emitterVelocityBeforeStepWS.x,
                     emitterVelocityBeforeStepWS.y,
                     emitterVelocityBeforeStepWS.z,
                     0f));
-            simulateMaterial.SetVector(_EmitterVelocityWS,
+            simulateProperties.SetVector(_EmitterVelocityWS,
                 new Vector4(
                     emitterVelocityWS.x,
                     emitterVelocityWS.y,
@@ -2520,7 +2562,7 @@ namespace GPUParticles
             };
             cmd.SetRenderTarget(mrt, posLife[dst]);
             cmd.SetViewport(new Rect(0, 0, gridSize, gridSize));
-            CoreUtils.DrawFullScreen(cmd, simulateMaterial, null, 0);
+            CoreUtils.DrawFullScreen(cmd, simulateMaterial, simulateProperties, 0);
 
             ping = dst;
             simulationTick++;

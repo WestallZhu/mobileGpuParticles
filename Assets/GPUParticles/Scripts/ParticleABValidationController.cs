@@ -63,7 +63,8 @@ namespace GPUParticles
         ScalingHierarchyPoint,
         ScalingLocalPoint,
         ScalingShapePoint,
-        PlaybackLifecyclePoint
+        PlaybackLifecyclePoint,
+        PrewarmPoint
     }
 
     [DisallowMultipleComponent]
@@ -161,6 +162,16 @@ namespace GPUParticles
         bool playbackClearObserved;
         int maximumShurikenStoppedParticleCount;
         int maximumGPUStoppedParticleCount;
+        bool prewarmFirstSnapshotObserved;
+        int prewarmFirstShurikenCount;
+        int prewarmFirstGPUCount;
+        float prewarmFirstShurikenMeanAge;
+        float prewarmFirstGPUMeanAge;
+        bool prewarmRestartSnapshotObserved;
+        int prewarmRestartShurikenCount;
+        int prewarmRestartGPUCount;
+        float prewarmRestartShurikenMeanAge;
+        float prewarmRestartGPUMeanAge;
         Texture2D profileForceLUT;
         Texture2D profileVelocityLUT;
         Texture2D profileVelocityOrbitalLUT;
@@ -240,6 +251,9 @@ namespace GPUParticles
         const int PlaybackDrainExpectedFrame = 230;
         const int PlaybackReplayFrame = 241;
         const int PlaybackClearFrame = 260;
+        const int PrewarmRestartStopFrame = 31;
+        const int PrewarmRestartPlayFrame = 32;
+        const int PrewarmRestartCaptureFrame = 36;
         static readonly Color32 RendererClampMarker =
             new Color32(242, 31, 242, 255);
         static readonly Color32 ScalingModeMarker =
@@ -444,6 +458,7 @@ namespace GPUParticles
         void Update()
         {
             UpdatePlaybackLifecycle();
+            UpdatePrewarmLifecycle();
 
             if (captureActive && UsesMovingEmitterProfile())
             {
@@ -520,6 +535,12 @@ namespace GPUParticles
             if (IsPlaybackLifecycleProfile())
             {
                 ConfigurePlaybackLifecycleProfile();
+                return;
+            }
+
+            if (validationProfile == ParticleABValidationProfile.PrewarmPoint)
+            {
+                ConfigurePrewarmProfile();
                 return;
             }
 
@@ -2699,6 +2720,63 @@ namespace GPUParticles
             gpuParticles.rotationBySpeedLUT = CurveLUTBuilder.GetDefaultZeroLUT();
         }
 
+        void ConfigurePrewarmProfile()
+        {
+            ConfigureEmissionPointBase(2f, true);
+
+            var main = shuriken.main;
+            main.prewarm = true;
+            main.startLifetime = 1.25f;
+            main.startSize = 0.5f;
+
+            var emission = shuriken.emission;
+            emission.rateOverTime = 12f;
+
+            gpuParticles.SetStartLifetimeRange(1.25f, 1.25f);
+            gpuParticles.SetStartSizeRange(0.5f, 0.5f);
+            gpuParticles.SetEmissionRateOverTime(emission.rateOverTime);
+            gpuParticles.prewarm = true;
+
+            var force = shuriken.forceOverLifetime;
+            force.enabled = true;
+            force.space = ParticleSystemSimulationSpace.Local;
+            force.randomized = false;
+            force.x = ValidationForce.x;
+            force.y = ValidationForce.y;
+            force.z = ValidationForce.z;
+
+            if (profileForceLUT != null) Destroy(profileForceLUT);
+            profileForceLUT = MinMaxCurveVector3LUTBuilder.Build(
+                force.x,
+                force.y,
+                force.z);
+            gpuParticles.forceOverLifetimeEnabled = true;
+            gpuParticles.forceOverLifetimeSpace = SimulationSpace.Local;
+            gpuParticles.forceOverLifetimeRandomized = false;
+            gpuParticles.forceOverLifetimeLUT = profileForceLUT;
+        }
+
+        void UpdatePrewarmLifecycle()
+        {
+            if (!captureActive ||
+                validationProfile != ParticleABValidationProfile.PrewarmPoint ||
+                shuriken == null)
+            {
+                return;
+            }
+
+            if (playbackFrame == PrewarmRestartStopFrame)
+            {
+                shuriken.Stop(
+                    true,
+                    ParticleSystemStopBehavior.StopEmittingAndClear);
+            }
+            else if (playbackFrame == PrewarmRestartPlayFrame)
+            {
+                shuriken.Play(true);
+            }
+        }
+
         void ConfigurePlaybackLifecycleProfile()
         {
             ConfigureEmissionPointBase(5f, true);
@@ -3266,6 +3344,16 @@ namespace GPUParticles
             playbackClearObserved = false;
             maximumShurikenStoppedParticleCount = 0;
             maximumGPUStoppedParticleCount = 0;
+            prewarmFirstSnapshotObserved = false;
+            prewarmFirstShurikenCount = 0;
+            prewarmFirstGPUCount = 0;
+            prewarmFirstShurikenMeanAge = 0f;
+            prewarmFirstGPUMeanAge = 0f;
+            prewarmRestartSnapshotObserved = false;
+            prewarmRestartShurikenCount = 0;
+            prewarmRestartGPUCount = 0;
+            prewarmRestartShurikenMeanAge = 0f;
+            prewarmRestartGPUMeanAge = 0f;
             shurikenLifetimeRange.Reset();
             gpuLifetimeRange.Reset();
             shurikenSpeedRange.Reset();
@@ -3839,7 +3927,10 @@ namespace GPUParticles
                         maximumShurikenConeError = Mathf.Max(maximumShurikenConeError,
                             ConeRelationError(particle.position, shurikenVelocity, age));
                     }
-                    else if (validationProfile == ParticleABValidationProfile.ForceOverLifetimePoint)
+                    else if (validationProfile ==
+                                 ParticleABValidationProfile.ForceOverLifetimePoint ||
+                             validationProfile ==
+                                 ParticleABValidationProfile.PrewarmPoint)
                     {
                         maximumForceKinematicsError = Mathf.Max(maximumForceKinematicsError,
                             (shurikenVelocity - ValidationForce * age).magnitude);
@@ -4126,7 +4217,10 @@ namespace GPUParticles
                             new Vector3(positionLife.r, positionLife.g, positionLife.b),
                             gpuVelocity, age));
                 }
-                else if (validationProfile == ParticleABValidationProfile.ForceOverLifetimePoint)
+                else if (validationProfile ==
+                             ParticleABValidationProfile.ForceOverLifetimePoint ||
+                         validationProfile ==
+                             ParticleABValidationProfile.PrewarmPoint)
                 {
                     maximumForceKinematicsError = Mathf.Max(maximumForceKinematicsError,
                         (gpuVelocity - ValidationForce * age).magnitude);
@@ -4311,6 +4405,16 @@ namespace GPUParticles
                 maximumGPUMeanAge,
                 gpuMeanAge);
             ObservePlaybackMetrics(
+                shurikenCount,
+                gpuCount,
+                shurikenMeanAge,
+                gpuMeanAge);
+            ObservePrewarmMetrics(
+                shurikenCount,
+                gpuCount,
+                shurikenMeanAge,
+                gpuMeanAge);
+            ObservePrewarmRestartMetrics(
                 shurikenCount,
                 gpuCount,
                 shurikenMeanAge,
@@ -5308,6 +5412,45 @@ namespace GPUParticles
                 : float.PositiveInfinity;
         }
 
+        void ObservePrewarmMetrics(
+            int shurikenCount,
+            int gpuCount,
+            float shurikenMeanAge,
+            float gpuMeanAge)
+        {
+            if (validationProfile != ParticleABValidationProfile.PrewarmPoint ||
+                prewarmFirstSnapshotObserved)
+            {
+                return;
+            }
+
+            prewarmFirstSnapshotObserved = true;
+            prewarmFirstShurikenCount = shurikenCount;
+            prewarmFirstGPUCount = gpuCount;
+            prewarmFirstShurikenMeanAge = shurikenMeanAge;
+            prewarmFirstGPUMeanAge = gpuMeanAge;
+        }
+
+        void ObservePrewarmRestartMetrics(
+            int shurikenCount,
+            int gpuCount,
+            float shurikenMeanAge,
+            float gpuMeanAge)
+        {
+            if (validationProfile != ParticleABValidationProfile.PrewarmPoint ||
+                prewarmRestartSnapshotObserved ||
+                playbackFrame < PrewarmRestartCaptureFrame)
+            {
+                return;
+            }
+
+            prewarmRestartSnapshotObserved = true;
+            prewarmRestartShurikenCount = shurikenCount;
+            prewarmRestartGPUCount = gpuCount;
+            prewarmRestartShurikenMeanAge = shurikenMeanAge;
+            prewarmRestartGPUMeanAge = gpuMeanAge;
+        }
+
         void CompleteCapture()
         {
             captureActive = false;
@@ -5514,6 +5657,29 @@ namespace GPUParticles
                         maximumGPUStoppedParticleCount > 0 &&
                         playbackDrainObserved &&
                         playbackClearObserved;
+                    break;
+
+                case ParticleABValidationProfile.PrewarmPoint:
+                    profileSpecificPassed =
+                        prewarmFirstSnapshotObserved &&
+                        prewarmFirstShurikenCount == 15 &&
+                        prewarmFirstGPUCount == 15 &&
+                        prewarmFirstShurikenMeanAge >= 0.55f &&
+                        prewarmFirstGPUMeanAge >= 0.55f &&
+                        Mathf.Abs(
+                            prewarmFirstGPUMeanAge -
+                            prewarmFirstShurikenMeanAge) <= 0.001f &&
+                        prewarmRestartSnapshotObserved &&
+                        prewarmRestartShurikenCount == 15 &&
+                        prewarmRestartGPUCount == 15 &&
+                        prewarmRestartShurikenMeanAge >= 0.55f &&
+                        prewarmRestartGPUMeanAge >= 0.55f &&
+                        Mathf.Abs(
+                            prewarmRestartGPUMeanAge -
+                            prewarmRestartShurikenMeanAge) <= 0.001f &&
+                        maximumMeanSpeedError <= 0.001f &&
+                        maximumMeanVelocityError <= 0.001f &&
+                        maximumForceKinematicsError <= 0.005f;
                     break;
 
                 case ParticleABValidationProfile.UnscaledTimePoint:
@@ -5777,6 +5943,18 @@ namespace GPUParticles
                 $"{maximumGPUStoppedParticleCount}; " +
                 $"playbackDrainObserved={playbackDrainObserved}; " +
                 $"playbackClearObserved={playbackClearObserved}; " +
+                $"prewarmFirstShurikenCount={prewarmFirstShurikenCount}; " +
+                $"prewarmFirstGPUCount={prewarmFirstGPUCount}; " +
+                $"prewarmFirstShurikenMeanAge=" +
+                $"{prewarmFirstShurikenMeanAge:R}; " +
+                $"prewarmFirstGPUMeanAge={prewarmFirstGPUMeanAge:R}; " +
+                $"prewarmRestartShurikenCount=" +
+                $"{prewarmRestartShurikenCount}; " +
+                $"prewarmRestartGPUCount={prewarmRestartGPUCount}; " +
+                $"prewarmRestartShurikenMeanAge=" +
+                $"{prewarmRestartShurikenMeanAge:R}; " +
+                $"prewarmRestartGPUMeanAge=" +
+                $"{prewarmRestartGPUMeanAge:R}; " +
                 $"maxMeanLifetimeError={maximumMeanLifetimeError:R}; " +
                 $"maxMeanStartRotationError=" +
                 $"{maximumMeanStartRotationError:R}; " +

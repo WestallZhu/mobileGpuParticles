@@ -23,6 +23,7 @@ namespace GPUParticles
         private float cachedSimulationSpeed;
         private bool cachedUseUnscaledTime;
         private bool cachedPlayOnAwake;
+        private bool cachedPrewarm;
         private float cachedStartRotation;
         private float cachedRotationOverLifetime;
         private bool cachedEmissionEnabled;
@@ -165,6 +166,7 @@ namespace GPUParticles
             SyncColorBySpeed(true);
             SyncSizeBySpeed(true);
             SyncRotationBySpeed(true);
+            targetGPUParticleSystem.InitializePlaybackFromSettings();
             isInitialized = true;
         }
 
@@ -192,6 +194,7 @@ namespace GPUParticles
             cachedSimulationSpeed = main.simulationSpeed;
             cachedUseUnscaledTime = main.useUnscaledTime;
             cachedPlayOnAwake = main.playOnAwake;
+            cachedPrewarm = main.prewarm;
             cachedStartRotation = main.startRotation.mode == ParticleSystemCurveMode.Constant ? main.startRotation.constant : cachedStartRotation;
             cachedEmissionEnabled = emission.enabled;
             cachedMaxParticles = main.maxParticles;
@@ -289,6 +292,12 @@ namespace GPUParticles
             {
                 targetGPUParticleSystem.playOnAwake = main.playOnAwake;
                 cachedPlayOnAwake = main.playOnAwake;
+            }
+
+            if (force || main.prewarm != cachedPrewarm)
+            {
+                targetGPUParticleSystem.prewarm = main.prewarm;
+                cachedPrewarm = main.prewarm;
             }
 
             ParticleSystem.MinMaxCurve startLifetime = main.startLifetime;
