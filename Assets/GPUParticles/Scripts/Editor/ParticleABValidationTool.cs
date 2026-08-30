@@ -219,6 +219,13 @@ namespace GPUParticles.Editor
                 ParticleABValidationProfile.SizeSeparateAxesPoint);
         }
 
+        [MenuItem("Tools/GPU Particles/Run Renderer Screen Size Clamp A-B RT Capture")]
+        public static void RunRendererScreenSizeClampCaptureMenu()
+        {
+            StartStartSizeCapture(
+                ParticleABValidationProfile.RendererScreenSizeClampPoint);
+        }
+
         static void StartStartSizeCapture(
             ParticleABValidationProfile profile)
         {
@@ -705,6 +712,14 @@ namespace GPUParticles.Editor
                 ParticleABValidationProfile.SizeSeparateAxesPoint);
         }
 
+        public static void RunBatchRendererScreenSizeClampCapture()
+        {
+            ValidateCommonFeatureMapping();
+            StartCapture(
+                true,
+                ParticleABValidationProfile.RendererScreenSizeClampPoint);
+        }
+
         public static void RunBatchGravityModifierCurveCapture()
         {
             ValidateCommonFeatureMapping();
@@ -1009,6 +1024,8 @@ namespace GPUParticles.Editor
                     return 2.5f;
                 case ParticleABValidationProfile.SizeSeparateAxesPoint:
                     return 3f;
+                case ParticleABValidationProfile.RendererScreenSizeClampPoint:
+                    return 4.2f;
                 case ParticleABValidationProfile.StartLifetimeCurvePoint:
                 case ParticleABValidationProfile.StartLifetimeTwoCurvesPoint:
                     return 4.5f;
@@ -1058,6 +1075,7 @@ namespace GPUParticles.Editor
                     profile == ParticleABValidationProfile.StartSizeCurvePoint ||
                     profile == ParticleABValidationProfile.StartSizeTwoCurvesPoint ||
                     profile == ParticleABValidationProfile.SizeSeparateAxesPoint ||
+                    profile == ParticleABValidationProfile.RendererScreenSizeClampPoint ||
                    profile == ParticleABValidationProfile.GravityModifierCurvePoint ||
                    profile == ParticleABValidationProfile.GravityModifierTwoCurvesPoint ||
                    profile == ParticleABValidationProfile.EmissionRateCurvePoint ||
@@ -1109,6 +1127,8 @@ namespace GPUParticles.Editor
                     return "TestResults/ParticleStartSizeTwoCurves";
                 case ParticleABValidationProfile.SizeSeparateAxesPoint:
                     return "TestResults/ParticleSizeSeparateAxes";
+                case ParticleABValidationProfile.RendererScreenSizeClampPoint:
+                    return "TestResults/ParticleRendererScreenSizeClamp";
                 case ParticleABValidationProfile.GravityModifierCurvePoint:
                     return "TestResults/ParticleGravityModifierCurve";
                 case ParticleABValidationProfile.GravityModifierTwoCurvesPoint:
@@ -1235,6 +1255,10 @@ namespace GPUParticles.Editor
             {
                 var shuriken = owner.AddComponent<ParticleSystem>();
                 var main = shuriken.main;
+                var shurikenRenderer =
+                    owner.GetComponent<ParticleSystemRenderer>();
+                shurikenRenderer.minParticleSize = 0.075f;
+                shurikenRenderer.maxParticleSize = 0.325f;
                 AnimationCurve startLifetimeMinimumCurve =
                     AnimationCurve.Linear(0f, 0.75f, 1f, 1.25f);
                 AnimationCurve startLifetimeMaximumCurve =
@@ -1460,6 +1484,16 @@ namespace GPUParticles.Editor
                 ShurikenConverter.Convert(owner);
                 var gpu = owner.GetComponent<GPUParticleSystem>();
                 Require(gpu != null, "Converter did not create GPUParticleSystem.");
+                Require(gpu.screenSpaceSizeClampEnabled,
+                    "Renderer screen-space size clamp was not enabled.");
+                RequireApproximately(
+                    gpu.minParticleSize,
+                    0.075f,
+                    "Renderer Min Particle Size");
+                RequireApproximately(
+                    gpu.maxParticleSize,
+                    0.325f,
+                    "Renderer Max Particle Size");
                 Require(gpu.startLifetimeMode ==
                         ParticleSystemCurveMode.TwoCurves,
                     "Start Lifetime Two Curves mode was not mapped.");
@@ -2252,6 +2286,8 @@ namespace GPUParticles.Editor
                 shape.radius = 3f;
                 shape.scale = new Vector3(2f, 3f, 1f);
                 shape.arc = 90f;
+                shurikenRenderer.minParticleSize = 0.125f;
+                shurikenRenderer.maxParticleSize = 0.45f;
                 ShurikenConverter.Convert(owner);
 
                 Require(gpu.shapeType == ShapeTypeGPU.Circle, "Circle Shape was not mapped.");
@@ -2259,6 +2295,16 @@ namespace GPUParticles.Editor
                     "Circle radius must remain unscaled before GPU Shape TRS");
                 Require(gpu.shapeLocalScale == shape.scale, "Shape scale was not preserved.");
                 RequireApproximately(gpu.shapeConeArcDeg, 90f, "Shape Arc");
+                Require(gpu.screenSpaceSizeClampEnabled,
+                    "Renderer screen-space size clamp was not preserved.");
+                RequireApproximately(
+                    gpu.minParticleSize,
+                    0.125f,
+                    "Updated Renderer Min Particle Size");
+                RequireApproximately(
+                    gpu.maxParticleSize,
+                    0.45f,
+                    "Updated Renderer Max Particle Size");
                 Require(gpu.emissionRateOverTimeMode == ParticleSystemCurveMode.TwoConstants,
                     "Emission Rate over Time Two Constants mode was not mapped.");
                 RequireApproximately(gpu.emissionRateOverTimeMin, 4f,

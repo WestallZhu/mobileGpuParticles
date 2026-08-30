@@ -202,6 +202,9 @@ namespace GPUParticles
                 gpu.allowRoll = psr.allowRoll;
                 gpu.pivot = new Vector2(psr.pivot.x, psr.pivot.y);
                 gpu.normalDirection = psr.normalDirection;
+                gpu.screenSpaceSizeClampEnabled = true;
+                gpu.minParticleSize = psr.minParticleSize;
+                gpu.maxParticleSize = psr.maxParticleSize;
 
                 // Stretched-only
                 gpu.stretchedLengthScale = psr.lengthScale;
@@ -447,6 +450,9 @@ namespace GPUParticles
                 gpu.allowRoll = psr.allowRoll;
                 gpu.pivot = new Vector2(psr.pivot.x, psr.pivot.y);
                 gpu.normalDirection = psr.normalDirection;
+                gpu.screenSpaceSizeClampEnabled = true;
+                gpu.minParticleSize = psr.minParticleSize;
+                gpu.maxParticleSize = psr.maxParticleSize;
 
                 gpu.stretchedLengthScale = psr.lengthScale;
                 gpu.stretchedVelocityScale = psr.velocityScale;

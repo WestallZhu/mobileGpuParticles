@@ -130,6 +130,11 @@ Shader "GPUParticles/UnlitBillboardURP"
                 int    _RotateWithStretch;  // placeholder; unlit不做UV旋转
                 float  _MinAlphaCull;
                 float  _padLast;
+
+                int    _ScreenSpaceSizeClampEnabled;
+                float  _MinParticleSize;
+                float  _MaxParticleSize;
+                float  _padScreenSizeClamp;
             CBUFFER_END
 
             // handy
@@ -675,6 +680,63 @@ Shader "GPUParticles/UnlitBillboardURP"
                 return map[triV];
             }
 
+            float ProjectedAxisScreenWidthFraction(
+                float3 centerWS,
+                float3 axisWS,
+                float axisLength)
+            {
+                if (abs(axisLength) <= 1e-8)
+                {
+                    return 0.0;
+                }
+
+                float4 centerHCS = TransformWorldToHClip(centerWS);
+                float4 endpointHCS = TransformWorldToHClip(
+                    centerWS + axisWS * axisLength);
+                if (abs(centerHCS.w) <= 1e-8 ||
+                    abs(endpointHCS.w) <= 1e-8)
+                {
+                    return 0.0;
+                }
+
+                float2 deltaNDC =
+                    endpointHCS.xy / endpointHCS.w -
+                    centerHCS.xy / centerHCS.w;
+                float inverseAspect =
+                    _ScreenParams.y / max(1.0, _ScreenParams.x);
+                return length(
+                    float2(deltaNDC.x, deltaNDC.y * inverseAspect)) *
+                    0.5;
+            }
+
+            float ScreenSpaceSizeClampScale(
+                float3 centerWS,
+                float3 rightWS,
+                float3 upWS,
+                float width,
+                float height)
+            {
+                if (_ScreenSpaceSizeClampEnabled == 0)
+                {
+                    return 1.0;
+                }
+
+                float projectedSize = max(
+                    ProjectedAxisScreenWidthFraction(
+                        centerWS, rightWS, width),
+                    ProjectedAxisScreenWidthFraction(
+                        centerWS, upWS, height));
+                if (projectedSize <= 1e-8)
+                {
+                    return 1.0;
+                }
+
+                float minimum = saturate(_MinParticleSize);
+                float maximum = max(minimum, saturate(_MaxParticleSize));
+                return clamp(projectedSize, minimum, maximum) /
+                       projectedSize;
+            }
+
             VOut Vert(uint vid:SV_VertexID)
             {
                 VOut o;
@@ -774,6 +836,23 @@ Shader "GPUParticles/UnlitBillboardURP"
                         H * (_LenScale + length(velWS)*_VelScale +
                              length(_CameraVelWS)*_CamVelScale))
                     : H;
+                float screenClampWidth = W;
+                float screenClampHeight = (_RenderMode == 3) ? L : H;
+                if (_RenderMode == 1 || _RenderMode == 2)
+                {
+                    const float horizontalVerticalScale = 0.70710678;
+                    screenClampWidth *= horizontalVerticalScale;
+                    screenClampHeight *= horizontalVerticalScale;
+                }
+                float screenSizeScale = ScreenSpaceSizeClampScale(
+                    posWS,
+                    Right,
+                    Up,
+                    screenClampWidth,
+                    screenClampHeight);
+                W *= screenSizeScale;
+                H *= screenSizeScale;
+                L *= screenSizeScale;
 
                 float2 quadUV[4] = { float2(0,0), float2(1,0), float2(1,1), float2(0,1) };
                 float2 localXY[4]= { float2(-0.5,-0.5), float2(0.5,-0.5), float2(0.5,0.5), float2(-0.5,0.5) };

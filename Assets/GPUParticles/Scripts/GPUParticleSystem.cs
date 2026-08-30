@@ -230,8 +230,9 @@ namespace GPUParticles
         public bool allowRoll = true;
         [Range(0,1)] public float normalDirection = 1.0f; // billboard only
         public Vector2 pivot = Vector2.zero;
-        [Min(0)] public float minParticleSize = 0f; // TODO: screen-space clamp (optional)
-        [Min(0)] public float maxParticleSize = 0f;
+        public bool screenSpaceSizeClampEnabled;
+        [Range(0f, 1f)] public float minParticleSize;
+        [Range(0f, 1f)] public float maxParticleSize = 0.5f;
 
         [Header("Stretched Billboard")]
         public float stretchedLengthScale = 1.0f;   // 1 = neutral
@@ -504,6 +505,12 @@ namespace GPUParticles
         static readonly int _AllowRoll = Shader.PropertyToID("_AllowRoll");
         static readonly int _NormalDirection = Shader.PropertyToID("_NormalDirection");
         static readonly int _Pivot = Shader.PropertyToID("_Pivot");
+        static readonly int _ScreenSpaceSizeClampEnabled =
+            Shader.PropertyToID("_ScreenSpaceSizeClampEnabled");
+        static readonly int _MinParticleSize =
+            Shader.PropertyToID("_MinParticleSize");
+        static readonly int _MaxParticleSize =
+            Shader.PropertyToID("_MaxParticleSize");
         static readonly int _LenScale = Shader.PropertyToID("_LenScale");
         static readonly int _VelScale = Shader.PropertyToID("_VelScale");
         static readonly int _CamVelScale = Shader.PropertyToID("_CamVelScale");
@@ -2452,6 +2459,15 @@ namespace GPUParticles
             renderMaterial.SetInt(_AllowRoll, allowRoll ? 1 : 0);
             renderMaterial.SetFloat(_NormalDirection, normalDirection);
             renderMaterial.SetVector(_Pivot, pivot);
+            renderMaterial.SetInt(
+                _ScreenSpaceSizeClampEnabled,
+                screenSpaceSizeClampEnabled ? 1 : 0);
+            renderMaterial.SetFloat(
+                _MinParticleSize,
+                Mathf.Clamp01(minParticleSize));
+            renderMaterial.SetFloat(
+                _MaxParticleSize,
+                Mathf.Clamp01(maxParticleSize));
             renderMaterial.SetFloat(_LenScale, stretchedLengthScale);
             renderMaterial.SetFloat(_VelScale, stretchedVelocityScale);
             renderMaterial.SetFloat(_CamVelScale, stretchedCameraVelocityScale);

@@ -57,7 +57,8 @@ namespace GPUParticles
         StartRotationCurvePoint,
         StartRotationTwoCurvesPoint,
         VelocityOrbitalRadialPoint,
-        SizeSeparateAxesPoint
+        SizeSeparateAxesPoint,
+        RendererScreenSizeClampPoint
     }
 
     [DisallowMultipleComponent]
@@ -135,6 +136,9 @@ namespace GPUParticles
         int maximumTextureSheetFrameDelta;
         int shurikenTextureSheetFrameMask;
         int gpuTextureSheetFrameMask;
+        float maximumScreenSizePixelError;
+        int screenSizeClassificationFailures;
+        int currentShurikenScreenSizePixels = -1;
         Texture2D profileForceLUT;
         Texture2D profileVelocityLUT;
         Texture2D profileVelocityOrbitalLUT;
@@ -200,6 +204,13 @@ namespace GPUParticles
         const float GravityModifierProfileDuration = 2f;
         const float StartRotationProfileDuration = 2f;
         const float RotationProfileStartRotation = 0.25f;
+        const float RendererClampMinimum = 0.04f;
+        const float RendererClampMaximum = 0.12f;
+        const float RendererClampTravel = 120f;
+        const float RendererClampRangeTolerancePixels = 4f;
+        const float RendererClampPairTolerancePixels = 2f;
+        static readonly Color32 RendererClampMarker =
+            new Color32(242, 31, 242, 255);
         static readonly Color32[] TextureSheetPalette =
         {
             new Color32(242, 31, 31, 255),
@@ -239,6 +250,8 @@ namespace GPUParticles
         ObservedRange gpuSpeedColorBlendRange;
         ObservedRange shurikenSpeedSizeBlendRange;
         ObservedRange gpuSpeedSizeBlendRange;
+        ObservedRange shurikenScreenSizePixelRange;
+        ObservedRange gpuScreenSizePixelRange;
 
         struct ObservedRange
         {
@@ -543,6 +556,13 @@ namespace GPUParticles
                 ParticleABValidationProfile.SizeSeparateAxesPoint)
             {
                 ConfigureSizeSeparateAxesProfile();
+                return;
+            }
+
+            if (validationProfile ==
+                ParticleABValidationProfile.RendererScreenSizeClampPoint)
+            {
+                ConfigureRendererScreenSizeClampProfile();
                 return;
             }
 
@@ -1229,6 +1249,59 @@ namespace GPUParticles
             gpuParticles.SetSizeBySpeedRange(sizeBySpeed.range);
             gpuParticles.sizeBySpeedLUT = profileSizeBySpeedXLUT;
             gpuParticles.sizeBySpeedYLUT = profileSizeBySpeedYLUT;
+        }
+
+        void ConfigureRendererScreenSizeClampProfile()
+        {
+            ConfigureEmissionPointBase(4.2f, false);
+
+            var main = shuriken.main;
+            main.startLifetime = 6f;
+            main.startSpeed = 0f;
+            main.startSize3D = false;
+            main.startSize = 10f;
+            main.startColor = (Color)RendererClampMarker;
+            main.simulationSpace = ParticleSystemSimulationSpace.Local;
+            gpuParticles.SetStartLifetimeRange(6f, 6f);
+            gpuParticles.SetStartSpeedRange(0f, 0f);
+            gpuParticles.startSize3D = false;
+            gpuParticles.SetStartSizeRange(10f, 10f);
+            gpuParticles.SetStartColorRange(
+                RendererClampMarker,
+                RendererClampMarker,
+                false);
+            gpuParticles.simulationSpace = SimulationSpace.Local;
+
+            var emission = shuriken.emission;
+            emission.rateOverTime = 0f;
+            emission.rateOverDistance = 0f;
+            emission.SetBursts(new[] { new ParticleSystem.Burst(0f, 1) });
+            var bursts = new ParticleSystem.Burst[emission.burstCount];
+            emission.GetBursts(bursts);
+            gpuParticles.SetEmissionRateOverTime(emission.rateOverTime);
+            gpuParticles.SetEmissionRateOverDistance(emission.rateOverDistance);
+            gpuParticles.SetEmissionBursts(bursts);
+            gpuParticles.emissionLooping = false;
+
+            if (shurikenRenderer != null)
+            {
+                shurikenRenderer.renderMode =
+                    ParticleSystemRenderMode.Billboard;
+                shurikenRenderer.alignment = ParticleSystemRenderSpace.View;
+                shurikenRenderer.minParticleSize = RendererClampMinimum;
+                shurikenRenderer.maxParticleSize = RendererClampMaximum;
+            }
+
+            gpuParticles.renderMode = GPURenderMode.Billboard;
+            gpuParticles.renderAlignment = GPUAlignment.View;
+            gpuParticles.screenSpaceSizeClampEnabled = true;
+            gpuParticles.minParticleSize = RendererClampMinimum;
+            gpuParticles.maxParticleSize = RendererClampMaximum;
+
+            // Keep the validation quad above the sample-scene ground while it
+            // travels away from the camera.
+            shurikenBasePositionWS += Vector3.up * 5f;
+            gpuBasePositionWS += Vector3.up * 5f;
         }
 
         void ConfigureGravityModifierProfile(bool twoCurves)
@@ -2429,6 +2502,12 @@ namespace GPUParticles
             var inheritVelocity = shuriken.inheritVelocity;
             inheritVelocity.enabled = false;
 
+            if (shurikenRenderer != null)
+            {
+                shurikenRenderer.minParticleSize = 0f;
+                shurikenRenderer.maxParticleSize = 0.5f;
+            }
+
             gpuParticles.maxParticles = main.maxParticles;
             gpuParticles.emissionEnabled = true;
             gpuParticles.emissionDuration = main.duration;
@@ -2490,6 +2569,9 @@ namespace GPUParticles
             gpuParticles.SetLifetimeByEmitterSpeedRange(new Vector2(0f, 1f));
             gpuParticles.lifetimeByEmitterSpeedLUT =
                 CurveLUTBuilder.GetDefaultUnitLUT();
+            gpuParticles.screenSpaceSizeClampEnabled = false;
+            gpuParticles.minParticleSize = 0f;
+            gpuParticles.maxParticleSize = 0.5f;
         }
 
         public void RestartPlayback()
@@ -2524,6 +2606,24 @@ namespace GPUParticles
         void MoveValidationEmitters(float elapsed)
         {
             elapsed = Mathf.Max(0f, elapsed);
+            if (IsRendererScreenSizeClampProfile())
+            {
+                float travel = RendererClampTravel * Mathf.Clamp01(
+                    elapsed / Mathf.Max(0.1f, captureDuration));
+                Vector3 travelOffset = Vector3.forward * travel;
+                if (shuriken != null)
+                {
+                    shuriken.transform.position =
+                        shurikenBasePositionWS + travelOffset;
+                }
+                if (gpuParticles != null)
+                {
+                    gpuParticles.transform.position =
+                        gpuBasePositionWS + travelOffset;
+                }
+                return;
+            }
+
             float position;
             if (validationProfile ==
                     ParticleABValidationProfile.InheritVelocityInitialPoint ||
@@ -2566,7 +2666,8 @@ namespace GPUParticles
                    validationProfile ==
                        ParticleABValidationProfile.InheritVelocityCurrentPoint ||
                    validationProfile ==
-                       ParticleABValidationProfile.LifetimeByEmitterSpeedPoint;
+                       ParticleABValidationProfile.LifetimeByEmitterSpeedPoint ||
+                   IsRendererScreenSizeClampProfile();
         }
 
         bool IsInheritVelocityProfile()
@@ -2631,6 +2732,12 @@ namespace GPUParticles
                        ParticleABValidationProfile.GravityModifierCurvePoint ||
                    validationProfile ==
                        ParticleABValidationProfile.GravityModifierTwoCurvesPoint;
+        }
+
+        bool IsRendererScreenSizeClampProfile()
+        {
+            return validationProfile ==
+                ParticleABValidationProfile.RendererScreenSizeClampPoint;
         }
 
         public void SetDisplayMode(ParticleABDisplayMode mode)
@@ -2708,6 +2815,9 @@ namespace GPUParticles
             maximumTextureSheetFrameDelta = 0;
             shurikenTextureSheetFrameMask = 0;
             gpuTextureSheetFrameMask = 0;
+            maximumScreenSizePixelError = 0f;
+            screenSizeClassificationFailures = 0;
+            currentShurikenScreenSizePixels = -1;
             shurikenLifetimeRange.Reset();
             gpuLifetimeRange.Reset();
             shurikenSpeedRange.Reset();
@@ -2746,6 +2856,8 @@ namespace GPUParticles
             gpuGravityBlendRange.Reset();
             shurikenStartRotationBlendRange.Reset();
             gpuStartRotationBlendRange.Reset();
+            shurikenScreenSizePixelRange.Reset();
+            gpuScreenSizePixelRange.Reset();
             captureActive = true;
 
             Debug.Log($"Particle A/B RT capture started: {sessionFolder}", this);
@@ -2821,8 +2933,100 @@ namespace GPUParticles
             int textureSheetFrame = IsTextureSheetProfile()
                 ? ClassifyTextureSheetFrame(cameraImage)
                 : -1;
+            int screenSizePixels = IsRendererScreenSizeClampProfile() &&
+                                   mode != ParticleABDisplayMode.Both
+                ? ClassifyRendererScreenSize(cameraImage)
+                : -1;
+            ObserveRendererScreenSize(mode, screenSizePixels);
             Destroy(cameraImage);
             return textureSheetFrame;
+        }
+
+        static int ClassifyRendererScreenSize(Texture2D image)
+        {
+            Color32[] pixels = image.GetPixels32();
+            int minimumX = image.width;
+            int minimumY = image.height;
+            int maximumX = -1;
+            int maximumY = -1;
+            int markerPixels = 0;
+            for (int y = 0; y < image.height; y++)
+            {
+                int row = y * image.width;
+                for (int x = 0; x < image.width; x++)
+                {
+                    Color32 pixel = pixels[row + x];
+                    if (pixel.r < 150 || pixel.b < 150 || pixel.g > 140 ||
+                        pixel.r - pixel.g < 50 || pixel.b - pixel.g < 50)
+                    {
+                        continue;
+                    }
+
+                    markerPixels++;
+                    minimumX = Mathf.Min(minimumX, x);
+                    minimumY = Mathf.Min(minimumY, y);
+                    maximumX = Mathf.Max(maximumX, x);
+                    maximumY = Mathf.Max(maximumY, y);
+                }
+            }
+
+            if (markerPixels < 32 || maximumX < minimumX || maximumY < minimumY)
+            {
+                return -1;
+            }
+            return Mathf.Max(
+                maximumX - minimumX + 1,
+                maximumY - minimumY + 1);
+        }
+
+        void ObserveRendererScreenSize(
+            ParticleABDisplayMode mode,
+            int screenSizePixels)
+        {
+            if (!IsRendererScreenSizeClampProfile() ||
+                mode == ParticleABDisplayMode.Both)
+            {
+                return;
+            }
+
+            if (mode == ParticleABDisplayMode.ShurikenOnly)
+            {
+                currentShurikenScreenSizePixels = screenSizePixels;
+                if (screenSizePixels < 0)
+                {
+                    screenSizeClassificationFailures++;
+                    return;
+                }
+                shurikenScreenSizePixelRange.Observe(screenSizePixels);
+                return;
+            }
+
+            if (screenSizePixels < 0)
+            {
+                screenSizeClassificationFailures++;
+            }
+            else
+            {
+                gpuScreenSizePixelRange.Observe(screenSizePixels);
+            }
+
+            if (screenSizePixels < 0 ||
+                currentShurikenScreenSizePixels < 0)
+            {
+                if (currentShurikenScreenSizePixels < 0)
+                {
+                    screenSizeClassificationFailures++;
+                }
+            }
+            else
+            {
+                maximumScreenSizePixelError = Mathf.Max(
+                    maximumScreenSizePixelError,
+                    Mathf.Abs(
+                        currentShurikenScreenSizePixels -
+                        screenSizePixels));
+            }
+            currentShurikenScreenSizePixels = -1;
         }
 
         static int ClassifyTextureSheetFrame(Texture2D image)
@@ -4623,6 +4827,19 @@ namespace GPUParticles
                                             maximumGPUParticleCount == 1;
                     break;
 
+                case ParticleABValidationProfile.RendererScreenSizeClampPoint:
+                    profileSpecificPassed = maximumMeanSpeedError <= 0.001f &&
+                                            maximumShurikenParticleCount == 1 &&
+                                            maximumGPUParticleCount == 1 &&
+                                            screenSizeClassificationFailures == 0 &&
+                                            maximumScreenSizePixelError <=
+                                                RendererClampPairTolerancePixels &&
+                                            RendererScreenSizeRangePasses(
+                                                shurikenScreenSizePixelRange) &&
+                                            RendererScreenSizeRangePasses(
+                                                gpuScreenSizePixelRange);
+                    break;
+
                 case ParticleABValidationProfile.GravityModifierCurvePoint:
                     profileSpecificPassed = maximumMeanVelocityError <= 0.05f &&
                                             maximumShurikenParticleCount > 0 &&
@@ -4896,6 +5113,13 @@ namespace GPUParticles
                 $"maxTextureSheetFrameDelta={maximumTextureSheetFrameDelta}; " +
                 $"shurikenTextureSheetFrameMask=0x{shurikenTextureSheetFrameMask:X2}; " +
                 $"gpuTextureSheetFrameMask=0x{gpuTextureSheetFrameMask:X2}; " +
+                $"maxScreenSizePixelError={maximumScreenSizePixelError:R}; " +
+                $"screenSizeClassificationFailures=" +
+                $"{screenSizeClassificationFailures}; " +
+                $"shurikenScreenSizePixelRange=" +
+                $"{FormatRange(shurikenScreenSizePixelRange)}; " +
+                $"gpuScreenSizePixelRange=" +
+                $"{FormatRange(gpuScreenSizePixelRange)}; " +
                 $"shurikenLifetimeRange={FormatRange(shurikenLifetimeRange)}; " +
                 $"gpuLifetimeRange={FormatRange(gpuLifetimeRange)}; " +
                 $"shurikenSpeedRange={FormatRange(shurikenSpeedRange)}; " +
@@ -4965,6 +5189,19 @@ namespace GPUParticles
             return range.HasSamples
                 ? $"[{range.Minimum:R},{range.Maximum:R}]"
                 : "[]";
+        }
+
+        bool RendererScreenSizeRangePasses(ObservedRange range)
+        {
+            float expectedMinimum = RendererClampMinimum * captureWidth;
+            float expectedMaximum = RendererClampMaximum * captureWidth;
+            return range.HasSamples &&
+                   Mathf.Abs(range.Minimum - expectedMinimum) <=
+                       RendererClampRangeTolerancePixels &&
+                   Mathf.Abs(range.Maximum - expectedMaximum) <=
+                       RendererClampRangeTolerancePixels &&
+                   range.Maximum - range.Minimum >=
+                       (expectedMaximum - expectedMinimum) * 0.9f;
         }
 
         static Vector3 ModuleBirthEmitterVelocity(Color moduleState)

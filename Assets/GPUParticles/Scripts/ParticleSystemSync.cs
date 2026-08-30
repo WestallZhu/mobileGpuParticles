@@ -43,6 +43,16 @@ namespace GPUParticles
         // Renderer缓存
         private ParticleSystemRenderMode cachedRenderMode;
         private ParticleSystemRenderSpace cachedAlignment;
+        private bool cachedAllowRoll;
+        private Vector3 cachedPivot;
+        private float cachedNormalDirection;
+        private float cachedMinParticleSize;
+        private float cachedMaxParticleSize;
+        private float cachedLengthScale;
+        private float cachedVelocityScale;
+        private float cachedCameraVelocityScale;
+        private bool cachedFreeformStretching;
+        private bool cachedRotateWithStretchDirection;
 
         // LUT缓存（避免每帧重建）
         private float lastColorLUTUpdate = 0f;
@@ -186,6 +196,7 @@ namespace GPUParticles
             {
                 cachedRenderMode = sourceRenderer.renderMode;
                 cachedAlignment = sourceRenderer.alignment;
+                CacheRendererValues();
             }
         }
 
@@ -1115,6 +1126,31 @@ namespace GPUParticles
             if (sourceRenderer == null) return;
 
             bool rendererChanged = false;
+            bool rendererValuesChanged =
+                sourceRenderer.allowRoll != cachedAllowRoll ||
+                sourceRenderer.pivot != cachedPivot ||
+                !Mathf.Approximately(
+                    sourceRenderer.normalDirection,
+                    cachedNormalDirection) ||
+                !Mathf.Approximately(
+                    sourceRenderer.minParticleSize,
+                    cachedMinParticleSize) ||
+                !Mathf.Approximately(
+                    sourceRenderer.maxParticleSize,
+                    cachedMaxParticleSize) ||
+                !Mathf.Approximately(
+                    sourceRenderer.lengthScale,
+                    cachedLengthScale) ||
+                !Mathf.Approximately(
+                    sourceRenderer.velocityScale,
+                    cachedVelocityScale) ||
+                !Mathf.Approximately(
+                    sourceRenderer.cameraVelocityScale,
+                    cachedCameraVelocityScale) ||
+                sourceRenderer.freeformStretching !=
+                    cachedFreeformStretching ||
+                sourceRenderer.rotateWithStretchDirection !=
+                    cachedRotateWithStretchDirection;
 
             // Render Mode
             if (force || sourceRenderer.renderMode != cachedRenderMode)
@@ -1163,17 +1199,40 @@ namespace GPUParticles
                 rendererChanged = true;
             }
 
-            if (force || rendererChanged)
+            if (force || rendererChanged || rendererValuesChanged)
             {
                 targetGPUParticleSystem.allowRoll = sourceRenderer.allowRoll;
                 targetGPUParticleSystem.pivot = new Vector2(sourceRenderer.pivot.x, sourceRenderer.pivot.y);
                 targetGPUParticleSystem.normalDirection = sourceRenderer.normalDirection;
+                targetGPUParticleSystem.screenSpaceSizeClampEnabled = true;
+                targetGPUParticleSystem.minParticleSize =
+                    sourceRenderer.minParticleSize;
+                targetGPUParticleSystem.maxParticleSize =
+                    sourceRenderer.maxParticleSize;
                 targetGPUParticleSystem.stretchedLengthScale = sourceRenderer.lengthScale;
                 targetGPUParticleSystem.stretchedVelocityScale = sourceRenderer.velocityScale;
                 targetGPUParticleSystem.stretchedCameraVelocityScale = sourceRenderer.cameraVelocityScale;
                 targetGPUParticleSystem.freeformStretching = sourceRenderer.freeformStretching;
                 targetGPUParticleSystem.rotateWithStretchDirection = sourceRenderer.rotateWithStretchDirection;
+                CacheRendererValues();
             }
+        }
+
+        void CacheRendererValues()
+        {
+            if (sourceRenderer == null) return;
+
+            cachedAllowRoll = sourceRenderer.allowRoll;
+            cachedPivot = sourceRenderer.pivot;
+            cachedNormalDirection = sourceRenderer.normalDirection;
+            cachedMinParticleSize = sourceRenderer.minParticleSize;
+            cachedMaxParticleSize = sourceRenderer.maxParticleSize;
+            cachedLengthScale = sourceRenderer.lengthScale;
+            cachedVelocityScale = sourceRenderer.velocityScale;
+            cachedCameraVelocityScale = sourceRenderer.cameraVelocityScale;
+            cachedFreeformStretching = sourceRenderer.freeformStretching;
+            cachedRotateWithStretchDirection =
+                sourceRenderer.rotateWithStretchDirection;
         }
 
         void SyncRotationParameters(bool force = false)
