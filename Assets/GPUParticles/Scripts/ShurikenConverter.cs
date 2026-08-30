@@ -221,6 +221,7 @@ namespace GPUParticles
 
                 gpu.allowRoll = psr.allowRoll;
                 gpu.pivot = new Vector2(psr.pivot.x, psr.pivot.y);
+                gpu.pivotDepth = psr.pivot.z;
                 gpu.normalDirection = psr.normalDirection;
                 gpu.rendererFlip = Clamp01(psr.flip);
                 gpu.screenSpaceSizeClampEnabled = true;
@@ -469,6 +470,7 @@ namespace GPUParticles
 
                 gpu.allowRoll = psr.allowRoll;
                 gpu.pivot = new Vector2(psr.pivot.x, psr.pivot.y);
+                gpu.pivotDepth = psr.pivot.z;
                 gpu.normalDirection = psr.normalDirection;
                 gpu.rendererFlip = Clamp01(psr.flip);
                 gpu.screenSpaceSizeClampEnabled = true;

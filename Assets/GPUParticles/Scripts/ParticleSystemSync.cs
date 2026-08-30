@@ -1733,6 +1733,7 @@ namespace GPUParticles
             {
                 targetGPUParticleSystem.allowRoll = sourceRenderer.allowRoll;
                 targetGPUParticleSystem.pivot = new Vector2(sourceRenderer.pivot.x, sourceRenderer.pivot.y);
+                targetGPUParticleSystem.pivotDepth = sourceRenderer.pivot.z;
                 targetGPUParticleSystem.normalDirection = sourceRenderer.normalDirection;
                 Vector3 rendererFlip = sourceRenderer.flip;
                 targetGPUParticleSystem.rendererFlip = new Vector3(

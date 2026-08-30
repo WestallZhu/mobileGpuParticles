@@ -337,6 +337,7 @@ namespace GPUParticles
         public bool allowRoll = true;
         [Range(0,1)] public float normalDirection = 1.0f; // billboard only
         public Vector2 pivot = Vector2.zero;
+        public float pivotDepth;
         [Tooltip("Per-axis probability of flipping each particle. Shuriken " +
                  "Texture Sheet flipU/flipV alias Renderer Flip X/Y. Billboard " +
                  "rendering consumes X/Y as horizontal/vertical UV flips; Z " +
@@ -4040,7 +4041,9 @@ namespace GPUParticles
             renderMaterial.SetInt(_RenderAlignment, (int)renderAlignment);
             renderMaterial.SetInt(_AllowRoll, allowRoll ? 1 : 0);
             renderMaterial.SetFloat(_NormalDirection, normalDirection);
-            renderMaterial.SetVector(_Pivot, pivot);
+            renderMaterial.SetVector(
+                _Pivot,
+                new Vector4(pivot.x, pivot.y, pivotDepth, 0f));
             renderMaterial.SetVector(
                 _RendererFlip,
                 new Vector4(

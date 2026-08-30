@@ -699,6 +699,13 @@ namespace GPUParticles.Editor
                 ParticleABValidationProfile.StretchedBillboardPoint);
         }
 
+        [MenuItem("Tools/GPU Particles/Run Renderer Pivot A-B RT Capture")]
+        public static void RunRendererPivotCaptureMenu()
+        {
+            StartTextureSheetCaptureMenu(
+                ParticleABValidationProfile.RendererPivotPoint);
+        }
+
         [MenuItem("Tools/GPU Particles/Run Texture Sheet Blend Lifetime A-B RT Capture")]
         public static void RunTextureSheetBlendLifetimeCaptureMenu()
         {
@@ -1475,6 +1482,14 @@ namespace GPUParticles.Editor
                 ParticleABValidationProfile.StretchedBillboardPoint);
         }
 
+        public static void RunBatchRendererPivotCapture()
+        {
+            ValidateCommonFeatureMapping();
+            StartCapture(
+                true,
+                ParticleABValidationProfile.RendererPivotPoint);
+        }
+
         public static void RunBatchTextureSheetBlendLifetimeCapture()
         {
             ValidateCommonFeatureMapping();
@@ -1757,6 +1772,7 @@ namespace GPUParticles.Editor
                 case ParticleABValidationProfile.TextureSheetSingleRowPoint:
                 case ParticleABValidationProfile.RendererTextureUVFlipPoint:
                 case ParticleABValidationProfile.StretchedBillboardPoint:
+                case ParticleABValidationProfile.RendererPivotPoint:
                 case ParticleABValidationProfile.TextureSheetBlendLifetimePoint:
                 case ParticleABValidationProfile.TextureSheetBlendSpeedPoint:
                 case ParticleABValidationProfile.TextureSheetBlendFPSPoint:
@@ -1877,6 +1893,7 @@ namespace GPUParticles.Editor
                    profile == ParticleABValidationProfile.TextureSheetSingleRowPoint ||
                    profile == ParticleABValidationProfile.RendererTextureUVFlipPoint ||
                    profile == ParticleABValidationProfile.StretchedBillboardPoint ||
+                   profile == ParticleABValidationProfile.RendererPivotPoint ||
                    profile == ParticleABValidationProfile.TextureSheetBlendLifetimePoint ||
                    profile == ParticleABValidationProfile.TextureSheetBlendSpeedPoint ||
                    profile == ParticleABValidationProfile.TextureSheetBlendFPSPoint ||
@@ -2035,6 +2052,8 @@ namespace GPUParticles.Editor
                     return "TestResults/ParticleRendererTextureUVFlip";
                 case ParticleABValidationProfile.StretchedBillboardPoint:
                     return "TestResults/ParticleStretchedBillboard";
+                case ParticleABValidationProfile.RendererPivotPoint:
+                    return "TestResults/ParticleRendererPivot";
                 case ParticleABValidationProfile.TextureSheetBlendLifetimePoint:
                     return "TestResults/ParticleTextureSheetBlendLifetime";
                 case ParticleABValidationProfile.TextureSheetBlendSpeedPoint:
@@ -3620,6 +3639,7 @@ namespace GPUParticles.Editor
                 ValidateTextureSheetFrameBlendingMapping();
                 ValidateRendererTextureUVFlipMapping();
                 ValidateStretchedBillboardMapping();
+                ValidateRendererPivotMapping();
                 ValidateMaterialColorMapping();
                 ValidateMaterialBlendMapping();
                 ValidateMaterialAlphaClipMapping();
@@ -4465,6 +4485,43 @@ namespace GPUParticles.Editor
                     "Disabled Freeform Stretching was not remapped.");
                 Require(gpu.rotateWithStretchDirection,
                     "Enabled Rotate With Stretch Direction was not remapped.");
+            }
+            finally
+            {
+                Object.DestroyImmediate(owner);
+            }
+        }
+
+        static void ValidateRendererPivotMapping()
+        {
+            var owner = new GameObject(
+                "ParticleRendererPivotMappingValidation");
+            owner.SetActive(false);
+            try
+            {
+                var shuriken = owner.AddComponent<ParticleSystem>();
+                ParticleSystem.MainModule main = shuriken.main;
+                main.playOnAwake = false;
+
+                ParticleSystemRenderer renderer =
+                    owner.GetComponent<ParticleSystemRenderer>();
+                renderer.pivot = new Vector3(0.4f, -0.25f, 0.75f);
+
+                ShurikenConverter.Convert(owner);
+                var gpu = owner.GetComponent<GPUParticleSystem>();
+                Require(gpu != null,
+                    "Renderer Pivot conversion did not create a GPU system.");
+                RequireVectorApproximately(
+                    new Vector3(gpu.pivot.x, gpu.pivot.y, gpu.pivotDepth),
+                    renderer.pivot,
+                    "Renderer Pivot was not mapped.");
+
+                renderer.pivot = new Vector3(-0.6f, 0.3f, -0.45f);
+                ShurikenConverter.Convert(owner);
+                RequireVectorApproximately(
+                    new Vector3(gpu.pivot.x, gpu.pivot.y, gpu.pivotDepth),
+                    renderer.pivot,
+                    "Changed Renderer Pivot was not remapped.");
             }
             finally
             {

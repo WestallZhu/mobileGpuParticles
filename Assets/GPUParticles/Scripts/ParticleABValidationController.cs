@@ -98,7 +98,8 @@ namespace GPUParticles
         MaterialSoftParticlesPoint,
         MaterialCameraFadingPoint,
         RendererTextureUVFlipPoint,
-        StretchedBillboardPoint
+        StretchedBillboardPoint,
+        RendererPivotPoint
     }
 
     [DisallowMultipleComponent]
@@ -228,22 +229,23 @@ namespace GPUParticles
         float maximumTextureUVFlipExpectedColorError;
         bool hasCurrentShurikenTextureUVFlipColors;
         readonly Color[] currentShurikenTextureUVFlipColors = new Color[4];
-        int stretchedBillboardComparableSamples;
-        int stretchedBillboardClassificationFailures;
-        int shurikenStretchedBillboardStateMask;
-        int gpuStretchedBillboardStateMask;
-        float maximumStretchedBillboardCentroidError;
-        float maximumStretchedBillboardAspectError;
-        bool hasCurrentShurikenStretchedBillboardSignature;
-        StretchedBillboardSignature currentShurikenStretchedBillboardSignature;
-        int currentShurikenStretchedBillboardState = -1;
-        int activeStretchedBillboardState;
-        readonly Vector2[] shurikenStretchedStateSignatureSums =
+        int rendererGeometryComparableSamples;
+        int rendererGeometryClassificationFailures;
+        int shurikenRendererGeometryStateMask;
+        int gpuRendererGeometryStateMask;
+        float maximumRendererGeometryCentroidError;
+        float maximumRendererGeometryAspectError;
+        bool hasCurrentShurikenRendererGeometrySignature;
+        RendererGeometrySignature currentShurikenRendererGeometrySignature;
+        int currentShurikenRendererGeometryState = -1;
+        int activeRendererGeometryState;
+        readonly Vector2[] shurikenRendererGeometryStateSignatureSums =
             new Vector2[3];
-        readonly Vector2[] gpuStretchedStateSignatureSums =
+        readonly Vector2[] gpuRendererGeometryStateSignatureSums =
             new Vector2[3];
-        readonly int[] shurikenStretchedStateSignatureSamples = new int[3];
-        readonly int[] gpuStretchedStateSignatureSamples = new int[3];
+        readonly int[] shurikenRendererGeometryStateSignatureSamples =
+            new int[3];
+        readonly int[] gpuRendererGeometryStateSignatureSamples = new int[3];
         int materialColorComparableSamples;
         int materialColorClassificationFailures;
         int shurikenMaterialColorModeMask;
@@ -562,6 +564,7 @@ namespace GPUParticles
             3, 2, 1, 0
         };
         const float StretchedBillboardStateInterval = 1.2f;
+        const float RendererPivotStateInterval = 1.2f;
         Vector3 shurikenBasePositionWS;
         Vector3 gpuBasePositionWS;
         Vector3 captureCameraBasePositionWS;
@@ -653,10 +656,11 @@ namespace GPUParticles
                 : Vector2.zero;
         }
 
-        struct StretchedBillboardSignature
+        struct RendererGeometrySignature
         {
             public bool Valid;
             public float AspectRatio;
+            public Vector2 CenterOffset;
             public Vector2[] ColorCentroids;
         }
 
@@ -876,6 +880,12 @@ namespace GPUParticles
                     (playbackFrame + 1f) / fixedFrameRate;
                 UpdateStretchedBillboardState(nextSimulationTime);
             }
+            if (captureActive && IsRendererPivotProfile())
+            {
+                float nextSimulationTime =
+                    (playbackFrame + 1f) / fixedFrameRate;
+                UpdateRendererPivotState(nextSimulationTime);
+            }
 
             if (captureActive && UsesMovingEmitterProfile())
             {
@@ -1087,6 +1097,16 @@ namespace GPUParticles
                     ParticleSystemAnimationTimeMode.Lifetime);
                 ConfigureRendererTextureUVFlipProfile();
                 ConfigureStretchedBillboardProfile();
+                return;
+            }
+
+            if (validationProfile ==
+                ParticleABValidationProfile.RendererPivotPoint)
+            {
+                ConfigureTextureSheetAnimationProfile(
+                    ParticleSystemAnimationTimeMode.Lifetime);
+                ConfigureRendererTextureUVFlipProfile();
+                ConfigureRendererPivotProfile();
                 return;
             }
 
@@ -3735,14 +3755,18 @@ namespace GPUParticles
         {
             const float lifetime = 4f;
             const float startSpeed = 1.75f;
-            const float startSize = 2f;
+            const float startSizeX = 2f;
+            const float startSizeY = 3f;
             const float startRotation = 37f * Mathf.Deg2Rad;
             Vector3 direction = new Vector3(2f, 1f, 0f).normalized;
 
             ParticleSystem.MainModule main = shuriken.main;
             main.startLifetime = lifetime;
             main.startSpeed = startSpeed;
-            main.startSize = startSize;
+            main.startSize3D = true;
+            main.startSizeX = startSizeX;
+            main.startSizeY = startSizeY;
+            main.startSizeZ = startSizeX;
             main.startRotation = startRotation;
             main.simulationSpace = ParticleSystemSimulationSpace.World;
 
@@ -3772,7 +3796,9 @@ namespace GPUParticles
 
             gpuParticles.SetStartLifetimeRange(lifetime, lifetime);
             gpuParticles.SetStartSpeedRange(startSpeed, startSpeed);
-            gpuParticles.SetStartSizeRange(startSize, startSize);
+            gpuParticles.SetStartSizeRange(startSizeX, startSizeX);
+            gpuParticles.SetStartSizeYRange(startSizeY, startSizeY);
+            gpuParticles.startSize3D = true;
             gpuParticles.SetStartRotationRange(
                 startRotation, startRotation);
             gpuParticles.simulationSpace = SimulationSpace.World;
@@ -3786,7 +3812,8 @@ namespace GPUParticles
             gpuParticles.freeformStretching = false;
             gpuParticles.rotateWithStretchDirection = false;
             gpuParticles.pivot = Vector2.zero;
-            activeStretchedBillboardState = 0;
+            gpuParticles.pivotDepth = 0f;
+            activeRendererGeometryState = 0;
         }
 
         void UpdateStretchedBillboardState(float elapsed)
@@ -3808,7 +3835,93 @@ namespace GPUParticles
             gpuParticles.freeformStretching = freeformStretching;
             gpuParticles.rotateWithStretchDirection =
                 rotateWithStretchDirection;
-            activeStretchedBillboardState = state;
+            activeRendererGeometryState = state;
+        }
+
+        void ConfigureRendererPivotProfile()
+        {
+            const float lifetime = 4f;
+            const float startSizeX = 2.4f;
+            const float startSizeY = 1.6f;
+            const float startSizeZ = 3.2f;
+            const float startRotation = 31f * Mathf.Deg2Rad;
+
+            ParticleSystem.MainModule main = shuriken.main;
+            main.startLifetime = lifetime;
+            main.startSpeed = 0f;
+            main.startSize3D = true;
+            main.startSizeX = startSizeX;
+            main.startSizeY = startSizeY;
+            main.startSizeZ = startSizeZ;
+            main.startRotation = startRotation;
+            main.simulationSpace = ParticleSystemSimulationSpace.World;
+
+            shuriken.transform.rotation = Quaternion.identity;
+            gpuParticles.transform.rotation = Quaternion.identity;
+
+            ParticleSystem.TextureSheetAnimationModule textureSheet =
+                shuriken.textureSheetAnimation;
+            textureSheet.enabled = false;
+            textureSheet.flipU = 0f;
+            textureSheet.flipV = 0f;
+
+            if (shurikenRenderer != null)
+            {
+                shurikenRenderer.flip = Vector3.zero;
+                shurikenRenderer.renderMode =
+                    ParticleSystemRenderMode.Billboard;
+                shurikenRenderer.alignment =
+                    ParticleSystemRenderSpace.World;
+                shurikenRenderer.allowRoll = true;
+                shurikenRenderer.pivot = Vector3.zero;
+            }
+
+            gpuParticles.SetStartLifetimeRange(lifetime, lifetime);
+            gpuParticles.SetStartSpeedRange(0f, 0f);
+            gpuParticles.SetStartSizeRange(startSizeX, startSizeX);
+            gpuParticles.SetStartSizeYRange(startSizeY, startSizeY);
+            gpuParticles.startSize3D = true;
+            gpuParticles.SetStartRotationRange(
+                startRotation, startRotation);
+            gpuParticles.simulationSpace = SimulationSpace.World;
+            gpuParticles.textureSheetAnimationEnabled = false;
+            gpuParticles.rendererFlip = Vector3.zero;
+            gpuParticles.renderMode = GPURenderMode.Billboard;
+            gpuParticles.renderAlignment = GPUAlignment.World;
+            gpuParticles.allowRoll = true;
+            gpuParticles.pivot = Vector2.zero;
+            gpuParticles.pivotDepth = 0f;
+            UpdateRendererPivotState(0f);
+        }
+
+        void UpdateRendererPivotState(float elapsed)
+        {
+            int state = Mathf.Clamp(
+                Mathf.FloorToInt(
+                    Mathf.Max(0f, elapsed) / RendererPivotStateInterval),
+                0,
+                2);
+            Vector3 pivot;
+            switch (state)
+            {
+                case 0:
+                    pivot = new Vector3(0.45f, -0.3f, 0f);
+                    break;
+                case 1:
+                    pivot = new Vector3(0f, 0f, 0.65f);
+                    break;
+                default:
+                    pivot = new Vector3(-0.35f, 0.25f, -0.55f);
+                    break;
+            }
+
+            if (shurikenRenderer != null)
+            {
+                shurikenRenderer.pivot = pivot;
+            }
+            gpuParticles.pivot = new Vector2(pivot.x, pivot.y);
+            gpuParticles.pivotDepth = pivot.z;
+            activeRendererGeometryState = state;
         }
 
         void ConfigureMaterialColorProfile()
@@ -5306,6 +5419,17 @@ namespace GPUParticles
                 ParticleABValidationProfile.StretchedBillboardPoint;
         }
 
+        bool IsRendererPivotProfile()
+        {
+            return validationProfile ==
+                ParticleABValidationProfile.RendererPivotPoint;
+        }
+
+        bool UsesRendererGeometrySignatureProfile()
+        {
+            return IsStretchedBillboardProfile() || IsRendererPivotProfile();
+        }
+
         bool IsMaterialBlendProfile()
         {
             return validationProfile ==
@@ -6727,31 +6851,31 @@ namespace GPUParticles
                 currentShurikenTextureUVFlipColors,
                 0,
                 currentShurikenTextureUVFlipColors.Length);
-            stretchedBillboardComparableSamples = 0;
-            stretchedBillboardClassificationFailures = 0;
-            shurikenStretchedBillboardStateMask = 0;
-            gpuStretchedBillboardStateMask = 0;
-            maximumStretchedBillboardCentroidError = 0f;
-            maximumStretchedBillboardAspectError = 0f;
-            hasCurrentShurikenStretchedBillboardSignature = false;
-            currentShurikenStretchedBillboardSignature = default;
-            currentShurikenStretchedBillboardState = -1;
+            rendererGeometryComparableSamples = 0;
+            rendererGeometryClassificationFailures = 0;
+            shurikenRendererGeometryStateMask = 0;
+            gpuRendererGeometryStateMask = 0;
+            maximumRendererGeometryCentroidError = 0f;
+            maximumRendererGeometryAspectError = 0f;
+            hasCurrentShurikenRendererGeometrySignature = false;
+            currentShurikenRendererGeometrySignature = default;
+            currentShurikenRendererGeometryState = -1;
             Array.Clear(
-                shurikenStretchedStateSignatureSums,
+                shurikenRendererGeometryStateSignatureSums,
                 0,
-                shurikenStretchedStateSignatureSums.Length);
+                shurikenRendererGeometryStateSignatureSums.Length);
             Array.Clear(
-                gpuStretchedStateSignatureSums,
+                gpuRendererGeometryStateSignatureSums,
                 0,
-                gpuStretchedStateSignatureSums.Length);
+                gpuRendererGeometryStateSignatureSums.Length);
             Array.Clear(
-                shurikenStretchedStateSignatureSamples,
+                shurikenRendererGeometryStateSignatureSamples,
                 0,
-                shurikenStretchedStateSignatureSamples.Length);
+                shurikenRendererGeometryStateSignatureSamples.Length);
             Array.Clear(
-                gpuStretchedStateSignatureSamples,
+                gpuRendererGeometryStateSignatureSamples,
                 0,
-                gpuStretchedStateSignatureSamples.Length);
+                gpuRendererGeometryStateSignatureSamples.Length);
             materialColorComparableSamples = 0;
             materialColorClassificationFailures = 0;
             shurikenMaterialColorModeMask = 0;
@@ -7042,6 +7166,21 @@ namespace GPUParticles
         int CaptureCameraImage(string fileName, ParticleABDisplayMode mode)
         {
             SetDisplayMode(mode);
+            Vector3 captureCameraPosition = captureCamera.transform.position;
+            bool normalizeRendererGeometryView =
+                UsesRendererGeometrySignatureProfile() &&
+                mode == ParticleABDisplayMode.GPUOnly &&
+                shuriken != null &&
+                gpuParticles != null;
+            if (normalizeRendererGeometryView)
+            {
+                // Keep the side-by-side Both image useful for inspection, but
+                // render the individual A/B images from identical relative
+                // camera positions so perspective does not mask geometry errors.
+                captureCamera.transform.position +=
+                    gpuParticles.transform.position -
+                    shuriken.transform.position;
+            }
             RenderTexture previousTarget = captureCamera.targetTexture;
             captureCamera.targetTexture = cameraCaptureRT;
             captureCamera.Render();
@@ -7068,18 +7207,18 @@ namespace GPUParticles
                 ObserveTextureUVFlipColors(
                     mode, colorsValid, quadrantColors);
             }
-            if (IsStretchedBillboardProfile() &&
+            if (UsesRendererGeometrySignatureProfile() &&
                 mode != ParticleABDisplayMode.Both)
             {
-                bool signatureValid = TryMeasureStretchedBillboardSignature(
+                bool signatureValid = TryMeasureRendererGeometrySignature(
                     cameraImage,
                     mode,
-                    out StretchedBillboardSignature signature);
-                ObserveStretchedBillboardSignature(
+                    out RendererGeometrySignature signature);
+                ObserveRendererGeometrySignature(
                     mode,
                     signatureValid,
                     signature,
-                    activeStretchedBillboardState);
+                    activeRendererGeometryState);
             }
             if (IsMaterialColorProfile() &&
                 mode != ParticleABDisplayMode.Both)
@@ -7157,6 +7296,10 @@ namespace GPUParticles
                 ? ClassifyMarkerBounds(cameraImage)
                 : default;
             ObserveScalingModeBounds(mode, scalingBounds);
+            if (normalizeRendererGeometryView)
+            {
+                captureCamera.transform.position = captureCameraPosition;
+            }
             Destroy(cameraImage);
             return textureSheetFrame;
         }
@@ -7830,10 +7973,10 @@ namespace GPUParticles
                     Mathf.Abs(left.b - right.b)));
         }
 
-        bool TryMeasureStretchedBillboardSignature(
+        bool TryMeasureRendererGeometrySignature(
             Texture2D image,
             ParticleABDisplayMode mode,
-            out StretchedBillboardSignature signature)
+            out RendererGeometrySignature signature)
         {
             signature = default;
             Transform emitter = mode == ParticleABDisplayMode.ShurikenOnly
@@ -7871,6 +8014,8 @@ namespace GPUParticles
             int maximumY = -1;
             var colorSums = new Vector2[4];
             var colorCounts = new int[4];
+            Vector2 particlePixelSum = Vector2.zero;
+            int particlePixelCount = 0;
             const int maximumDistanceSquared = 55 * 55 * 3;
             for (int y = searchMinimumY; y <= searchMaximumY; y++)
             {
@@ -7905,6 +8050,8 @@ namespace GPUParticles
                     maximumY = Mathf.Max(maximumY, y);
                     colorSums[closestIndex] += new Vector2(x, y);
                     colorCounts[closestIndex]++;
+                    particlePixelSum += new Vector2(x, y);
+                    particlePixelCount++;
                 }
             }
 
@@ -7933,17 +8080,22 @@ namespace GPUParticles
 
             signature.Valid = true;
             signature.AspectRatio = width / Mathf.Max(1f, (float)height);
+            Vector2 particleCenter = particlePixelSum /
+                Mathf.Max(1, particlePixelCount);
+            signature.CenterOffset =
+                (particleCenter - new Vector2(searchCenterX, searchCenterY)) /
+                Mathf.Max(1f, searchRadius);
             signature.ColorCentroids = normalizedCentroids;
             return true;
         }
 
-        void ObserveStretchedBillboardSignature(
+        void ObserveRendererGeometrySignature(
             ParticleABDisplayMode mode,
             bool valid,
-            StretchedBillboardSignature signature,
+            RendererGeometrySignature signature,
             int state)
         {
-            if (!IsStretchedBillboardProfile() ||
+            if (!UsesRendererGeometrySignatureProfile() ||
                 mode == ParticleABDisplayMode.Both)
             {
                 return;
@@ -7952,65 +8104,76 @@ namespace GPUParticles
             state = Mathf.Clamp(
                 state,
                 0,
-                shurikenStretchedStateSignatureSums.Length - 1);
+                shurikenRendererGeometryStateSignatureSums.Length - 1);
             if (!valid || !signature.Valid ||
                 signature.ColorCentroids == null ||
                 signature.ColorCentroids.Length != 4)
             {
-                stretchedBillboardClassificationFailures++;
+                rendererGeometryClassificationFailures++;
                 if (mode == ParticleABDisplayMode.ShurikenOnly)
                 {
-                    hasCurrentShurikenStretchedBillboardSignature = false;
+                    hasCurrentShurikenRendererGeometrySignature = false;
                 }
                 return;
             }
 
+            Vector2 stateSignature = IsRendererPivotProfile()
+                ? signature.CenterOffset
+                : signature.ColorCentroids[0];
+
             if (mode == ParticleABDisplayMode.ShurikenOnly)
             {
-                shurikenStretchedBillboardStateMask |= 1 << state;
-                shurikenStretchedStateSignatureSums[state] +=
-                    signature.ColorCentroids[0];
-                shurikenStretchedStateSignatureSamples[state]++;
-                currentShurikenStretchedBillboardSignature = signature;
-                currentShurikenStretchedBillboardState = state;
-                hasCurrentShurikenStretchedBillboardSignature = true;
+                shurikenRendererGeometryStateMask |= 1 << state;
+                shurikenRendererGeometryStateSignatureSums[state] +=
+                    stateSignature;
+                shurikenRendererGeometryStateSignatureSamples[state]++;
+                currentShurikenRendererGeometrySignature = signature;
+                currentShurikenRendererGeometryState = state;
+                hasCurrentShurikenRendererGeometrySignature = true;
                 return;
             }
 
-            gpuStretchedBillboardStateMask |= 1 << state;
-            gpuStretchedStateSignatureSums[state] +=
-                signature.ColorCentroids[0];
-            gpuStretchedStateSignatureSamples[state]++;
-            if (!hasCurrentShurikenStretchedBillboardSignature ||
-                currentShurikenStretchedBillboardState != state)
+            gpuRendererGeometryStateMask |= 1 << state;
+            gpuRendererGeometryStateSignatureSums[state] +=
+                stateSignature;
+            gpuRendererGeometryStateSignatureSamples[state]++;
+            if (!hasCurrentShurikenRendererGeometrySignature ||
+                currentShurikenRendererGeometryState != state)
             {
-                stretchedBillboardClassificationFailures++;
-                hasCurrentShurikenStretchedBillboardSignature = false;
+                rendererGeometryClassificationFailures++;
+                hasCurrentShurikenRendererGeometrySignature = false;
                 return;
             }
 
-            stretchedBillboardComparableSamples++;
-            maximumStretchedBillboardAspectError = Mathf.Max(
-                maximumStretchedBillboardAspectError,
+            rendererGeometryComparableSamples++;
+            maximumRendererGeometryAspectError = Mathf.Max(
+                maximumRendererGeometryAspectError,
                 Mathf.Abs(
                     signature.AspectRatio -
-                    currentShurikenStretchedBillboardSignature.AspectRatio));
+                    currentShurikenRendererGeometrySignature.AspectRatio));
+            Vector2 centerOffsetDifference = signature.CenterOffset -
+                currentShurikenRendererGeometrySignature.CenterOffset;
+            maximumRendererGeometryCentroidError = Mathf.Max(
+                maximumRendererGeometryCentroidError,
+                Mathf.Max(
+                    Mathf.Abs(centerOffsetDifference.x),
+                    Mathf.Abs(centerOffsetDifference.y)));
             for (int paletteIndex = 0; paletteIndex < 4; paletteIndex++)
             {
                 Vector2 difference =
                     signature.ColorCentroids[paletteIndex] -
-                    currentShurikenStretchedBillboardSignature
+                    currentShurikenRendererGeometrySignature
                         .ColorCentroids[paletteIndex];
-                maximumStretchedBillboardCentroidError = Mathf.Max(
-                    maximumStretchedBillboardCentroidError,
+                maximumRendererGeometryCentroidError = Mathf.Max(
+                    maximumRendererGeometryCentroidError,
                     Mathf.Max(
                         Mathf.Abs(difference.x),
                         Mathf.Abs(difference.y)));
             }
-            hasCurrentShurikenStretchedBillboardSignature = false;
+            hasCurrentShurikenRendererGeometrySignature = false;
         }
 
-        static float StretchedStateSeparation(
+        static float RendererGeometryStateSeparation(
             Vector2[] sums,
             int[] samples)
         {
@@ -11451,18 +11614,40 @@ namespace GPUParticles
                         maximumMeanPositionError <= 0.04f &&
                         maximumShurikenParticleCount == 1 &&
                         maximumGPUParticleCount == 1 &&
-                        stretchedBillboardComparableSamples >= 60 &&
-                        stretchedBillboardClassificationFailures == 0 &&
-                        shurikenStretchedBillboardStateMask == 0x07 &&
-                        gpuStretchedBillboardStateMask == 0x07 &&
-                        maximumStretchedBillboardCentroidError <= 0.08f &&
-                        maximumStretchedBillboardAspectError <= 0.15f &&
-                        StretchedStateSeparation(
-                            shurikenStretchedStateSignatureSums,
-                            shurikenStretchedStateSignatureSamples) >= 0.08f &&
-                        StretchedStateSeparation(
-                            gpuStretchedStateSignatureSums,
-                            gpuStretchedStateSignatureSamples) >= 0.08f;
+                        rendererGeometryComparableSamples >= 60 &&
+                        rendererGeometryClassificationFailures == 0 &&
+                        shurikenRendererGeometryStateMask == 0x07 &&
+                        gpuRendererGeometryStateMask == 0x07 &&
+                        maximumRendererGeometryCentroidError <= 0.08f &&
+                        maximumRendererGeometryAspectError <= 0.15f &&
+                        RendererGeometryStateSeparation(
+                            shurikenRendererGeometryStateSignatureSums,
+                            shurikenRendererGeometryStateSignatureSamples) >=
+                                0.08f &&
+                        RendererGeometryStateSeparation(
+                            gpuRendererGeometryStateSignatureSums,
+                            gpuRendererGeometryStateSignatureSamples) >= 0.08f;
+                    break;
+
+                case ParticleABValidationProfile.RendererPivotPoint:
+                    profileSpecificPassed =
+                        maximumMeanSpeedError <= 0.01f &&
+                        maximumMeanPositionError <= 0.04f &&
+                        maximumShurikenParticleCount == 1 &&
+                        maximumGPUParticleCount == 1 &&
+                        rendererGeometryComparableSamples >= 60 &&
+                        rendererGeometryClassificationFailures == 0 &&
+                        shurikenRendererGeometryStateMask == 0x07 &&
+                        gpuRendererGeometryStateMask == 0x07 &&
+                        maximumRendererGeometryCentroidError <= 0.08f &&
+                        maximumRendererGeometryAspectError <= 0.15f &&
+                        RendererGeometryStateSeparation(
+                            shurikenRendererGeometryStateSignatureSums,
+                            shurikenRendererGeometryStateSignatureSamples) >=
+                                0.04f &&
+                        RendererGeometryStateSeparation(
+                            gpuRendererGeometryStateSignatureSums,
+                            gpuRendererGeometryStateSignatureSamples) >= 0.04f;
                     break;
 
                 case ParticleABValidationProfile.TextureSheetLifetimePoint:
@@ -11779,22 +11964,22 @@ namespace GPUParticles
                 $"{maximumTextureUVFlipColorError:R}; " +
                 $"maxTextureUVFlipExpectedColorError=" +
                 $"{maximumTextureUVFlipExpectedColorError:R}; " +
-                $"stretchedBillboardComparableSamples=" +
-                $"{stretchedBillboardComparableSamples}; " +
-                $"stretchedBillboardClassificationFailures=" +
-                $"{stretchedBillboardClassificationFailures}; " +
-                $"shurikenStretchedBillboardStateMask=" +
-                $"0x{shurikenStretchedBillboardStateMask:X2}; " +
-                $"gpuStretchedBillboardStateMask=" +
-                $"0x{gpuStretchedBillboardStateMask:X2}; " +
-                $"maxStretchedBillboardCentroidError=" +
-                $"{maximumStretchedBillboardCentroidError:R}; " +
-                $"maxStretchedBillboardAspectError=" +
-                $"{maximumStretchedBillboardAspectError:R}; " +
-                $"shurikenStretchedBillboardStateSeparation=" +
-                $"{StretchedStateSeparation(shurikenStretchedStateSignatureSums, shurikenStretchedStateSignatureSamples):R}; " +
-                $"gpuStretchedBillboardStateSeparation=" +
-                $"{StretchedStateSeparation(gpuStretchedStateSignatureSums, gpuStretchedStateSignatureSamples):R}; " +
+                $"rendererGeometryComparableSamples=" +
+                $"{rendererGeometryComparableSamples}; " +
+                $"rendererGeometryClassificationFailures=" +
+                $"{rendererGeometryClassificationFailures}; " +
+                $"shurikenRendererGeometryStateMask=" +
+                $"0x{shurikenRendererGeometryStateMask:X2}; " +
+                $"gpuRendererGeometryStateMask=" +
+                $"0x{gpuRendererGeometryStateMask:X2}; " +
+                $"maxRendererGeometryCentroidError=" +
+                $"{maximumRendererGeometryCentroidError:R}; " +
+                $"maxRendererGeometryAspectError=" +
+                $"{maximumRendererGeometryAspectError:R}; " +
+                $"shurikenRendererGeometryStateSeparation=" +
+                $"{RendererGeometryStateSeparation(shurikenRendererGeometryStateSignatureSums, shurikenRendererGeometryStateSignatureSamples):R}; " +
+                $"gpuRendererGeometryStateSeparation=" +
+                $"{RendererGeometryStateSeparation(gpuRendererGeometryStateSignatureSums, gpuRendererGeometryStateSignatureSamples):R}; " +
                 $"materialColorComparableSamples=" +
                 $"{materialColorComparableSamples}; " +
                 $"materialColorClassificationFailures=" +

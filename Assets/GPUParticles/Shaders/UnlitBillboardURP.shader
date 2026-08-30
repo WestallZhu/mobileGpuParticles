@@ -161,7 +161,7 @@ Shader "GPUParticles/UnlitBillboardURP"
                 int   _AllowRoll;
                 float _NormalDirection;     // 0..1
 
-                float2 _Pivot;
+                float3 _Pivot;
                 float3 _RendererFlip;
                 float  _LenScale;
                 float  _VelScale;
@@ -1155,11 +1155,11 @@ Shader "GPUParticles/UnlitBillboardURP"
                 float L = (_RenderMode==3)
                     ? max(
                         1e-4,
-                        W * _LenScale +
+                        H * _LenScale +
                         length(velWS) * _VelScale +
                         length(_CameraVelWS) * _CamVelScale)
                     : H;
-                float screenClampWidth = (_RenderMode == 3) ? H : W;
+                float screenClampWidth = W;
                 float screenClampHeight = (_RenderMode == 3) ? L : H;
                 if (_RenderMode == 1 || _RenderMode == 2)
                 {
@@ -1212,20 +1212,23 @@ Shader "GPUParticles/UnlitBillboardURP"
                 {
                     float scale = 0.70710678; // 1/sqrt(2)
                     local = localXY[corner] * float2(W, H) * scale;
+                    local += _Pivot.xy * float2(W, H) * scale;
                 }
                 else
                 {
                     local = localXY[corner] * float2(W, (_RenderMode==3)?L:H);
+                    if (_RenderMode != 3)
+                    {
+                        local += _Pivot.xy * float2(W, H);
+                    }
                 }
-
-                float2 pivotOff = float2(
-                    _Pivot.x * W,
-                    (_RenderMode==3) ? (_Pivot.y * L) : (_Pivot.y * H));
-                local -= pivotOff;
 
                 if (_RenderMode != 3)
                 {
-                    float s = sin(particleAngle);
+                    // Shuriken's positive particle rotation turns clockwise in
+                    // the renderer basis. The shader basis uses the opposite
+                    // mathematical convention, so apply the negated angle.
+                    float s = sin(-particleAngle);
                     float c = cos(particleAngle);
                     local = float2(local.x * c - local.y * s, local.x * s + local.y * c);
                 }
@@ -1259,6 +1262,8 @@ Shader "GPUParticles/UnlitBillboardURP"
                     }
                     projectedStretchDirection = normalize(
                         projectedStretchDirection);
+                    float3 stretchDirection = normalize(
+                        stretchDirectionSource);
 
                     float3 offsetWS;
                     if (_Freeform == 0)
@@ -1266,14 +1271,14 @@ Shader "GPUParticles/UnlitBillboardURP"
                         float3 widthDirection = normalize(cross(
                             projectedStretchDirection,
                             cameraForward));
-                        float stretchPosition =
-                            quadUV[corner].x + _Pivot.x;
                         float widthPosition =
-                            quadUV[corner].y - 0.5 - _Pivot.y;
+                            quadUV[corner].y - 0.5;
                         offsetWS =
-                            -projectedStretchDirection *
-                                (stretchPosition * L) +
-                            widthDirection * (widthPosition * H);
+                            -stretchDirection *
+                                (quadUV[corner].x * L) +
+                            widthDirection * (widthPosition * W) +
+                            widthDirection * (_Pivot.x * W) +
+                            stretchDirection * (_Pivot.y * H * 2.0);
                     }
                     else
                     {
@@ -1296,15 +1301,14 @@ Shader "GPUParticles/UnlitBillboardURP"
                             -particleAngle);
 
                         float horizontalPosition =
-                            quadUV[corner].x - 0.5 - _Pivot.x;
+                            quadUV[corner].x - 0.5 + _Pivot.x;
                         float verticalPosition =
-                            quadUV[corner].y - 0.5 - _Pivot.y;
+                            quadUV[corner].y - 0.5 + _Pivot.y;
                         offsetWS =
                             baseRight * (horizontalPosition * W) +
-                            baseUp * (verticalPosition * H);
-                        float3 stretchDirection = normalize(
-                            stretchDirectionSource);
-                        float stretchFactor = L / max(1e-4, W);
+                            baseUp * (verticalPosition * H) +
+                            cameraForward * (_Pivot.z * W);
+                        float stretchFactor = L / max(1e-4, H);
                         offsetWS += stretchDirection *
                             dot(offsetWS, stretchDirection) *
                             (stretchFactor - 1.0);
@@ -1317,9 +1321,20 @@ Shader "GPUParticles/UnlitBillboardURP"
                 }
                 else
                 {
+                    float3 pivotNormal = Normal;
+                    if (_RenderMode == 2 ||
+                        (_RenderMode == 0 &&
+                         (_RenderAlignment == 0 || _RenderAlignment == 1)))
+                    {
+                        pivotNormal = -pivotNormal;
+                    }
+                    float3 renderPivotNormal = mul(
+                        _ParticleScaleWorld,
+                        float4(pivotNormal, 0.0)).xyz;
                     wpos = posWS +
                         RenderRight * local.x +
-                        RenderUp * local.y;
+                        RenderUp * local.y +
+                        renderPivotNormal * (_Pivot.z * W);
                 }
 
                 o.posHCS = TransformWorldToHClip(wpos);
