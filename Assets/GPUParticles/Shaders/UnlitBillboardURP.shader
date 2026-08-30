@@ -4,6 +4,14 @@ Shader "GPUParticles/UnlitBillboardURP"
     {
         _BaseMap("Texture", 2D) = "white" {}
         [MainColor] _BaseColor("Base Color", Color) = (1,1,1,1)
+        [Enum(UnityEngine.Rendering.BlendOp)] _BlendOp("Blend Operation", Float) = 0
+        [Enum(UnityEngine.Rendering.BlendMode)] _SrcBlend("Source Blend", Float) = 5
+        [Enum(UnityEngine.Rendering.BlendMode)] _DstBlend("Destination Blend", Float) = 10
+        [Enum(UnityEngine.Rendering.BlendMode)] _SrcBlendAlpha("Source Blend Alpha", Float) = 1
+        [Enum(UnityEngine.Rendering.BlendMode)] _DstBlendAlpha("Destination Blend Alpha", Float) = 10
+        [HideInInspector] _AlphaPremultiply("Alpha Premultiply", Float) = 0
+        [HideInInspector] _AlphaModulate("Alpha Modulate", Float) = 0
+        [Toggle] _ZWrite("Z Write", Float) = 0
         _MinAlphaCull("MinAlphaCull", Range(0,1)) = 0.001
     }
     SubShader
@@ -12,8 +20,9 @@ Shader "GPUParticles/UnlitBillboardURP"
         Pass
         {
             Name "GPUParticlesBillboard"
-            Blend SrcAlpha OneMinusSrcAlpha
-            ZWrite Off
+            BlendOp [_BlendOp]
+            Blend [_SrcBlend] [_DstBlend], [_SrcBlendAlpha] [_DstBlendAlpha]
+            ZWrite [_ZWrite]
             Cull Off
 
             HLSLPROGRAM
@@ -113,7 +122,9 @@ Shader "GPUParticles/UnlitBillboardURP"
 
                 float4 _BaseColor;
                 int   _ParticleColorMode;
-                float3 _padMaterialColor;
+                int   _AlphaPremultiply;
+                int   _AlphaModulate;
+                float _padMaterialColor;
 
                 // emitter transforms (for LS->WS)
                 float4x4 _EmitterLocalToWorld;
@@ -1108,7 +1119,16 @@ Shader "GPUParticles/UnlitBillboardURP"
                     baseCol = lerp(baseCol, nextCol, saturate(i.frameBlend));
                 }
                 baseCol *= _BaseColor;
-                return MixParticleColor(baseCol, i.col);
+                float4 result = MixParticleColor(baseCol, i.col);
+                if (_AlphaModulate != 0)
+                {
+                    result.rgb = lerp(1.0.xxx, result.rgb, result.a);
+                }
+                else if (_AlphaPremultiply != 0)
+                {
+                    result.rgb *= result.a;
+                }
+                return result;
             }
             ENDHLSL
         }

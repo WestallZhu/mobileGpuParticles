@@ -15,6 +15,14 @@ namespace GPUParticles
         private Texture2D cachedBaseMap;
         private Color cachedMaterialBaseColor;
         private GPUParticleColorMode cachedMaterialColorMode;
+        private BlendOp cachedMaterialBlendOperation;
+        private BlendMode cachedMaterialSourceBlend;
+        private BlendMode cachedMaterialDestinationBlend;
+        private BlendMode cachedMaterialSourceBlendAlpha;
+        private BlendMode cachedMaterialDestinationBlendAlpha;
+        private bool cachedMaterialAlphaPremultiply;
+        private bool cachedMaterialAlphaModulate;
+        private bool cachedMaterialZWrite;
         private bool cachedTextureSheetFrameBlending;
 
         // 缓存上次的值以检测变化
@@ -1788,6 +1796,92 @@ namespace GPUParticles
             {
                 targetGPUParticleSystem.materialColorMode = colorMode;
                 cachedMaterialColorMode = colorMode;
+            }
+
+            BlendOp blendOperation =
+                ShurikenConverter.GetMaterialBlendOperation(material);
+            if (force ||
+                blendOperation != cachedMaterialBlendOperation)
+            {
+                targetGPUParticleSystem.materialBlendOperation =
+                    blendOperation;
+                cachedMaterialBlendOperation = blendOperation;
+            }
+
+            BlendMode sourceBlend =
+                ShurikenConverter.GetMaterialBlendFactor(
+                    material, "_SrcBlend", BlendMode.SrcAlpha);
+            if (force || sourceBlend != cachedMaterialSourceBlend)
+            {
+                targetGPUParticleSystem.materialSourceBlend = sourceBlend;
+                cachedMaterialSourceBlend = sourceBlend;
+            }
+
+            BlendMode destinationBlend =
+                ShurikenConverter.GetMaterialBlendFactor(
+                    material,
+                    "_DstBlend",
+                    BlendMode.OneMinusSrcAlpha);
+            if (force ||
+                destinationBlend != cachedMaterialDestinationBlend)
+            {
+                targetGPUParticleSystem.materialDestinationBlend =
+                    destinationBlend;
+                cachedMaterialDestinationBlend = destinationBlend;
+            }
+
+            BlendMode sourceBlendAlpha =
+                ShurikenConverter.GetMaterialBlendFactor(
+                    material, "_SrcBlendAlpha", BlendMode.One);
+            if (force ||
+                sourceBlendAlpha != cachedMaterialSourceBlendAlpha)
+            {
+                targetGPUParticleSystem.materialSourceBlendAlpha =
+                    sourceBlendAlpha;
+                cachedMaterialSourceBlendAlpha = sourceBlendAlpha;
+            }
+
+            BlendMode destinationBlendAlpha =
+                ShurikenConverter.GetMaterialBlendFactor(
+                    material,
+                    "_DstBlendAlpha",
+                    BlendMode.OneMinusSrcAlpha);
+            if (force ||
+                destinationBlendAlpha !=
+                cachedMaterialDestinationBlendAlpha)
+            {
+                targetGPUParticleSystem.materialDestinationBlendAlpha =
+                    destinationBlendAlpha;
+                cachedMaterialDestinationBlendAlpha =
+                    destinationBlendAlpha;
+            }
+
+            bool alphaPremultiply = material != null &&
+                material.IsKeywordEnabled("_ALPHAPREMULTIPLY_ON");
+            if (force ||
+                alphaPremultiply != cachedMaterialAlphaPremultiply)
+            {
+                targetGPUParticleSystem.materialAlphaPremultiply =
+                    alphaPremultiply;
+                cachedMaterialAlphaPremultiply = alphaPremultiply;
+            }
+
+            bool alphaModulate = material != null &&
+                material.IsKeywordEnabled("_ALPHAMODULATE_ON");
+            if (force || alphaModulate != cachedMaterialAlphaModulate)
+            {
+                targetGPUParticleSystem.materialAlphaModulate =
+                    alphaModulate;
+                cachedMaterialAlphaModulate = alphaModulate;
+            }
+
+            bool zWrite = material != null &&
+                material.HasProperty("_ZWrite") &&
+                material.GetFloat("_ZWrite") > 0.5f;
+            if (force || zWrite != cachedMaterialZWrite)
+            {
+                targetGPUParticleSystem.materialZWrite = zWrite;
+                cachedMaterialZWrite = zWrite;
             }
 
             bool frameBlending =

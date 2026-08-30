@@ -259,6 +259,16 @@ namespace GPUParticles
         public Color materialBaseColor = Color.white;
         public GPUParticleColorMode materialColorMode =
             GPUParticleColorMode.Multiply;
+        public BlendOp materialBlendOperation = BlendOp.Add;
+        public BlendMode materialSourceBlend = BlendMode.SrcAlpha;
+        public BlendMode materialDestinationBlend =
+            BlendMode.OneMinusSrcAlpha;
+        public BlendMode materialSourceBlendAlpha = BlendMode.One;
+        public BlendMode materialDestinationBlendAlpha =
+            BlendMode.OneMinusSrcAlpha;
+        public bool materialAlphaPremultiply;
+        public bool materialAlphaModulate;
+        public bool materialZWrite;
         [Range(0,1)] public float minAlphaCull = 0.001f;
         public bool renderEnabled = true;
 
@@ -749,6 +759,22 @@ namespace GPUParticles
             Shader.PropertyToID("_BaseColor");
         static readonly int _MaterialColorMode =
             Shader.PropertyToID("_ParticleColorMode");
+        static readonly int _MaterialBlendOperation =
+            Shader.PropertyToID("_BlendOp");
+        static readonly int _MaterialSourceBlend =
+            Shader.PropertyToID("_SrcBlend");
+        static readonly int _MaterialDestinationBlend =
+            Shader.PropertyToID("_DstBlend");
+        static readonly int _MaterialSourceBlendAlpha =
+            Shader.PropertyToID("_SrcBlendAlpha");
+        static readonly int _MaterialDestinationBlendAlpha =
+            Shader.PropertyToID("_DstBlendAlpha");
+        static readonly int _MaterialAlphaPremultiply =
+            Shader.PropertyToID("_AlphaPremultiply");
+        static readonly int _MaterialAlphaModulate =
+            Shader.PropertyToID("_AlphaModulate");
+        static readonly int _MaterialZWrite =
+            Shader.PropertyToID("_ZWrite");
         static readonly int _TextureSheetFrameLUTInvWidth =
             Shader.PropertyToID("_TextureSheetFrameLUTInvWidth");
         static readonly int _TextureSheetStartLUTInvWidth =
@@ -3439,6 +3465,30 @@ namespace GPUParticles
             renderMaterial.SetInt(
                 _MaterialColorMode,
                 Mathf.Clamp((int)materialColorMode, 0, 5));
+            renderMaterial.SetInt(
+                _MaterialBlendOperation,
+                (int)materialBlendOperation);
+            renderMaterial.SetInt(
+                _MaterialSourceBlend,
+                (int)materialSourceBlend);
+            renderMaterial.SetInt(
+                _MaterialDestinationBlend,
+                (int)materialDestinationBlend);
+            renderMaterial.SetInt(
+                _MaterialSourceBlendAlpha,
+                (int)materialSourceBlendAlpha);
+            renderMaterial.SetInt(
+                _MaterialDestinationBlendAlpha,
+                (int)materialDestinationBlendAlpha);
+            renderMaterial.SetInt(
+                _MaterialAlphaPremultiply,
+                materialAlphaPremultiply ? 1 : 0);
+            renderMaterial.SetInt(
+                _MaterialAlphaModulate,
+                materialAlphaModulate ? 1 : 0);
+            renderMaterial.SetInt(
+                _MaterialZWrite,
+                materialZWrite ? 1 : 0);
 
             renderMaterial.SetInt(_GridSize, gridSize);
             renderMaterial.SetInt(_MaxParticles, maxParticles);

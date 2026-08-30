@@ -494,6 +494,26 @@ namespace GPUParticles
             gpu.baseMap = TryGetBaseMap(renderer) ?? Texture2D.whiteTexture;
             gpu.materialBaseColor = GetMaterialBaseColor(material);
             gpu.materialColorMode = GetMaterialColorMode(material);
+            gpu.materialBlendOperation = GetMaterialBlendOperation(material);
+            gpu.materialSourceBlend = GetMaterialBlendFactor(
+                material, "_SrcBlend", BlendMode.SrcAlpha);
+            gpu.materialDestinationBlend = GetMaterialBlendFactor(
+                material,
+                "_DstBlend",
+                BlendMode.OneMinusSrcAlpha);
+            gpu.materialSourceBlendAlpha = GetMaterialBlendFactor(
+                material, "_SrcBlendAlpha", BlendMode.One);
+            gpu.materialDestinationBlendAlpha = GetMaterialBlendFactor(
+                material,
+                "_DstBlendAlpha",
+                BlendMode.OneMinusSrcAlpha);
+            gpu.materialAlphaPremultiply = material != null &&
+                material.IsKeywordEnabled("_ALPHAPREMULTIPLY_ON");
+            gpu.materialAlphaModulate = material != null &&
+                material.IsKeywordEnabled("_ALPHAMODULATE_ON");
+            gpu.materialZWrite = material != null &&
+                material.HasProperty("_ZWrite") &&
+                material.GetFloat("_ZWrite") > 0.5f;
             gpu.textureSheetFrameBlending = UsesFlipbookBlending(material);
         }
 
@@ -595,6 +615,24 @@ namespace GPUParticles
             return operation.x >= 0f
                 ? GPUParticleColorMode.Additive
                 : GPUParticleColorMode.Subtractive;
+        }
+
+        internal static BlendOp GetMaterialBlendOperation(Material material)
+        {
+            return material != null && material.HasProperty("_BlendOp")
+                ? (BlendOp)Mathf.RoundToInt(material.GetFloat("_BlendOp"))
+                : BlendOp.Add;
+        }
+
+        internal static BlendMode GetMaterialBlendFactor(
+            Material material,
+            string propertyName,
+            BlendMode fallback)
+        {
+            return material != null && material.HasProperty(propertyName)
+                ? (BlendMode)Mathf.RoundToInt(
+                    material.GetFloat(propertyName))
+                : fallback;
         }
 
         internal static bool UsesFlipbookBlending(Material material)

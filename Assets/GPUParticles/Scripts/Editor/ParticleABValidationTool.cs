@@ -699,6 +699,13 @@ namespace GPUParticles.Editor
                 ParticleABValidationProfile.MaterialColorModesPoint);
         }
 
+        [MenuItem("Tools/GPU Particles/Run Material Blend Modes A-B RT Capture")]
+        public static void RunMaterialBlendModesCaptureMenu()
+        {
+            StartTextureSheetCaptureMenu(
+                ParticleABValidationProfile.MaterialBlendModesPoint);
+        }
+
         [MenuItem("Tools/GPU Particles/Run Shape Sphere A-B RT Capture")]
         public static void RunShapeSphereCaptureMenu()
         {
@@ -1419,6 +1426,14 @@ namespace GPUParticles.Editor
                 ParticleABValidationProfile.MaterialColorModesPoint);
         }
 
+        public static void RunBatchMaterialBlendModesCapture()
+        {
+            ValidateCommonFeatureMapping();
+            StartCapture(
+                true,
+                ParticleABValidationProfile.MaterialBlendModesPoint);
+        }
+
         public static void RunBatchRotationOverLifetimeCapture()
         {
             ValidateCommonFeatureMapping();
@@ -1638,6 +1653,8 @@ namespace GPUParticles.Editor
                     return 3.8f;
                 case ParticleABValidationProfile.MaterialColorModesPoint:
                     return 3f;
+                case ParticleABValidationProfile.MaterialBlendModesPoint:
+                    return 2.4f;
                 case ParticleABValidationProfile.RotationOverLifetimeCurvePoint: return 2.5f;
                 case ParticleABValidationProfile.RotationBySpeedCurvePoint: return 2.5f;
                 case ParticleABValidationProfile.ColorSizeOverLifetimeRandomizedPoint: return 2f;
@@ -1740,7 +1757,8 @@ namespace GPUParticles.Editor
                    profile == ParticleABValidationProfile.TextureSheetBlendLifetimePoint ||
                    profile == ParticleABValidationProfile.TextureSheetBlendSpeedPoint ||
                    profile == ParticleABValidationProfile.TextureSheetBlendFPSPoint ||
-                   profile == ParticleABValidationProfile.MaterialColorModesPoint
+                   profile == ParticleABValidationProfile.MaterialColorModesPoint ||
+                   profile == ParticleABValidationProfile.MaterialBlendModesPoint
                 ? 20f
                 : 5f;
         }
@@ -1891,6 +1909,8 @@ namespace GPUParticles.Editor
                     return "TestResults/ParticleTextureSheetBlendFPS";
                 case ParticleABValidationProfile.MaterialColorModesPoint:
                     return "TestResults/ParticleMaterialColorModes";
+                case ParticleABValidationProfile.MaterialBlendModesPoint:
+                    return "TestResults/ParticleMaterialBlendModes";
                 case ParticleABValidationProfile.RotationOverLifetimeCurvePoint:
                     return "TestResults/ParticleRotationOverLifetime";
                 case ParticleABValidationProfile.RotationBySpeedCurvePoint:
@@ -3429,6 +3449,7 @@ namespace GPUParticles.Editor
                 ValidateCollisionMapping();
                 ValidateTextureSheetFrameBlendingMapping();
                 ValidateMaterialColorMapping();
+                ValidateMaterialBlendMapping();
                 Debug.Log("PARTICLE_COMMON_FEATURE_MAPPING_RESULT:PASS");
             }
             finally
@@ -4247,6 +4268,116 @@ namespace GPUParticles.Editor
                         "_BaseColorAddSubDiff",
                         new Vector4(-1f, 1f, 0f, 0f));
                     break;
+            }
+        }
+
+        static void ValidateMaterialBlendMapping()
+        {
+            var owner = new GameObject(
+                "ParticleMaterialBlendMappingValidation");
+            owner.SetActive(false);
+            Material material = null;
+            try
+            {
+                var shuriken = owner.AddComponent<ParticleSystem>();
+                ParticleSystem.MainModule main = shuriken.main;
+                main.playOnAwake = false;
+                var renderer = owner.GetComponent<ParticleSystemRenderer>();
+
+                Shader shader = Shader.Find(
+                    "Universal Render Pipeline/Particles/Unlit");
+                Require(shader != null,
+                    "URP particle shader was not found for material blend mapping.");
+                material = new Material(shader);
+                renderer.sharedMaterial = material;
+
+                ShurikenConverter.Convert(owner);
+                var gpu = owner.GetComponent<GPUParticleSystem>();
+                Require(gpu != null,
+                    "Material blend conversion did not create a GPU system.");
+
+                var expectedSource = new[]
+                {
+                    BlendMode.SrcAlpha,
+                    BlendMode.One,
+                    BlendMode.SrcAlpha,
+                    BlendMode.DstColor
+                };
+                var expectedDestination = new[]
+                {
+                    BlendMode.OneMinusSrcAlpha,
+                    BlendMode.OneMinusSrcAlpha,
+                    BlendMode.One,
+                    BlendMode.Zero
+                };
+                var expectedSourceAlpha = new[]
+                {
+                    BlendMode.One,
+                    BlendMode.One,
+                    BlendMode.One,
+                    BlendMode.Zero
+                };
+                var expectedDestinationAlpha = new[]
+                {
+                    BlendMode.OneMinusSrcAlpha,
+                    BlendMode.OneMinusSrcAlpha,
+                    BlendMode.One,
+                    BlendMode.One
+                };
+
+                for (int i = 0; i < 4; i++)
+                {
+                    material.SetFloat(
+                        "_Surface",
+                        (float)BaseShaderGUI.SurfaceType.Transparent);
+                    material.SetFloat(
+                        "_Blend", (float)(BaseShaderGUI.BlendMode)i);
+                    material.SetFloat("_BlendOp", (float)BlendOp.Add);
+                    BaseShaderGUI.SetupMaterialBlendMode(material);
+                    ShurikenConverter.ApplyMaterialParameters(
+                        renderer, gpu);
+
+                    Require(gpu.materialBlendOperation == BlendOp.Add,
+                        $"Material BlendOp was not mapped for mode {i}.");
+                    Require(gpu.materialSourceBlend == expectedSource[i],
+                        $"Material source blend was not mapped for mode {i}.");
+                    Require(
+                        gpu.materialDestinationBlend ==
+                        expectedDestination[i],
+                        $"Material destination blend was not mapped for mode {i}.");
+                    Require(
+                        gpu.materialSourceBlendAlpha ==
+                        expectedSourceAlpha[i],
+                        $"Material source alpha blend was not mapped for mode {i}.");
+                    Require(
+                        gpu.materialDestinationBlendAlpha ==
+                        expectedDestinationAlpha[i],
+                        $"Material destination alpha blend was not mapped for mode {i}.");
+                    Require(!gpu.materialAlphaPremultiply,
+                        $"Unexpected premultiply keyword for material mode {i}.");
+                    Require(gpu.materialAlphaModulate == (i == 3),
+                        $"Material alpha modulation was not mapped for mode {i}.");
+                    Require(!gpu.materialZWrite,
+                        $"Transparent material ZWrite was not mapped for mode {i}.");
+                }
+
+                material.SetFloat(
+                    "_BlendOp", (float)BlendOp.ReverseSubtract);
+                material.SetFloat("_ZWrite", 1f);
+                material.EnableKeyword("_ALPHAPREMULTIPLY_ON");
+                ShurikenConverter.ApplyMaterialParameters(renderer, gpu);
+                Require(
+                    gpu.materialBlendOperation == BlendOp.ReverseSubtract,
+                    "Custom material BlendOp was not mapped.");
+                Require(gpu.materialZWrite,
+                    "Material ZWrite was not mapped.");
+                Require(gpu.materialAlphaPremultiply,
+                    "Material premultiply keyword was not mapped.");
+            }
+            finally
+            {
+                Object.DestroyImmediate(owner);
+                Object.DestroyImmediate(material);
             }
         }
 
