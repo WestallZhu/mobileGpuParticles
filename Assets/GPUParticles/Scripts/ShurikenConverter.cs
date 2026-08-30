@@ -32,6 +32,7 @@ namespace GPUParticles
             gpu.simulationSpace = main.simulationSpace == ParticleSystemSimulationSpace.World ? SimulationSpace.World : SimulationSpace.Local;
             ApplyMainRanges(ps, gpu, owner);
             gpu.simulationSpeed = main.simulationSpeed;
+            gpu.useUnscaledTime = main.useUnscaledTime;
 
             ApplyForceOverLifetime(ps, gpu, owner);
             ApplyVelocityOverLifetime(ps, gpu, owner);
@@ -281,6 +282,7 @@ namespace GPUParticles
             gpu.simulationSpace = main.simulationSpace == ParticleSystemSimulationSpace.World ? SimulationSpace.World : SimulationSpace.Local;
             ApplyMainRanges(particleSystem, gpu, gpuChild);
             gpu.simulationSpeed = main.simulationSpeed;
+            gpu.useUnscaledTime = main.useUnscaledTime;
 
             ApplyForceOverLifetime(particleSystem, gpu, gpuChild);
             ApplyVelocityOverLifetime(particleSystem, gpu, gpuChild);

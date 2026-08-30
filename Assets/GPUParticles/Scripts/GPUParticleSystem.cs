@@ -76,6 +76,7 @@ namespace GPUParticles
             ParticleSystemCurveMode.Constant;
         public Texture2D gravityModifierLUT;
         [Min(0.0f)] public float simulationSpeed = 1.0f;
+        public bool useUnscaledTime;
         public float startRotation = 0.0f;
         public ParticleSystemCurveMode startRotationMode =
             ParticleSystemCurveMode.Constant;
@@ -1705,9 +1706,15 @@ namespace GPUParticles
                 lastSimulatedFrame = frame;
             }
 
-            float dt = Application.isPlaying ? Time.deltaTime : (1f / 60f);
+            float dt = FrameDeltaTime();
             dt *= simulationSpeed;
             SimulateStep(cmd, dt);
+        }
+
+        float FrameDeltaTime()
+        {
+            if (!Application.isPlaying) return 1f / 60f;
+            return useUnscaledTime ? Time.unscaledDeltaTime : Time.deltaTime;
         }
 
         internal void SimulateStep(CommandBuffer cmd, float dt)
@@ -2447,7 +2454,7 @@ namespace GPUParticles
             // camera position & velocity
             Vector3 camPos = camera.transform.position;
             Vector3 camVel = Vector3.zero;
-            float dt = Application.isPlaying ? Time.deltaTime : (1f/60f);
+            float dt = FrameDeltaTime();
             if (prevCamPosValid && dt > 1e-6f) camVel = (camPos - prevCamPos) / dt;
             prevCamPos = camPos; prevCamPosValid = true;
             renderMaterial.SetVector(_CameraPosWS, camPos);

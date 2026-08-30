@@ -20,6 +20,7 @@ namespace GPUParticles
         private Color cachedStartColor;
         private float cachedGravityModifier;
         private float cachedSimulationSpeed;
+        private bool cachedUseUnscaledTime;
         private float cachedStartRotation;
         private float cachedRotationOverLifetime;
         private bool cachedEmissionEnabled;
@@ -167,6 +168,7 @@ namespace GPUParticles
             cachedStartColor = main.startColor.mode == ParticleSystemGradientMode.Color ? main.startColor.color : cachedStartColor;
             cachedGravityModifier = main.gravityModifier.mode == ParticleSystemCurveMode.Constant ? main.gravityModifier.constant : cachedGravityModifier;
             cachedSimulationSpeed = main.simulationSpeed;
+            cachedUseUnscaledTime = main.useUnscaledTime;
             cachedStartRotation = main.startRotation.mode == ParticleSystemCurveMode.Constant ? main.startRotation.constant : cachedStartRotation;
             cachedEmissionEnabled = emission.enabled;
             cachedMaxParticles = main.maxParticles;
@@ -405,6 +407,12 @@ namespace GPUParticles
             {
                 targetGPUParticleSystem.simulationSpeed = newSimulationSpeed;
                 cachedSimulationSpeed = newSimulationSpeed;
+            }
+
+            if (force || main.useUnscaledTime != cachedUseUnscaledTime)
+            {
+                targetGPUParticleSystem.useUnscaledTime = main.useUnscaledTime;
+                cachedUseUnscaledTime = main.useUnscaledTime;
             }
 
             ParticleSystem.MinMaxCurve startRotation = main.startRotation3D

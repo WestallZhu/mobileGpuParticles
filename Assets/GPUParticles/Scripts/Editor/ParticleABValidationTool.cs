@@ -226,6 +226,13 @@ namespace GPUParticles.Editor
                 ParticleABValidationProfile.RendererScreenSizeClampPoint);
         }
 
+        [MenuItem("Tools/GPU Particles/Run Unscaled Time A-B RT Capture")]
+        public static void RunUnscaledTimeCaptureMenu()
+        {
+            StartStartSizeCapture(
+                ParticleABValidationProfile.UnscaledTimePoint);
+        }
+
         static void StartStartSizeCapture(
             ParticleABValidationProfile profile)
         {
@@ -720,6 +727,14 @@ namespace GPUParticles.Editor
                 ParticleABValidationProfile.RendererScreenSizeClampPoint);
         }
 
+        public static void RunBatchUnscaledTimeCapture()
+        {
+            ValidateCommonFeatureMapping();
+            StartCapture(
+                true,
+                ParticleABValidationProfile.UnscaledTimePoint);
+        }
+
         public static void RunBatchGravityModifierCurveCapture()
         {
             ValidateCommonFeatureMapping();
@@ -1026,6 +1041,8 @@ namespace GPUParticles.Editor
                     return 3f;
                 case ParticleABValidationProfile.RendererScreenSizeClampPoint:
                     return 4.2f;
+                case ParticleABValidationProfile.UnscaledTimePoint:
+                    return 3.2f;
                 case ParticleABValidationProfile.StartLifetimeCurvePoint:
                 case ParticleABValidationProfile.StartLifetimeTwoCurvesPoint:
                     return 4.5f;
@@ -1076,6 +1093,7 @@ namespace GPUParticles.Editor
                     profile == ParticleABValidationProfile.StartSizeTwoCurvesPoint ||
                     profile == ParticleABValidationProfile.SizeSeparateAxesPoint ||
                     profile == ParticleABValidationProfile.RendererScreenSizeClampPoint ||
+                    profile == ParticleABValidationProfile.UnscaledTimePoint ||
                    profile == ParticleABValidationProfile.GravityModifierCurvePoint ||
                    profile == ParticleABValidationProfile.GravityModifierTwoCurvesPoint ||
                    profile == ParticleABValidationProfile.EmissionRateCurvePoint ||
@@ -1129,6 +1147,8 @@ namespace GPUParticles.Editor
                     return "TestResults/ParticleSizeSeparateAxes";
                 case ParticleABValidationProfile.RendererScreenSizeClampPoint:
                     return "TestResults/ParticleRendererScreenSizeClamp";
+                case ParticleABValidationProfile.UnscaledTimePoint:
+                    return "TestResults/ParticleUnscaledTime";
                 case ParticleABValidationProfile.GravityModifierCurvePoint:
                     return "TestResults/ParticleGravityModifierCurve";
                 case ParticleABValidationProfile.GravityModifierTwoCurvesPoint:
@@ -1255,6 +1275,7 @@ namespace GPUParticles.Editor
             {
                 var shuriken = owner.AddComponent<ParticleSystem>();
                 var main = shuriken.main;
+                main.useUnscaledTime = true;
                 var shurikenRenderer =
                     owner.GetComponent<ParticleSystemRenderer>();
                 shurikenRenderer.minParticleSize = 0.075f;
@@ -1484,6 +1505,8 @@ namespace GPUParticles.Editor
                 ShurikenConverter.Convert(owner);
                 var gpu = owner.GetComponent<GPUParticleSystem>();
                 Require(gpu != null, "Converter did not create GPUParticleSystem.");
+                Require(gpu.useUnscaledTime,
+                    "Main Use Unscaled Time was not mapped.");
                 Require(gpu.screenSpaceSizeClampEnabled,
                     "Renderer screen-space size clamp was not enabled.");
                 RequireApproximately(
@@ -2286,11 +2309,14 @@ namespace GPUParticles.Editor
                 shape.radius = 3f;
                 shape.scale = new Vector3(2f, 3f, 1f);
                 shape.arc = 90f;
+                main.useUnscaledTime = false;
                 shurikenRenderer.minParticleSize = 0.125f;
                 shurikenRenderer.maxParticleSize = 0.45f;
                 ShurikenConverter.Convert(owner);
 
                 Require(gpu.shapeType == ShapeTypeGPU.Circle, "Circle Shape was not mapped.");
+                Require(!gpu.useUnscaledTime,
+                    "Updated Main Use Unscaled Time was not mapped.");
                 RequireApproximately(gpu.shapeCircleRadius, 3f,
                     "Circle radius must remain unscaled before GPU Shape TRS");
                 Require(gpu.shapeLocalScale == shape.scale, "Shape scale was not preserved.");
