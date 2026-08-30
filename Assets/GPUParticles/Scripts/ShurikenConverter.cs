@@ -63,6 +63,7 @@ namespace GPUParticles
             gpu.shapeSphericalDirectionAmount =
                 shape.sphericalDirectionAmount;
             gpu.shapeRandomPositionAmount = shape.randomPositionAmount;
+            ApplyShapeArc(shape, gpu);
 
             // ---- Shape mapping ----
             gpu.shapeType = ShapeTypeGPU.Cone; // 默认使用Cone
@@ -328,6 +329,7 @@ namespace GPUParticles
             gpu.shapeSphericalDirectionAmount =
                 shape.sphericalDirectionAmount;
             gpu.shapeRandomPositionAmount = shape.randomPositionAmount;
+            ApplyShapeArc(shape, gpu);
 
             // ---- Shape mapping ----
             gpu.shapeType = ShapeTypeGPU.Cone; // 默认使用Cone
@@ -1064,6 +1066,40 @@ namespace GPUParticles
                     return SimulationSpace.Custom;
                 default:
                     return SimulationSpace.Local;
+            }
+        }
+
+        static void ApplyShapeArc(
+            ParticleSystem.ShapeModule shape,
+            GPUParticleSystem gpu)
+        {
+            gpu.shapeArcMode = ConvertShapeArcMode(shape.arcMode);
+            gpu.shapeArcSpread = Mathf.Clamp01(shape.arcSpread);
+            gpu.shapeArcSpeedMode = shape.arcSpeed.mode;
+            bool animatedArc =
+                shape.arcMode == ParticleSystemShapeMultiModeValue.Loop ||
+                shape.arcMode == ParticleSystemShapeMultiModeValue.PingPong;
+            gpu.shapeArcSpeedIntegralLUT = animatedArc
+                ? CurveLUTBuilder.BuildIntegral(
+                    shape.arcSpeed,
+                    saveAsAsset: true,
+                    assetName: "ShapeArcSpeedIntegral_LUT")
+                : CurveLUTBuilder.GetDefaultLinear01LUT();
+        }
+
+        static ShapeArcModeGPU ConvertShapeArcMode(
+            ParticleSystemShapeMultiModeValue source)
+        {
+            switch (source)
+            {
+                case ParticleSystemShapeMultiModeValue.Loop:
+                    return ShapeArcModeGPU.Loop;
+                case ParticleSystemShapeMultiModeValue.PingPong:
+                    return ShapeArcModeGPU.PingPong;
+                case ParticleSystemShapeMultiModeValue.BurstSpread:
+                    return ShapeArcModeGPU.BurstSpread;
+                default:
+                    return ShapeArcModeGPU.Random;
             }
         }
 

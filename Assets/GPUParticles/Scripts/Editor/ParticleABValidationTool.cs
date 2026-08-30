@@ -673,6 +673,34 @@ namespace GPUParticles.Editor
                 ParticleABValidationProfile.ShapeRandomPositionPoint);
         }
 
+        [MenuItem("Tools/GPU Particles/Run Shape Arc Random Spread A-B RT Capture")]
+        public static void RunShapeArcRandomSpreadCaptureMenu()
+        {
+            StartShapeCaptureMenu(
+                ParticleABValidationProfile.ShapeArcRandomSpreadPoint);
+        }
+
+        [MenuItem("Tools/GPU Particles/Run Shape Arc Loop A-B RT Capture")]
+        public static void RunShapeArcLoopCaptureMenu()
+        {
+            StartShapeCaptureMenu(
+                ParticleABValidationProfile.ShapeArcLoopPoint);
+        }
+
+        [MenuItem("Tools/GPU Particles/Run Shape Arc Ping Pong A-B RT Capture")]
+        public static void RunShapeArcPingPongCaptureMenu()
+        {
+            StartShapeCaptureMenu(
+                ParticleABValidationProfile.ShapeArcPingPongPoint);
+        }
+
+        [MenuItem("Tools/GPU Particles/Run Shape Arc Burst Spread A-B RT Capture")]
+        public static void RunShapeArcBurstSpreadCaptureMenu()
+        {
+            StartShapeCaptureMenu(
+                ParticleABValidationProfile.ShapeArcBurstSpreadPoint);
+        }
+
         static void StartShapeCaptureMenu(ParticleABValidationProfile profile)
         {
             if (EditorApplication.isPlaying)
@@ -1179,6 +1207,38 @@ namespace GPUParticles.Editor
                 ParticleABValidationProfile.ShapeRandomPositionPoint);
         }
 
+        public static void RunBatchShapeArcRandomSpreadCapture()
+        {
+            ValidateCommonFeatureMapping();
+            StartCapture(
+                true,
+                ParticleABValidationProfile.ShapeArcRandomSpreadPoint);
+        }
+
+        public static void RunBatchShapeArcLoopCapture()
+        {
+            ValidateCommonFeatureMapping();
+            StartCapture(
+                true,
+                ParticleABValidationProfile.ShapeArcLoopPoint);
+        }
+
+        public static void RunBatchShapeArcPingPongCapture()
+        {
+            ValidateCommonFeatureMapping();
+            StartCapture(
+                true,
+                ParticleABValidationProfile.ShapeArcPingPongPoint);
+        }
+
+        public static void RunBatchShapeArcBurstSpreadCapture()
+        {
+            ValidateCommonFeatureMapping();
+            StartCapture(
+                true,
+                ParticleABValidationProfile.ShapeArcBurstSpreadPoint);
+        }
+
         public static void RunBatchTextureSheetLifetimeCapture()
         {
             ValidateCommonFeatureMapping();
@@ -1632,6 +1692,14 @@ namespace GPUParticles.Editor
                     return "TestResults/ParticleShapeSphericalDirection";
                 case ParticleABValidationProfile.ShapeRandomPositionPoint:
                     return "TestResults/ParticleShapeRandomPosition";
+                case ParticleABValidationProfile.ShapeArcRandomSpreadPoint:
+                    return "TestResults/ParticleShapeArcRandomSpread";
+                case ParticleABValidationProfile.ShapeArcLoopPoint:
+                    return "TestResults/ParticleShapeArcLoop";
+                case ParticleABValidationProfile.ShapeArcPingPongPoint:
+                    return "TestResults/ParticleShapeArcPingPong";
+                case ParticleABValidationProfile.ShapeArcBurstSpreadPoint:
+                    return "TestResults/ParticleShapeArcBurstSpread";
                 case ParticleABValidationProfile.TextureSheetLifetimePoint:
                     return "TestResults/ParticleTextureSheetLifetime";
                 case ParticleABValidationProfile.TextureSheetSpeedPoint:
@@ -1673,6 +1741,7 @@ namespace GPUParticles.Editor
             Texture2D firstLifetimeByEmitterSpeedLUT = null;
             Texture2D firstTextureSheetFrameLUT = null;
             Texture2D firstTextureSheetStartLUT = null;
+            Texture2D firstShapeArcSpeedLUT = null;
             Texture2D firstRotationLUT = null;
             Texture2D firstRotationBySpeedLUT = null;
             Texture2D firstStartLifetimeLUT = null;
@@ -1703,6 +1772,7 @@ namespace GPUParticles.Editor
             string secondTextureSheetFrameAssetPath = null;
             string firstTextureSheetStartAssetPath = null;
             string secondTextureSheetStartAssetPath = null;
+            string firstShapeArcSpeedAssetPath = null;
             string firstRotationAssetPath = null;
             string secondRotationAssetPath = null;
             string firstRotationBySpeedAssetPath = null;
@@ -1835,6 +1905,13 @@ namespace GPUParticles.Editor
                 shape.randomDirectionAmount = 0.25f;
                 shape.sphericalDirectionAmount = 0.5f;
                 shape.randomPositionAmount = 0.75f;
+                shape.arc = 210f;
+                shape.arcMode = ParticleSystemShapeMultiModeValue.PingPong;
+                shape.arcSpread = 0.125f;
+                shape.arcSpeed = new ParticleSystem.MinMaxCurve(
+                    1f,
+                    AnimationCurve.Linear(0f, 0.25f, 1f, 0.5f),
+                    AnimationCurve.Linear(0f, 1f, 1f, 2f));
                 shape.enabled = false;
 
                 var force = shuriken.forceOverLifetime;
@@ -2255,6 +2332,33 @@ namespace GPUParticles.Editor
                     gpu.shapeRandomPositionAmount,
                     0.75f,
                     "Shape Randomize Position");
+                Require(gpu.shapeArcMode == ShapeArcModeGPU.PingPong,
+                    "Shape Arc Ping Pong mode was not mapped.");
+                RequireApproximately(
+                    gpu.shapeArcSpread,
+                    0.125f,
+                    "Shape Arc Spread");
+                Require(gpu.shapeArcSpeedMode ==
+                        ParticleSystemCurveMode.TwoCurves,
+                    "Shape Arc Speed Two Curves mode was not mapped.");
+                Require(gpu.shapeArcSpeedIntegralLUT != null &&
+                        gpu.shapeArcSpeedIntegralLUT.height == 2,
+                    "Shape Arc Speed cumulative minimum/maximum LUT was not generated.");
+                firstShapeArcSpeedLUT = gpu.shapeArcSpeedIntegralLUT;
+                firstShapeArcSpeedAssetPath =
+                    AssetDatabase.GetAssetPath(firstShapeArcSpeedLUT);
+                RequireApproximately(
+                    firstShapeArcSpeedLUT.GetPixel(
+                        firstShapeArcSpeedLUT.width - 1,
+                        0).r,
+                    0.375f,
+                    "Shape Arc Speed minimum integral");
+                RequireApproximately(
+                    firstShapeArcSpeedLUT.GetPixel(
+                        firstShapeArcSpeedLUT.width - 1,
+                        1).r,
+                    1.5f,
+                    "Shape Arc Speed maximum integral");
                 Require(gpu.forceOverLifetimeEnabled, "Force over Lifetime enabled state was not mapped.");
                 Require(gpu.forceOverLifetimeSpace == SimulationSpace.World,
                     "Force over Lifetime space was not mapped.");
@@ -2829,6 +2933,13 @@ namespace GPUParticles.Editor
                 firstSizeBySpeedLUT = null;
                 gpu.sizeBySpeedLUT = null;
 
+                if (string.IsNullOrEmpty(firstShapeArcSpeedAssetPath))
+                {
+                    Object.DestroyImmediate(firstShapeArcSpeedLUT);
+                }
+                firstShapeArcSpeedLUT = null;
+                gpu.shapeArcSpeedIntegralLUT = null;
+
                 main.startLifetime = new ParticleSystem.MinMaxCurve(2f, 4f);
                 main.startSpeed = new ParticleSystem.MinMaxCurve(1f, 3f);
                 main.startSize = new ParticleSystem.MinMaxCurve(0.5f, 1.5f);
@@ -2842,6 +2953,10 @@ namespace GPUParticles.Editor
                 shape.radius = 3f;
                 shape.scale = new Vector3(2f, 3f, 1f);
                 shape.arc = 90f;
+                shape.arcMode =
+                    ParticleSystemShapeMultiModeValue.BurstSpread;
+                shape.arcSpread = 0.2f;
+                shape.arcSpeed = 0.75f;
                 main.useUnscaledTime = false;
                 main.scalingMode = ParticleSystemScalingMode.Shape;
                 shurikenRenderer.minParticleSize = 0.125f;
@@ -2858,6 +2973,17 @@ namespace GPUParticles.Editor
                     "Circle radius must remain unscaled before GPU Shape TRS");
                 Require(gpu.shapeLocalScale == shape.scale, "Shape scale was not preserved.");
                 RequireApproximately(gpu.shapeConeArcDeg, 90f, "Shape Arc");
+                Require(gpu.shapeArcMode == ShapeArcModeGPU.BurstSpread,
+                    "Updated Shape Arc Burst Spread mode was not mapped.");
+                RequireApproximately(
+                    gpu.shapeArcSpread,
+                    0.2f,
+                    "Updated Shape Arc Spread");
+                Require(gpu.shapeArcSpeedMode ==
+                        ParticleSystemCurveMode.Constant,
+                    "Updated Shape Arc Speed Constant mode was not mapped.");
+                Require(gpu.shapeArcSpeedIntegralLUT != null,
+                    "Updated Burst Spread fallback Arc Speed LUT was not assigned.");
                 Require(gpu.screenSpaceSizeClampEnabled,
                     "Renderer screen-space size clamp was not preserved.");
                 RequireApproximately(
@@ -3225,6 +3351,11 @@ namespace GPUParticles.Editor
                 {
                     Object.DestroyImmediate(firstSizeBySpeedLUT);
                 }
+                if (firstShapeArcSpeedLUT != null &&
+                    string.IsNullOrEmpty(firstShapeArcSpeedAssetPath))
+                {
+                    Object.DestroyImmediate(firstShapeArcSpeedLUT);
+                }
                 Object.DestroyImmediate(owner);
                 if (!string.IsNullOrEmpty(firstStartLifetimeAssetPath))
                 {
@@ -3348,6 +3479,10 @@ namespace GPUParticles.Editor
                         firstTextureSheetStartAssetPath)
                 {
                     AssetDatabase.DeleteAsset(secondTextureSheetStartAssetPath);
+                }
+                if (!string.IsNullOrEmpty(firstShapeArcSpeedAssetPath))
+                {
+                    AssetDatabase.DeleteAsset(firstShapeArcSpeedAssetPath);
                 }
                 if (!string.IsNullOrEmpty(firstRotationAssetPath))
                 {

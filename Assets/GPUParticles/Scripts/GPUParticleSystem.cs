@@ -15,6 +15,13 @@ namespace GPUParticles
         Base = 2,
         Edge = 3
     }
+    public enum ShapeArcModeGPU
+    {
+        Random = 0,
+        Loop = 1,
+        PingPong = 2,
+        BurstSpread = 3
+    }
 
     public enum GPURenderMode { Billboard = 0, HorizontalBillboard = 1, VerticalBillboard = 2, StretchedBillboard = 3 }
     public enum GPUAlignment  { View = 0, Facing = 1, World = 2, Local = 3, Velocity = 4 }
@@ -232,6 +239,12 @@ namespace GPUParticles
         public float shapeConeLength = 1.0f;
         [Range(0,1)] public float shapeRadiusThickness = 1.0f;
         [Range(0,360)] public float shapeConeArcDeg = 360f;
+        public ShapeArcModeGPU shapeArcMode = ShapeArcModeGPU.Random;
+        [Range(0f, 1f)] public float shapeArcSpread;
+        public ParticleSystemCurveMode shapeArcSpeedMode =
+            ParticleSystemCurveMode.Constant;
+        [Tooltip("Integral of Shape Arc Speed over normalized system time.")]
+        public Texture2D shapeArcSpeedIntegralLUT;
 
         // Donut
         public float shapeDonutRadius = 1.0f; // 主圆环半径
@@ -549,6 +562,14 @@ namespace GPUParticles
         static readonly int _ShapeConeLength = Shader.PropertyToID("_ShapeConeLength");
         static readonly int _ShapeRadiusThickness = Shader.PropertyToID("_ShapeRadiusThickness");
         static readonly int _ShapeConeArcRad = Shader.PropertyToID("_ShapeConeArcRad");
+        static readonly int _ShapeArcMode = Shader.PropertyToID("_ShapeArcMode");
+        static readonly int _ShapeArcSpread = Shader.PropertyToID("_ShapeArcSpread");
+        static readonly int _ShapeArcSpeedMode =
+            Shader.PropertyToID("_ShapeArcSpeedMode");
+        static readonly int _ShapeArcSpeedIntegralLUT =
+            Shader.PropertyToID("_ShapeArcSpeedIntegralLUT");
+        static readonly int _ShapeArcSpeedIntegralLUTInvWidth =
+            Shader.PropertyToID("_ShapeArcSpeedIntegralLUTInvWidth");
         static readonly int _ShapeBoxSize = Shader.PropertyToID("_ShapeBoxSize");
         static readonly int _ShapeSphereRadius = Shader.PropertyToID("_ShapeSphereRadius");
         static readonly int _ShapeDonutRadius = Shader.PropertyToID("_ShapeDonutRadius");
@@ -683,6 +704,7 @@ namespace GPUParticles
             shapeRandomPositionAmount = Mathf.Max(
                 0f,
                 shapeRandomPositionAmount);
+            shapeArcSpread = Mathf.Clamp01(shapeArcSpread);
             Vector3 cullingSize = localCullingBounds.size;
             localCullingBounds.size = new Vector3(
                 Mathf.Max(0.0002f, Mathf.Abs(cullingSize.x)),
@@ -3038,6 +3060,22 @@ namespace GPUParticles
             simulateProperties.SetFloat(_ShapeRadiusThickness, Mathf.Clamp01(shapeRadiusThickness));
             simulateProperties.SetFloat(_ShapeConeArcRad,
                 Mathf.Clamp(shapeConeArcDeg, 0f, 360f) * Mathf.Deg2Rad);
+            simulateProperties.SetInt(_ShapeArcMode, (int)shapeArcMode);
+            simulateProperties.SetFloat(
+                _ShapeArcSpread,
+                Mathf.Clamp01(shapeArcSpread));
+            simulateProperties.SetInt(
+                _ShapeArcSpeedMode,
+                (int)shapeArcSpeedMode);
+            Texture2D selectedShapeArcSpeedLUT = shapeArcSpeedIntegralLUT != null
+                ? shapeArcSpeedIntegralLUT
+                : CurveLUTBuilder.GetDefaultLinear01LUT();
+            simulateProperties.SetTexture(
+                _ShapeArcSpeedIntegralLUT,
+                selectedShapeArcSpeedLUT);
+            simulateProperties.SetFloat(
+                _ShapeArcSpeedIntegralLUTInvWidth,
+                InverseTextureWidth(selectedShapeArcSpeedLUT));
 
             float avgScale = (shapeLocalScale.x + shapeLocalScale.y + shapeLocalScale.z) / 3f;
 

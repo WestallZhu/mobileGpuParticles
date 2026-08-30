@@ -48,6 +48,10 @@ namespace GPUParticles
         ShapeRandomDirectionPoint,
         ShapeSphericalDirectionPoint,
         ShapeRandomPositionPoint,
+        ShapeArcRandomSpreadPoint,
+        ShapeArcLoopPoint,
+        ShapeArcPingPongPoint,
+        ShapeArcBurstSpreadPoint,
         TextureSheetLifetimePoint,
         TextureSheetSpeedPoint,
         TextureSheetFPSPoint,
@@ -173,6 +177,10 @@ namespace GPUParticles
         float maximumGPUShapeDirectionError;
         float maximumShurikenShapeGeometryError;
         float maximumGPUShapeGeometryError;
+        float maximumShurikenShapeArcGridError;
+        float maximumGPUShapeArcGridError;
+        int shurikenShapeArcBinMask;
+        int gpuShapeArcBinMask;
         int maximumShurikenParticleCount;
         int maximumGPUParticleCount;
         int textureSheetComparableSamples;
@@ -256,6 +264,7 @@ namespace GPUParticles
         Texture2D profileSizeBySpeedYLUT;
         Texture2D profileRotationLUT;
         Texture2D profileRotationBySpeedLUT;
+        Texture2D profileShapeArcSpeedLUT;
         Gradient profileColorMinimumGradient;
         Gradient profileColorMaximumGradient;
         AnimationCurve profileStartLifetimeMinimumCurve;
@@ -376,6 +385,8 @@ namespace GPUParticles
         ObservedRange gpuShapeDirectionXRange;
         ObservedRange gpuShapeDirectionYRange;
         ObservedRange gpuShapeDirectionZRange;
+        ObservedRange shurikenShapeArcAngleRange;
+        ObservedRange gpuShapeArcAngleRange;
         ObservedRange shurikenLifetimeColorBlendRange;
         ObservedRange gpuLifetimeColorBlendRange;
         ObservedRange shurikenLifetimeSizeBlendRange;
@@ -546,6 +557,10 @@ namespace GPUParticles
             }
             if (profileRotationLUT != null) Destroy(profileRotationLUT);
             if (profileRotationBySpeedLUT != null) Destroy(profileRotationBySpeedLUT);
+            if (profileShapeArcSpeedLUT != null)
+            {
+                Destroy(profileShapeArcSpeedLUT);
+            }
             RestoreGravityOverride();
             DestroyCustomSimulationSpaces();
             DestroyStopActionProbes();
@@ -1001,6 +1016,9 @@ namespace GPUParticles
 
             var shape = shuriken.shape;
             shape.enabled = false;
+            shape.arcMode = ParticleSystemShapeMultiModeValue.Random;
+            shape.arcSpread = 0f;
+            shape.arcSpeed = 1f;
             shape.randomDirectionAmount = 0f;
             shape.sphericalDirectionAmount = 0f;
             shape.randomPositionAmount = 0f;
@@ -1069,6 +1087,12 @@ namespace GPUParticles
             gpuParticles.shapeLocalPosition = Vector3.zero;
             gpuParticles.shapeLocalRotationEuler = Vector3.zero;
             gpuParticles.shapeLocalScale = Vector3.one;
+            gpuParticles.shapeArcMode = ShapeArcModeGPU.Random;
+            gpuParticles.shapeArcSpread = 0f;
+            gpuParticles.shapeArcSpeedMode =
+                ParticleSystemCurveMode.Constant;
+            gpuParticles.shapeArcSpeedIntegralLUT =
+                CurveLUTBuilder.GetDefaultLinear01LUT();
             gpuParticles.forceOverLifetimeEnabled = true;
             gpuParticles.forceOverLifetimeSpace = SimulationSpace.Local;
             gpuParticles.forceOverLifetimeRandomized = false;
@@ -2871,6 +2895,9 @@ namespace GPUParticles
             shape.sphericalDirectionAmount = 0f;
             shape.randomPositionAmount = 0f;
             shape.alignToDirection = true;
+            shape.arcMode = ParticleSystemShapeMultiModeValue.Random;
+            shape.arcSpread = 0f;
+            shape.arcSpeed = 1f;
 
             gpuParticles.shapeLocalPosition = Vector3.zero;
             gpuParticles.shapeLocalRotationEuler = Vector3.zero;
@@ -2881,6 +2908,12 @@ namespace GPUParticles
             gpuParticles.shapeRandomDirectionAmount = 0f;
             gpuParticles.shapeSphericalDirectionAmount = 0f;
             gpuParticles.shapeRandomPositionAmount = 0f;
+            gpuParticles.shapeArcMode = ShapeArcModeGPU.Random;
+            gpuParticles.shapeArcSpread = 0f;
+            gpuParticles.shapeArcSpeedMode =
+                ParticleSystemCurveMode.Constant;
+            gpuParticles.shapeArcSpeedIntegralLUT =
+                CurveLUTBuilder.GetDefaultLinear01LUT();
 
             switch (validationProfile)
             {
@@ -2972,7 +3005,103 @@ namespace GPUParticles
                     gpuParticles.shapeRandomPositionAmount = 1f;
                     gpuParticles.alignToDirection = false;
                     break;
+
+                case ParticleABValidationProfile.ShapeArcRandomSpreadPoint:
+                    ConfigureShapeArcProfile(
+                        ParticleSystemShapeMultiModeValue.Random,
+                        ShapeArcModeGPU.Random,
+                        0.25f,
+                        new ParticleSystem.MinMaxCurve(1f),
+                        false);
+                    break;
+
+                case ParticleABValidationProfile.ShapeArcLoopPoint:
+                    ConfigureShapeArcProfile(
+                        ParticleSystemShapeMultiModeValue.Loop,
+                        ShapeArcModeGPU.Loop,
+                        0f,
+                        new ParticleSystem.MinMaxCurve(
+                            1f,
+                            AnimationCurve.Linear(0f, 0.1f, 1f, 0.6f)),
+                        false);
+                    break;
+
+                case ParticleABValidationProfile.ShapeArcPingPongPoint:
+                    ConfigureShapeArcProfile(
+                        ParticleSystemShapeMultiModeValue.PingPong,
+                        ShapeArcModeGPU.PingPong,
+                        0.25f,
+                        new ParticleSystem.MinMaxCurve(0.25f),
+                        false);
+                    break;
+
+                case ParticleABValidationProfile.ShapeArcBurstSpreadPoint:
+                    ConfigureShapeArcProfile(
+                        ParticleSystemShapeMultiModeValue.BurstSpread,
+                        ShapeArcModeGPU.BurstSpread,
+                        0.25f,
+                        new ParticleSystem.MinMaxCurve(1f),
+                        true);
+                    break;
             }
+        }
+
+        void ConfigureShapeArcProfile(
+            ParticleSystemShapeMultiModeValue shurikenMode,
+            ShapeArcModeGPU gpuMode,
+            float spread,
+            ParticleSystem.MinMaxCurve speed,
+            bool burstSpread)
+        {
+            var main = shuriken.main;
+            main.startLifetime = 4f;
+            main.startSpeed = 0f;
+            main.startSize = 0.3f;
+            gpuParticles.SetStartLifetimeRange(4f, 4f);
+            gpuParticles.SetStartSpeedRange(0f, 0f);
+            gpuParticles.SetStartSizeRange(0.3f, 0.3f);
+
+            var emission = shuriken.emission;
+            emission.rateOverTime = burstSpread ? 0f : 16f;
+            emission.rateOverDistance = 0f;
+            ParticleSystem.Burst[] bursts = burstSpread
+                ? new[]
+                {
+                    new ParticleSystem.Burst(0.25f, 6, 4, 0.5f)
+                }
+                : Array.Empty<ParticleSystem.Burst>();
+            emission.SetBursts(bursts);
+            gpuParticles.SetEmissionRateOverTime(emission.rateOverTime);
+            gpuParticles.SetEmissionRateOverDistance(emission.rateOverDistance);
+            gpuParticles.SetEmissionBursts(bursts);
+
+            var shape = shuriken.shape;
+            shape.shapeType = ParticleSystemShapeType.Circle;
+            shape.radius = 2f;
+            shape.radiusThickness = 0f;
+            shape.arc = 180f;
+            shape.arcMode = shurikenMode;
+            shape.arcSpread = spread;
+            shape.arcSpeed = speed;
+            shape.alignToDirection = false;
+
+            gpuParticles.shapeType = ShapeTypeGPU.Circle;
+            gpuParticles.shapeEmitFrom = ShapeEmitFromGPU.Surface;
+            gpuParticles.shapeCircleRadius = 2f;
+            gpuParticles.shapeRadiusThickness = 0f;
+            gpuParticles.shapeConeArcDeg = 180f;
+            gpuParticles.shapeArcMode = gpuMode;
+            gpuParticles.shapeArcSpread = spread;
+            gpuParticles.shapeArcSpeedMode = speed.mode;
+            gpuParticles.alignToDirection = false;
+
+            if (profileShapeArcSpeedLUT != null)
+            {
+                Destroy(profileShapeArcSpeedLUT);
+            }
+            profileShapeArcSpeedLUT = CurveLUTBuilder.BuildIntegral(speed);
+            gpuParticles.shapeArcSpeedIntegralLUT =
+                profileShapeArcSpeedLUT;
         }
 
         bool IsShapeProfile()
@@ -2988,6 +3117,24 @@ namespace GPUParticles
                 case ParticleABValidationProfile.ShapeRandomDirectionPoint:
                 case ParticleABValidationProfile.ShapeSphericalDirectionPoint:
                 case ParticleABValidationProfile.ShapeRandomPositionPoint:
+                case ParticleABValidationProfile.ShapeArcRandomSpreadPoint:
+                case ParticleABValidationProfile.ShapeArcLoopPoint:
+                case ParticleABValidationProfile.ShapeArcPingPongPoint:
+                case ParticleABValidationProfile.ShapeArcBurstSpreadPoint:
+                    return true;
+                default:
+                    return false;
+            }
+        }
+
+        bool IsShapeArcProfile()
+        {
+            switch (validationProfile)
+            {
+                case ParticleABValidationProfile.ShapeArcRandomSpreadPoint:
+                case ParticleABValidationProfile.ShapeArcLoopPoint:
+                case ParticleABValidationProfile.ShapeArcPingPongPoint:
+                case ParticleABValidationProfile.ShapeArcBurstSpreadPoint:
                     return true;
                 default:
                     return false;
@@ -3669,6 +3816,9 @@ namespace GPUParticles
 
             var shape = shuriken.shape;
             shape.enabled = false;
+            shape.arcMode = ParticleSystemShapeMultiModeValue.Random;
+            shape.arcSpread = 0f;
+            shape.arcSpeed = 1f;
             var colorOverLifetime = shuriken.colorOverLifetime;
             colorOverLifetime.enabled = false;
             var sizeOverLifetime = shuriken.sizeOverLifetime;
@@ -3738,6 +3888,12 @@ namespace GPUParticles
             gpuParticles.shapeLocalPosition = Vector3.zero;
             gpuParticles.shapeLocalRotationEuler = Vector3.zero;
             gpuParticles.shapeLocalScale = Vector3.one;
+            gpuParticles.shapeArcMode = ShapeArcModeGPU.Random;
+            gpuParticles.shapeArcSpread = 0f;
+            gpuParticles.shapeArcSpeedMode =
+                ParticleSystemCurveMode.Constant;
+            gpuParticles.shapeArcSpeedIntegralLUT =
+                CurveLUTBuilder.GetDefaultLinear01LUT();
             gpuParticles.forceOverLifetimeEnabled = false;
             gpuParticles.forceOverLifetimeLUT = MinMaxCurveVector3LUTBuilder.GetDefaultZeroLUT();
             gpuParticles.velocityOverLifetimeEnabled = false;
@@ -4198,6 +4354,10 @@ namespace GPUParticles
             maximumGPUShapeDirectionError = 0f;
             maximumShurikenShapeGeometryError = 0f;
             maximumGPUShapeGeometryError = 0f;
+            maximumShurikenShapeArcGridError = 0f;
+            maximumGPUShapeArcGridError = 0f;
+            shurikenShapeArcBinMask = 0;
+            gpuShapeArcBinMask = 0;
             maximumShurikenParticleCount = 0;
             maximumGPUParticleCount = 0;
             textureSheetComparableSamples = 0;
@@ -4269,6 +4429,8 @@ namespace GPUParticles
             gpuShapeDirectionXRange.Reset();
             gpuShapeDirectionYRange.Reset();
             gpuShapeDirectionZRange.Reset();
+            shurikenShapeArcAngleRange.Reset();
+            gpuShapeArcAngleRange.Reset();
             shurikenLifetimeColorBlendRange.Reset();
             gpuLifetimeColorBlendRange.Reset();
             shurikenLifetimeSizeBlendRange.Reset();
@@ -6148,6 +6310,11 @@ namespace GPUParticles
                 shurikenShapeDirectionZRange.Observe(normalizedVelocity.z);
             }
 
+            if (IsShapeArcProfile())
+            {
+                ObserveShapeArcSample(gpuSample, spawnPosition);
+            }
+
             Vector3 expectedDirection = Vector3.zero;
             float geometryError = 0f;
             switch (validationProfile)
@@ -6256,6 +6423,22 @@ namespace GPUParticles
                         spawnPosition,
                         new Vector3(1.5f, 3f, 6f));
                     break;
+
+                case ParticleABValidationProfile.ShapeArcRandomSpreadPoint:
+                case ParticleABValidationProfile.ShapeArcLoopPoint:
+                case ParticleABValidationProfile.ShapeArcPingPongPoint:
+                case ParticleABValidationProfile.ShapeArcBurstSpreadPoint:
+                {
+                    Vector2 planar = new Vector2(
+                        spawnPosition.x,
+                        spawnPosition.y);
+                    geometryError = Mathf.Max(
+                        Mathf.Abs(planar.magnitude - 2f),
+                        Mathf.Max(
+                            Mathf.Abs(spawnPosition.z),
+                            Mathf.Max(0f, -spawnPosition.y)));
+                    break;
+                }
             }
 
             float directionError = expectedDirection.sqrMagnitude > 1e-8f
@@ -6274,6 +6457,60 @@ namespace GPUParticles
                     maximumShurikenShapeDirectionError, directionError);
                 maximumShurikenShapeGeometryError = Mathf.Max(
                     maximumShurikenShapeGeometryError, geometryError);
+            }
+        }
+
+        void ObserveShapeArcSample(bool gpuSample, Vector3 spawnPosition)
+        {
+            float angle = Mathf.Atan2(
+                spawnPosition.y,
+                spawnPosition.x) * Mathf.Rad2Deg;
+            if (angle < 0f)
+            {
+                angle += 360f;
+            }
+            if (angle > 359.9f && Mathf.Abs(spawnPosition.y) <= 0.005f)
+            {
+                angle = 0f;
+            }
+
+            if (gpuSample)
+            {
+                gpuShapeArcAngleRange.Observe(angle);
+            }
+            else
+            {
+                shurikenShapeArcAngleRange.Observe(angle);
+            }
+
+            if (validationProfile ==
+                ParticleABValidationProfile.ShapeArcLoopPoint)
+            {
+                return;
+            }
+
+            const float step = 45f;
+            int bin = Mathf.Clamp(Mathf.RoundToInt(angle / step), 0, 4);
+            float gridError = Mathf.Abs(angle - bin * step);
+            if (gpuSample)
+            {
+                maximumGPUShapeArcGridError = Mathf.Max(
+                    maximumGPUShapeArcGridError,
+                    gridError);
+                if (gridError <= 1f)
+                {
+                    gpuShapeArcBinMask |= 1 << bin;
+                }
+            }
+            else
+            {
+                maximumShurikenShapeArcGridError = Mathf.Max(
+                    maximumShurikenShapeArcGridError,
+                    gridError);
+                if (gridError <= 1f)
+                {
+                    shurikenShapeArcBinMask |= 1 << bin;
+                }
             }
         }
 
@@ -6342,6 +6579,14 @@ namespace GPUParticles
                     yRange = new Vector2(-3f, 3f);
                     zRange = new Vector2(-6f, 6f);
                     break;
+                case ParticleABValidationProfile.ShapeArcRandomSpreadPoint:
+                case ParticleABValidationProfile.ShapeArcLoopPoint:
+                case ParticleABValidationProfile.ShapeArcPingPongPoint:
+                case ParticleABValidationProfile.ShapeArcBurstSpreadPoint:
+                    xRange = new Vector2(-2f, 2f);
+                    yRange = new Vector2(0f, 2f);
+                    zRange = Vector2.zero;
+                    break;
                 default:
                     return false;
             }
@@ -6364,6 +6609,20 @@ namespace GPUParticles
                    gpuShapeDirectionXRange.Covers(minimum, maximum) &&
                    gpuShapeDirectionYRange.Covers(minimum, maximum) &&
                    gpuShapeDirectionZRange.Covers(minimum, maximum);
+        }
+
+        bool ShapeArcAngleRangesPass()
+        {
+            return shurikenShapeArcAngleRange.Covers(0f, 180f) &&
+                   gpuShapeArcAngleRange.Covers(0f, 180f);
+        }
+
+        bool ShapeArcGridPass(int expectedMask)
+        {
+            return maximumShurikenShapeArcGridError <= 0.25f &&
+                   maximumGPUShapeArcGridError <= 0.25f &&
+                   (shurikenShapeArcBinMask & expectedMask) == expectedMask &&
+                   (gpuShapeArcBinMask & expectedMask) == expectedMask;
         }
 
         float ConeRelationError(Vector3 position, Vector3 velocity, float age)
@@ -7086,6 +7345,52 @@ namespace GPUParticles
                                             ShapeSpawnRangesPass();
                     break;
 
+                case ParticleABValidationProfile.ShapeArcRandomSpreadPoint:
+                    profileSpecificPassed = maximumMeanSpeedError <= 0.001f &&
+                                            maximumShurikenParticleCount > 0 &&
+                                            maximumGPUParticleCount > 0 &&
+                                            maximumShurikenShapeGeometryError <= 0.003f &&
+                                            maximumGPUShapeGeometryError <= 0.003f &&
+                                            ShapeSpawnRangesPass() &&
+                                            ShapeArcAngleRangesPass() &&
+                                            ShapeArcGridPass(0x0F);
+                    break;
+
+                case ParticleABValidationProfile.ShapeArcLoopPoint:
+                    profileSpecificPassed = maximumMeanSpeedError <= 0.001f &&
+                                            maximumMeanPositionError <= 0.18f &&
+                                            maximumShurikenParticleCount > 0 &&
+                                            maximumGPUParticleCount > 0 &&
+                                            maximumShurikenShapeGeometryError <= 0.003f &&
+                                            maximumGPUShapeGeometryError <= 0.003f &&
+                                            ShapeSpawnRangesPass() &&
+                                            ShapeArcAngleRangesPass();
+                    break;
+
+                case ParticleABValidationProfile.ShapeArcPingPongPoint:
+                    profileSpecificPassed = maximumMeanSpeedError <= 0.001f &&
+                                            maximumMeanPositionError <= 0.12f &&
+                                            maximumShurikenParticleCount > 0 &&
+                                            maximumGPUParticleCount > 0 &&
+                                            maximumShurikenShapeGeometryError <= 0.003f &&
+                                            maximumGPUShapeGeometryError <= 0.003f &&
+                                            ShapeSpawnRangesPass() &&
+                                            ShapeArcAngleRangesPass() &&
+                                            ShapeArcGridPass(0x0F);
+                    break;
+
+                case ParticleABValidationProfile.ShapeArcBurstSpreadPoint:
+                    profileSpecificPassed = maximumMeanSpeedError <= 0.001f &&
+                                            maximumMeanPositionError <= 0.03f &&
+                                            maximumShurikenParticleCount > 0 &&
+                                            maximumGPUParticleCount > 0 &&
+                                            maximumShurikenShapeGeometryError <= 0.003f &&
+                                            maximumGPUShapeGeometryError <= 0.003f &&
+                                            ShapeSpawnRangesPass() &&
+                                            ShapeArcAngleRangesPass() &&
+                                            ShapeArcGridPass(0x1F);
+                    break;
+
                 case ParticleABValidationProfile.TextureSheetLifetimePoint:
                 case ParticleABValidationProfile.TextureSheetSpeedPoint:
                 case ParticleABValidationProfile.TextureSheetFPSPoint:
@@ -7311,6 +7616,14 @@ namespace GPUParticles
                 $"maxGPUShapeDirectionError={maximumGPUShapeDirectionError:R}; " +
                 $"maxShurikenShapeGeometryError={maximumShurikenShapeGeometryError:R}; " +
                 $"maxGPUShapeGeometryError={maximumGPUShapeGeometryError:R}; " +
+                $"maxShurikenShapeArcGridError=" +
+                $"{maximumShurikenShapeArcGridError:R}; " +
+                $"maxGPUShapeArcGridError={maximumGPUShapeArcGridError:R}; " +
+                $"shurikenShapeArcBinMask=0x{shurikenShapeArcBinMask:X2}; " +
+                $"gpuShapeArcBinMask=0x{gpuShapeArcBinMask:X2}; " +
+                $"shurikenShapeArcAngleRange=" +
+                $"{FormatRange(shurikenShapeArcAngleRange)}; " +
+                $"gpuShapeArcAngleRange={FormatRange(gpuShapeArcAngleRange)}; " +
                 $"maxShurikenCount={maximumShurikenParticleCount}; " +
                 $"maxGPUCount={maximumGPUParticleCount}; " +
                 $"textureSheetComparableSamples={textureSheetComparableSamples}; " +

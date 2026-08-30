@@ -52,6 +52,7 @@ Shader "Hidden/GPUParticles/SimulateMRT"
             TEXTURE2D(_InheritVelocityLUT); SAMPLER(sampler_InheritVelocityLUT);
             TEXTURE2D(_LifetimeByEmitterSpeedLUT);
             SAMPLER(sampler_LifetimeByEmitterSpeedLUT);
+            TEXTURE2D(_ShapeArcSpeedIntegralLUT);
 
             // Unity 2022.3 Shuriken samples Main curves just after the
             // emission tick boundary; this is the measured tick phase.
@@ -161,6 +162,10 @@ Shader "Hidden/GPUParticles/SimulateMRT"
                 float   _ShapeConeLength;
                 float   _ShapeRadiusThickness; // 0 shell edge, 1 full
                 float   _ShapeConeArcRad;    // 0..2PI
+                int     _ShapeArcMode;       // 0 Random, 1 Loop, 2 PingPong, 3 BurstSpread
+                float   _ShapeArcSpread;     // normalized step within the configured arc
+                int     _ShapeArcSpeedMode;  // ParticleSystemCurveMode
+                float   _ShapeArcSpeedIntegralLUTInvWidth;
 
                 // Box
                 float3  _ShapeBoxSize;       // full extents in local units
@@ -689,6 +694,160 @@ Shader "Hidden/GPUParticles/SimulateMRT"
             {
                 return saturate(position) * (1.0 - inverseWidth) +
                     0.5 * inverseWidth;
+            }
+
+            float PositiveRepeat(float value, float lengthValue)
+            {
+                return value - floor(value / lengthValue) * lengthValue;
+            }
+
+            float2 ShapeArcSpeedIntegralRows(float normalizedTime)
+            {
+                float lutPosition = LUTPosition(
+                    normalizedTime,
+                    _ShapeArcSpeedIntegralLUTInvWidth);
+                float minimum = SAMPLE_TEXTURE2D_LOD(
+                    _ShapeArcSpeedIntegralLUT,
+                    sampler_SizeLUT,
+                    float2(lutPosition, 0.25),
+                    0).r;
+                float maximum = SAMPLE_TEXTURE2D_LOD(
+                    _ShapeArcSpeedIntegralLUT,
+                    sampler_SizeLUT,
+                    float2(lutPosition, 0.75),
+                    0).r;
+                return float2(minimum, maximum);
+            }
+
+            float ShapeArcTravel(uint id, float particleAge)
+            {
+                float activeBirthTime = max(
+                    0.0,
+                    _EmissionTimeAfterStep - particleAge -
+                    _EmissionStartDelay);
+                float duration = max(0.05, _EmissionDuration);
+                float completedSystemLoops = 0.0;
+                float normalizedSystemTime;
+                if (_EmissionLooping != 0)
+                {
+                    completedSystemLoops = floor(activeBirthTime / duration);
+                    normalizedSystemTime = frac(activeBirthTime / duration);
+                }
+                else
+                {
+                    normalizedSystemTime = saturate(activeBirthTime / duration);
+                }
+
+                float2 partialIntegral = ShapeArcSpeedIntegralRows(
+                    normalizedSystemTime);
+                float2 fullIntegral = ShapeArcSpeedIntegralRows(1.0);
+                float randomValue =
+                    _ShapeArcSpeedMode == 2 || _ShapeArcSpeedMode == 3
+                        ? Hash01(id ^ 0xB8D3A7E5u)
+                        : 1.0;
+                float integratedRevolutions = duration * lerp(
+                    completedSystemLoops * fullIntegral.x +
+                        partialIntegral.x,
+                    completedSystemLoops * fullIntegral.y +
+                        partialIntegral.y,
+                    randomValue);
+                return integratedRevolutions * 6.28318530718;
+            }
+
+            void ShapeArcBurstCoordinates(
+                uint emitOrdinal,
+                out uint groupOrdinal,
+                out uint groupCount)
+            {
+                if (emitOrdinal < _ContinuousEmitCount)
+                {
+                    groupOrdinal = emitOrdinal;
+                    groupCount = max(1u, _ContinuousEmitCount);
+                    return;
+                }
+
+                uint distanceOrdinal = emitOrdinal - _ContinuousEmitCount;
+                if (distanceOrdinal < _DistanceEmitCount)
+                {
+                    groupOrdinal = distanceOrdinal;
+                    groupCount = max(1u, _DistanceEmitCount);
+                    return;
+                }
+
+                uint burstOrdinal = distanceOrdinal - _DistanceEmitCount;
+                uint cumulativeCount = 0u;
+                [unroll]
+                for (int burstIndex = 0; burstIndex < 8; burstIndex++)
+                {
+                    uint burstCount = (uint)round(BurstComponent(
+                        _BurstCounts0,
+                        _BurstCounts1,
+                        burstIndex));
+                    if (burstOrdinal < cumulativeCount + burstCount)
+                    {
+                        groupOrdinal = burstOrdinal - cumulativeCount;
+                        groupCount = max(1u, burstCount);
+                        return;
+                    }
+                    cumulativeCount += burstCount;
+                }
+
+                groupOrdinal = emitOrdinal;
+                groupCount = max(1u, _EmitCount);
+            }
+
+            float ShapeArcAngle(
+                uint id,
+                uint emitOrdinal,
+                float particleAge,
+                float randomSample)
+            {
+                float arc = clamp(_ShapeConeArcRad, 0.0, 6.28318530718);
+                if (arc <= 1e-6)
+                {
+                    return 0.0;
+                }
+
+                float angle;
+                if (_ShapeArcMode == 0) // Random
+                {
+                    angle = arc * randomSample;
+                }
+                else if (_ShapeArcMode == 3) // BurstSpread
+                {
+                    uint groupOrdinal;
+                    uint groupCount;
+                    ShapeArcBurstCoordinates(
+                        emitOrdinal,
+                        groupOrdinal,
+                        groupCount);
+                    angle = groupCount > 1u
+                        ? arc * (float)groupOrdinal /
+                            (float)(groupCount - 1u)
+                        : 0.0;
+                }
+                else
+                {
+                    float travel = ShapeArcTravel(id, particleAge);
+                    if (_ShapeArcMode == 2) // PingPong
+                    {
+                        float phase = PositiveRepeat(travel, 2.0 * arc);
+                        angle = arc - abs(phase - arc);
+                    }
+                    else // Loop
+                    {
+                        angle = PositiveRepeat(travel, arc);
+                    }
+                }
+
+                float spread = saturate(_ShapeArcSpread);
+                if (spread > 1e-6)
+                {
+                    float stepAngle = max(1e-6, arc * spread);
+                    angle = floor((angle + 1e-7) / stepAngle) *
+                        stepAngle;
+                }
+                return clamp(angle, 0.0, arc);
             }
 
             float3 ForceOverLifetime(uint id, float normalizedAge)
@@ -1373,7 +1532,13 @@ Shader "Hidden/GPUParticles/SimulateMRT"
                         if (_ShapeEmitFrom == 2) // Base disc at shape position
                         {
                             float innerR = _ShapeConeRadius * saturate(1.0 - _ShapeRadiusThickness);
-                            float2 d = SampleDiskArc(urnd.xy, innerR, _ShapeConeRadius, _ShapeConeArcRad);
+                            float r = sqrt(lerp(
+                                innerR * innerR,
+                                _ShapeConeRadius * _ShapeConeRadius,
+                                urnd.x));
+                            float phi = ShapeArcAngle(
+                                id, emitOrdinal, stepDt, urnd.y);
+                            float2 d = float2(r * cos(phi), r * sin(phi));
                             posL = _ShapePosL + right * d.x + up * d.y;
 
                             float3 dirL = BuildConeVelocity(d, _ShapeConeRadius, right, up, fwd, _ShapeConeAngleRad);
@@ -1386,7 +1551,8 @@ Shader "Hidden/GPUParticles/SimulateMRT"
 
                             float Ri = Rz * saturate(1.0 - _ShapeRadiusThickness);
                             float  r = sqrt(lerp(Ri*Ri, Rz*Rz, urnd.y));
-                            float  phi = clamp(_ShapeConeArcRad, 0.0, 6.28318530718) * urnd.z;
+                            float  phi = ShapeArcAngle(
+                                id, emitOrdinal, stepDt, urnd.z);
                             float2 d = float2(r * cos(phi), r * sin(phi));
 
                             posL = _ShapePosL + right * d.x + up * d.y + fwd * z;
@@ -1402,8 +1568,8 @@ Shader "Hidden/GPUParticles/SimulateMRT"
                         float3 up    = normalize(_ShapeUpL);
                         float3 fwd   = normalize(_ShapeFwdL);
 
-                        float phi = clamp(
-                            _ShapeConeArcRad, 0.0, 6.28318530718) * urnd.x;
+                        float phi = ShapeArcAngle(
+                            id, emitOrdinal, stepDt, urnd.x);
                         float theta = 6.28318530718 * urnd.z;
                         float outerRadius = max(0.0, _ShapeDonutThickness);
                         float innerRadius = _ShapeEmitFrom == 1
@@ -1463,7 +1629,8 @@ Shader "Hidden/GPUParticles/SimulateMRT"
                         float3 fwd   = normalize(_ShapeFwdL);
                         
                         float R = _ShapeCircleRadius;
-                        float phi = clamp(_ShapeConeArcRad, 0.0, 6.28318530718) * urnd.x;
+                        float phi = ShapeArcAngle(
+                            id, emitOrdinal, stepDt, urnd.x);
                         
                         float r;
                         if (_ShapeEmitFrom == 1) // Edge (表面)
@@ -1555,7 +1722,13 @@ Shader "Hidden/GPUParticles/SimulateMRT"
                         if (_ShapeEmitFrom == 2) // Base disc at shape position
                         {
                             float innerR = _ShapeConeRadius * saturate(1.0 - _ShapeRadiusThickness);
-                            float2 d = SampleDiskArc(urnd.xy, innerR, _ShapeConeRadius, _ShapeConeArcRad);
+                            float r = sqrt(lerp(
+                                innerR * innerR,
+                                _ShapeConeRadius * _ShapeConeRadius,
+                                urnd.x));
+                            float phi = ShapeArcAngle(
+                                id, emitOrdinal, stepDt, urnd.y);
+                            float2 d = float2(r * cos(phi), r * sin(phi));
                             posL = _ShapePosL + right * d.x + up * d.y;
 
                             float3 dirL = BuildConeVelocity(d, _ShapeConeRadius, right, up, fwd, _ShapeConeAngleRad);
@@ -1568,7 +1741,8 @@ Shader "Hidden/GPUParticles/SimulateMRT"
 
                             float Ri = Rz * saturate(1.0 - _ShapeRadiusThickness);
                             float  r = sqrt(lerp(Ri*Ri, Rz*Rz, urnd.y));
-                            float  phi = clamp(_ShapeConeArcRad, 0.0, 6.28318530718) * urnd.z;
+                            float  phi = ShapeArcAngle(
+                                id, emitOrdinal, stepDt, urnd.z);
                             float2 d = float2(r * cos(phi), r * sin(phi));
 
                             posL = _ShapePosL + right * d.x + up * d.y + fwd * z;
@@ -1579,7 +1753,13 @@ Shader "Hidden/GPUParticles/SimulateMRT"
                         else // Surface fallback to Base
                         {
                             float innerR = _ShapeConeRadius * saturate(1.0 - _ShapeRadiusThickness);
-                            float2 d = SampleDiskArc(urnd.xy, innerR, _ShapeConeRadius, _ShapeConeArcRad);
+                            float r = sqrt(lerp(
+                                innerR * innerR,
+                                _ShapeConeRadius * _ShapeConeRadius,
+                                urnd.x));
+                            float phi = ShapeArcAngle(
+                                id, emitOrdinal, stepDt, urnd.y);
+                            float2 d = float2(r * cos(phi), r * sin(phi));
                             posL = _ShapePosL + right * d.x + up * d.y;
 
                             float3 dirL = BuildConeVelocity(d, _ShapeConeRadius, right, up, fwd, _ShapeConeAngleRad);

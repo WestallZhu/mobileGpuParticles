@@ -59,6 +59,8 @@ namespace GPUParticles
         private float cachedShapeLength;
         private float cachedShapeRadiusThickness;
         private float cachedShapeArc;
+        private ParticleSystemShapeMultiModeValue cachedShapeArcMode;
+        private float cachedShapeArcSpread;
         private float cachedShapeDonutRadius;
         private bool cachedShapeEnabled;
         private bool cachedShapeAlignToDirection;
@@ -101,6 +103,7 @@ namespace GPUParticles
         private float lastRotationLUTUpdate = 0f;
         private float lastRotationBySpeedLUTUpdate = 0f;
         private float lastEmissionTimelineUpdate = 0f;
+        private float lastShapeArcLUTUpdate = 0f;
         private Texture2D generatedForceLUT;
         private Texture2D generatedVelocityLUT;
         private Texture2D generatedVelocityOrbitalLUT;
@@ -125,6 +128,7 @@ namespace GPUParticles
         private Texture2D generatedSizeBySpeedYLUT;
         private Texture2D generatedRotationLUT;
         private Texture2D generatedRotationBySpeedLUT;
+        private Texture2D generatedShapeArcSpeedLUT;
         private const float LUT_UPDATE_INTERVAL = 0.1f; // 每0.1秒更新一次LUT
 
         private bool isInitialized = false;
@@ -235,6 +239,8 @@ namespace GPUParticles
             cachedShapeLength = shape.length;
             cachedShapeRadiusThickness = shape.radiusThickness;
             cachedShapeArc = shape.arc;
+            cachedShapeArcMode = shape.arcMode;
+            cachedShapeArcSpread = shape.arcSpread;
             cachedShapeDonutRadius = shape.donutRadius;
             cachedShapeEnabled = shape.enabled;
             cachedShapeAlignToDirection = shape.alignToDirection;
@@ -803,6 +809,19 @@ namespace GPUParticles
                 shapeChanged = true;
             }
 
+            if (force || shape.arcMode != cachedShapeArcMode)
+            {
+                cachedShapeArcMode = shape.arcMode;
+                shapeChanged = true;
+            }
+
+            if (force || Mathf.Abs(
+                    shape.arcSpread - cachedShapeArcSpread) > 0.001f)
+            {
+                cachedShapeArcSpread = shape.arcSpread;
+                shapeChanged = true;
+            }
+
             // Donut Thickness
             if (force || Mathf.Abs(shape.donutRadius - cachedShapeDonutRadius) > 0.001f)
             {
@@ -816,6 +835,34 @@ namespace GPUParticles
                 ApplyShapeMapping(shape);
                 targetGPUParticleSystem.alignToDirection = shape.enabled && shape.alignToDirection;
             }
+
+            bool timeToUpdateArcSpeed = force ||
+                Time.realtimeSinceStartup - lastShapeArcLUTUpdate >
+                LUT_UPDATE_INTERVAL;
+            if (timeToUpdateArcSpeed)
+            {
+                DestroyGeneratedTexture(ref generatedShapeArcSpeedLUT);
+                targetGPUParticleSystem.shapeArcSpeedMode =
+                    shape.arcSpeed.mode;
+                bool animatedArc =
+                    shape.arcMode ==
+                        ParticleSystemShapeMultiModeValue.Loop ||
+                    shape.arcMode ==
+                        ParticleSystemShapeMultiModeValue.PingPong;
+                if (animatedArc)
+                {
+                    generatedShapeArcSpeedLUT =
+                        CurveLUTBuilder.BuildIntegral(shape.arcSpeed);
+                    targetGPUParticleSystem.shapeArcSpeedIntegralLUT =
+                        generatedShapeArcSpeedLUT;
+                }
+                else
+                {
+                    targetGPUParticleSystem.shapeArcSpeedIntegralLUT =
+                        CurveLUTBuilder.GetDefaultLinear01LUT();
+                }
+                lastShapeArcLUTUpdate = Time.realtimeSinceStartup;
+            }
         }
 
         void ApplyShapeMapping(ParticleSystem.ShapeModule shape)
@@ -826,6 +873,10 @@ namespace GPUParticles
                 shape.sphericalDirectionAmount;
             targetGPUParticleSystem.shapeRandomPositionAmount =
                 shape.randomPositionAmount;
+            targetGPUParticleSystem.shapeArcMode =
+                ConvertShapeArcMode(shape.arcMode);
+            targetGPUParticleSystem.shapeArcSpread =
+                Mathf.Clamp01(shape.arcSpread);
 
             if (!shape.enabled)
             {
@@ -1227,6 +1278,7 @@ namespace GPUParticles
 
         void OnDestroy()
         {
+            DestroyGeneratedTexture(ref generatedShapeArcSpeedLUT);
             DestroyGeneratedForceLUT();
             DestroyGeneratedVelocityLUT();
             DestroyGeneratedLimitVelocityLUT();
@@ -1312,6 +1364,22 @@ namespace GPUParticles
             if (Application.isPlaying) Destroy(texture);
             else DestroyImmediate(texture);
             texture = null;
+        }
+
+        static ShapeArcModeGPU ConvertShapeArcMode(
+            ParticleSystemShapeMultiModeValue source)
+        {
+            switch (source)
+            {
+                case ParticleSystemShapeMultiModeValue.Loop:
+                    return ShapeArcModeGPU.Loop;
+                case ParticleSystemShapeMultiModeValue.PingPong:
+                    return ShapeArcModeGPU.PingPong;
+                case ParticleSystemShapeMultiModeValue.BurstSpread:
+                    return ShapeArcModeGPU.BurstSpread;
+                default:
+                    return ShapeArcModeGPU.Random;
+            }
         }
 
         static bool IsStartColorGradientMode(
