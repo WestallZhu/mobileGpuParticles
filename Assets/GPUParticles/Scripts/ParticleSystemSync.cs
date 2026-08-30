@@ -36,6 +36,7 @@ namespace GPUParticles
         private ParticleSystemScalingMode cachedScalingMode;
         private ParticleSystemEmitterVelocityMode cachedEmitterVelocityMode;
         private Vector3 cachedCustomEmitterVelocity;
+        private ParticleSystemCullingMode cachedCullingMode;
         private PlaybackSyncState cachedPlaybackState =
             PlaybackSyncState.Unknown;
 
@@ -75,6 +76,7 @@ namespace GPUParticles
         private float cachedCameraVelocityScale;
         private bool cachedFreeformStretching;
         private bool cachedRotateWithStretchDirection;
+        private Bounds cachedRendererLocalBounds;
 
         // LUT缓存（避免每帧重建）
         private float lastColorLUTUpdate = 0f;
@@ -212,6 +214,7 @@ namespace GPUParticles
             cachedScalingMode = main.scalingMode;
             cachedEmitterVelocityMode = main.emitterVelocityMode;
             cachedCustomEmitterVelocity = main.emitterVelocity;
+            cachedCullingMode = main.cullingMode;
             var rotationOverLifetime = sourceParticleSystem.rotationOverLifetime;
             cachedRotationOverLifetime =
                 rotationOverLifetime.enabled &&
@@ -307,6 +310,12 @@ namespace GPUParticles
             {
                 targetGPUParticleSystem.scalingMode = main.scalingMode;
                 cachedScalingMode = main.scalingMode;
+            }
+
+            if (force || main.cullingMode != cachedCullingMode)
+            {
+                targetGPUParticleSystem.cullingMode = main.cullingMode;
+                cachedCullingMode = main.cullingMode;
             }
 
             if (force ||
@@ -1355,7 +1364,8 @@ namespace GPUParticles
                 sourceRenderer.freeformStretching !=
                     cachedFreeformStretching ||
                 sourceRenderer.rotateWithStretchDirection !=
-                    cachedRotateWithStretchDirection;
+                    cachedRotateWithStretchDirection ||
+                sourceRenderer.localBounds != cachedRendererLocalBounds;
 
             // Render Mode
             if (force || sourceRenderer.renderMode != cachedRenderMode)
@@ -1419,6 +1429,8 @@ namespace GPUParticles
                 targetGPUParticleSystem.stretchedCameraVelocityScale = sourceRenderer.cameraVelocityScale;
                 targetGPUParticleSystem.freeformStretching = sourceRenderer.freeformStretching;
                 targetGPUParticleSystem.rotateWithStretchDirection = sourceRenderer.rotateWithStretchDirection;
+                targetGPUParticleSystem.localCullingBounds =
+                    sourceRenderer.localBounds;
                 CacheRendererValues();
             }
         }
@@ -1438,6 +1450,7 @@ namespace GPUParticles
             cachedFreeformStretching = sourceRenderer.freeformStretching;
             cachedRotateWithStretchDirection =
                 sourceRenderer.rotateWithStretchDirection;
+            cachedRendererLocalBounds = sourceRenderer.localBounds;
         }
 
         void SyncRotationParameters(bool force = false)

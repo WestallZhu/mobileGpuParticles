@@ -105,6 +105,11 @@ namespace GPUParticles
         [Tooltip("Optional Shuriken source used to resolve Rigidbody " +
                  "emitter velocity after child conversion.")]
         public ParticleSystem emitterVelocitySource;
+        public ParticleSystemCullingMode cullingMode =
+            ParticleSystemCullingMode.Automatic;
+        [Tooltip("Particle renderer bounds in this GameObject's local space.")]
+        public Bounds localCullingBounds =
+            new Bounds(Vector3.zero, Vector3.one * 10f);
 
         [Header("Main Random Between Two Constants")]
         public bool randomizeStartLifetime;
@@ -293,6 +298,13 @@ namespace GPUParticles
         uint simulationTick;
         float lastSimulationDeltaTime = 1f / 60f;
         int lastSimulatedFrame = -1;
+        readonly Plane[] cullingPlanes = new Plane[6];
+        int visibilityFrame = -1;
+        bool visibleThisFrame;
+        float lastCullingClock;
+        bool cullingClockValid;
+        bool wasCulled;
+        ParticleSystemCullingMode trackedCullingMode;
         PlaybackState playbackState = PlaybackState.Stopped;
         PlaybackState resumeState = PlaybackState.Playing;
         float stoppingElapsed;
@@ -301,6 +313,7 @@ namespace GPUParticles
         bool stopActionPending;
         bool stopActionInvoked;
         const float PrewarmStep = 1f / 60f;
+        const float CullingCatchupStep = 1f / 60f;
 
         enum PlaybackState
         {
@@ -316,6 +329,7 @@ namespace GPUParticles
         public bool isPaused => playbackState == PlaybackState.Paused;
         public bool isStopped => playbackState == PlaybackState.Stopped;
         public bool isEmitting => IsActivelyEmitting();
+        public bool isVisible => visibleThisFrame;
         public float time => emissionTime;
         // Unity 2022.3 Shuriken samples Main curves just after the emission
         // tick boundary. This measured phase keeps automatic births aligned.
@@ -653,6 +667,11 @@ namespace GPUParticles
             emissionStartDelayMin = Mathf.Max(0f, emissionStartDelayMin);
             emissionStartDelay = Mathf.Max(0f, emissionStartDelay);
             flipRotation = Mathf.Clamp01(flipRotation);
+            Vector3 cullingSize = localCullingBounds.size;
+            localCullingBounds.size = new Vector3(
+                Mathf.Max(0.0002f, Mathf.Abs(cullingSize.x)),
+                Mathf.Max(0.0002f, Mathf.Abs(cullingSize.y)),
+                Mathf.Max(0.0002f, Mathf.Abs(cullingSize.z)));
             colorBySpeedRange = OrderedRange(colorBySpeedRange);
             sizeBySpeedRange = OrderedRange(sizeBySpeedRange);
             rotationBySpeedRange = OrderedRange(rotationBySpeedRange);
@@ -736,6 +755,7 @@ namespace GPUParticles
             System.Array.Clear(stepBurstAges, 0, stepBurstAges.Length);
             simulationTick = 0;
             lastSimulatedFrame = -1;
+            ResetCullingTracking();
         }
 
         void CreateRT(ref RenderTexture rt, RenderTextureFormat fmt)
@@ -782,6 +802,7 @@ namespace GPUParticles
         internal void InitializePlaybackFromSettings()
         {
             ResetEmissionTimeline();
+            ResetCullingTracking();
             playbackState = !Application.isPlaying || playOnAwake
                 ? PlaybackState.Playing
                 : PlaybackState.Stopped;
@@ -792,6 +813,16 @@ namespace GPUParticles
             stopActionPending = false;
             stopActionInvoked = false;
             lastSimulatedFrame = -1;
+        }
+
+        void ResetCullingTracking()
+        {
+            visibilityFrame = -1;
+            visibleThisFrame = false;
+            lastCullingClock = CurrentCullingClock();
+            cullingClockValid = Application.isPlaying;
+            wasCulled = false;
+            trackedCullingMode = cullingMode;
         }
 
         public void Play(bool withChildren = true)
@@ -851,6 +882,7 @@ namespace GPUParticles
             stopActionPending = false;
             stopActionInvoked = false;
             lastSimulatedFrame = -1;
+            ResetCullingTracking();
         }
 
         void PauseSelf()
@@ -2101,6 +2133,60 @@ namespace GPUParticles
             return emittedCount;
         }
 
+        internal bool IsVisibleFrom(Camera camera)
+        {
+            int frame = Time.frameCount;
+            if (visibilityFrame != frame)
+            {
+                visibilityFrame = frame;
+                visibleThisFrame = false;
+            }
+
+            bool cameraVisible = CameraIntersectsCullingBounds(camera);
+            visibleThisFrame |= cameraVisible;
+            return cameraVisible;
+        }
+
+        bool CameraIntersectsCullingBounds(Camera camera)
+        {
+            if (camera == null) return true;
+            if (!renderEnabled) return false;
+            if ((camera.cullingMask & (1 << gameObject.layer)) == 0)
+            {
+                return false;
+            }
+
+            GeometryUtility.CalculateFrustumPlanes(camera, cullingPlanes);
+            return GeometryUtility.TestPlanesAABB(
+                cullingPlanes,
+                WorldCullingBounds());
+        }
+
+        Bounds WorldCullingBounds()
+        {
+            Matrix4x4 localToWorld = transform.localToWorldMatrix;
+            Vector3 localExtents = localCullingBounds.extents;
+            Vector3 axisX = localToWorld.MultiplyVector(
+                new Vector3(localExtents.x, 0f, 0f));
+            Vector3 axisY = localToWorld.MultiplyVector(
+                new Vector3(0f, localExtents.y, 0f));
+            Vector3 axisZ = localToWorld.MultiplyVector(
+                new Vector3(0f, 0f, localExtents.z));
+            Vector3 worldExtents = new Vector3(
+                Mathf.Abs(axisX.x) + Mathf.Abs(axisY.x) +
+                    Mathf.Abs(axisZ.x),
+                Mathf.Abs(axisX.y) + Mathf.Abs(axisY.y) +
+                    Mathf.Abs(axisZ.y),
+                Mathf.Abs(axisX.z) + Mathf.Abs(axisY.z) +
+                    Mathf.Abs(axisZ.z));
+            worldExtents = Vector3.Max(
+                worldExtents,
+                Vector3.one * 0.0001f);
+            return new Bounds(
+                localToWorld.MultiplyPoint3x4(localCullingBounds.center),
+                worldExtents * 2f);
+        }
+
         internal void Simulate(CommandBuffer cmd, Camera camera)
         {
             if (simulateMaterial == null) return;
@@ -2109,6 +2195,27 @@ namespace GPUParticles
                            playbackState == PlaybackState.Playing ||
                            playbackState == PlaybackState.Stopping;
             if (!advance) return;
+
+            bool cameraVisible = !Application.isPlaying ||
+                                 IsVisibleFrom(camera);
+            float currentCullingClock = CurrentCullingClock();
+
+            if (Application.isPlaying &&
+                trackedCullingMode != cullingMode)
+            {
+                trackedCullingMode = cullingMode;
+                lastCullingClock = currentCullingClock;
+                cullingClockValid = true;
+                wasCulled = false;
+                SynchronizePausedEmitterState();
+            }
+
+            if (Application.isPlaying && !cameraVisible &&
+                PausesWhenInvisible())
+            {
+                ObserveCulledFrame(currentCullingClock);
+                return;
+            }
 
             // A renderer feature executes once per camera. Shuriken advances once per
             // player-loop frame, so advancing here for Scene/Game/overlay cameras would
@@ -2122,13 +2229,35 @@ namespace GPUParticles
 
             ApplyPendingPrewarm(cmd);
 
-            float dt = FrameDeltaTime();
-            dt *= simulationSpeed;
-            SimulateStep(
-                cmd,
-                dt,
-                !Application.isPlaying ||
-                playbackState == PlaybackState.Playing);
+            float frameDt = FrameDeltaTime() * simulationSpeed;
+            float simulatedDt = frameDt;
+            bool allowEmission = !Application.isPlaying ||
+                                 playbackState == PlaybackState.Playing;
+            bool catchUp = Application.isPlaying && cameraVisible &&
+                           cullingMode ==
+                           ParticleSystemCullingMode.PauseAndCatchup &&
+                           cullingClockValid && wasCulled;
+
+            if (catchUp)
+            {
+                float elapsed = Mathf.Max(
+                    0f,
+                    currentCullingClock - lastCullingClock);
+                simulatedDt = Mathf.Max(frameDt, elapsed * simulationSpeed);
+                SimulateCatchup(cmd, simulatedDt, allowEmission);
+            }
+            else
+            {
+                if (wasCulled && PausesWithoutCatchup())
+                {
+                    SynchronizePausedEmitterState();
+                }
+                SimulateStep(cmd, frameDt, allowEmission);
+            }
+
+            lastCullingClock = currentCullingClock;
+            cullingClockValid = Application.isPlaying;
+            wasCulled = false;
 
             if (!Application.isPlaying) return;
 
@@ -2139,12 +2268,89 @@ namespace GPUParticles
             }
             else if (playbackState == PlaybackState.Stopping)
             {
-                stoppingElapsed += dt;
+                stoppingElapsed += simulatedDt;
                 if (stoppingElapsed + 1e-5f >= stoppingDuration)
                 {
                     CompletePlayback();
                 }
             }
+        }
+
+        bool PausesWhenInvisible()
+        {
+            return cullingMode == ParticleSystemCullingMode.Pause ||
+                   cullingMode ==
+                       ParticleSystemCullingMode.PauseAndCatchup ||
+                   (cullingMode == ParticleSystemCullingMode.Automatic &&
+                    emissionLooping);
+        }
+
+        bool PausesWithoutCatchup()
+        {
+            return cullingMode == ParticleSystemCullingMode.Pause ||
+                   (cullingMode == ParticleSystemCullingMode.Automatic &&
+                    emissionLooping);
+        }
+
+        void ObserveCulledFrame(float currentClock)
+        {
+            wasCulled = true;
+            if (!PausesWithoutCatchup()) return;
+
+            // Pause ignores Transform movement that occurred while the renderer
+            // was culled. Keep only the current emitter state for the first
+            // visible simulation step.
+            SynchronizePausedEmitterState();
+            lastCullingClock = currentClock;
+            cullingClockValid = true;
+        }
+
+        void SynchronizePausedEmitterState()
+        {
+            previousEmitterPositionWS = transform.position;
+            previousEmitterPositionValid = true;
+            previousEmitterVelocityWS = ResolveEmitterVelocityWS(Vector3.zero);
+        }
+
+        void SimulateCatchup(
+            CommandBuffer cmd,
+            float duration,
+            bool allowEmission)
+        {
+            duration = Mathf.Max(0f, duration);
+            if (duration <= 1e-6f)
+            {
+                SimulateStep(cmd, 0f, allowEmission);
+                return;
+            }
+
+            int stepCount = Mathf.Max(
+                1,
+                Mathf.CeilToInt(duration / CullingCatchupStep));
+            float stepDt = duration / stepCount;
+            Vector3 startPosition = previousEmitterPositionValid
+                ? previousEmitterPositionWS
+                : transform.position;
+            Vector3 endPosition = transform.position;
+
+            for (int step = 0; step < stepCount; step++)
+            {
+                float positionT = (step + 1f) / stepCount;
+                SimulateStep(
+                    cmd,
+                    stepDt,
+                    allowEmission,
+                    Vector3.LerpUnclamped(
+                        startPosition,
+                        endPosition,
+                        positionT));
+            }
+        }
+
+        float CurrentCullingClock()
+        {
+            if (!Application.isPlaying) return 0f;
+            return useUnscaledTime ? Time.unscaledTime : Time.time;
         }
 
         bool HasNaturallyCompleted()
@@ -2168,6 +2374,11 @@ namespace GPUParticles
 
         Matrix4x4 ParticleLocalToWorldMatrix()
         {
+            return ParticleLocalToWorldMatrix(transform.position);
+        }
+
+        Matrix4x4 ParticleLocalToWorldMatrix(Vector3 emitterPositionWS)
+        {
             switch (scalingMode)
             {
                 case ParticleSystemScalingMode.Local:
@@ -2175,18 +2386,27 @@ namespace GPUParticles
                         ? scalingSource
                         : transform;
                     return Matrix4x4.TRS(
-                        transform.position,
+                        emitterPositionWS,
                         transform.rotation,
                         source.localScale);
 
                 case ParticleSystemScalingMode.Shape:
                     return Matrix4x4.TRS(
-                        transform.position,
+                        emitterPositionWS,
                         transform.rotation,
                         Vector3.one);
 
                 default:
-                    return transform.localToWorldMatrix;
+                    Matrix4x4 hierarchyMatrix =
+                        transform.localToWorldMatrix;
+                    hierarchyMatrix.SetColumn(
+                        3,
+                        new Vector4(
+                            emitterPositionWS.x,
+                            emitterPositionWS.y,
+                            emitterPositionWS.z,
+                            1f));
+                    return hierarchyMatrix;
             }
         }
 
@@ -2259,9 +2479,29 @@ namespace GPUParticles
 
         Matrix4x4 ShapeLocalToWorldMatrix(Matrix4x4 particleLocalToWorld)
         {
-            return scalingMode == ParticleSystemScalingMode.Local
-                ? particleLocalToWorld
-                : transform.localToWorldMatrix;
+            return ShapeLocalToWorldMatrix(
+                particleLocalToWorld,
+                transform.position);
+        }
+
+        Matrix4x4 ShapeLocalToWorldMatrix(
+            Matrix4x4 particleLocalToWorld,
+            Vector3 emitterPositionWS)
+        {
+            if (scalingMode == ParticleSystemScalingMode.Local)
+            {
+                return particleLocalToWorld;
+            }
+
+            Matrix4x4 shapeMatrix = transform.localToWorldMatrix;
+            shapeMatrix.SetColumn(
+                3,
+                new Vector4(
+                    emitterPositionWS.x,
+                    emitterPositionWS.y,
+                    emitterPositionWS.z,
+                    1f));
+            return shapeMatrix;
         }
 
         Matrix4x4 ParticleScaleWorldMatrix(Matrix4x4 particleLocalToWorld)
@@ -2315,9 +2555,19 @@ namespace GPUParticles
 
         void SimulateStep(CommandBuffer cmd, float dt, bool allowEmission)
         {
+            SimulateStep(cmd, dt, allowEmission, transform.position);
+        }
+
+        void SimulateStep(
+            CommandBuffer cmd,
+            float dt,
+            bool allowEmission,
+            Vector3 emitterCurrentPositionWS)
+        {
             dt = Mathf.Max(0f, dt);
             lastSimulationDeltaTime = dt;
-            Matrix4x4 particleLocalToWorld = ParticleLocalToWorldMatrix();
+            Matrix4x4 particleLocalToWorld = ParticleLocalToWorldMatrix(
+                emitterCurrentPositionWS);
             Matrix4x4 particleWorldToLocal = particleLocalToWorld.inverse;
             Matrix4x4 simulationLocalToWorld =
                 SimulationLocalToWorldMatrix(particleLocalToWorld);
@@ -2333,8 +2583,9 @@ namespace GPUParticles
             Matrix4x4 simulationToWorldDirection = Matrix4x4.Rotate(
                 simulationRotation);
             Matrix4x4 shapeLocalToWorld =
-                ShapeLocalToWorldMatrix(particleLocalToWorld);
-            Vector3 emitterCurrentPositionWS = transform.position;
+                ShapeLocalToWorldMatrix(
+                    particleLocalToWorld,
+                    emitterCurrentPositionWS);
             Vector3 emitterPreviousPositionWS = previousEmitterPositionValid
                 ? previousEmitterPositionWS
                 : emitterCurrentPositionWS;
@@ -2886,6 +3137,7 @@ namespace GPUParticles
         internal void Render(CommandBuffer cmd, Camera camera)
         {
             if (!renderEnabled || renderMaterial == null) return;
+            if (!IsVisibleFrom(camera)) return;
 
             renderMaterial.SetTexture(_CurPosLife, posLife[ping]);
             renderMaterial.SetTexture(_CurVelSize, velSize[ping]);

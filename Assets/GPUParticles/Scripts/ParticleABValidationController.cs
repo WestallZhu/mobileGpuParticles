@@ -29,6 +29,11 @@ namespace GPUParticles
         InheritVelocityCurrentPoint,
         EmitterVelocityCustomPoint,
         EmitterVelocityRigidbodyPoint,
+        CullingAutomaticLoopPoint,
+        CullingAutomaticOneShotPoint,
+        CullingPausePoint,
+        CullingPauseAndCatchupPoint,
+        CullingAlwaysSimulatePoint,
         RotationOverLifetimeCurvePoint,
         RotationBySpeedCurvePoint,
         ColorSizeOverLifetimeRandomizedPoint,
@@ -203,6 +208,12 @@ namespace GPUParticles
         int prewarmRestartGPUCount;
         float prewarmRestartShurikenMeanAge;
         float prewarmRestartGPUMeanAge;
+        bool cullingOffscreenObserved;
+        bool cullingReturnObserved;
+        int cullingReturnShurikenCount;
+        int cullingReturnGPUCount;
+        float cullingReturnShurikenMeanAge;
+        float cullingReturnGPUMeanAge;
         ParticleStopActionObserver shurikenStopActionObserver;
         ParticleStopActionObserver gpuStopActionObserver;
         ParticleSystemSync stopActionSync;
@@ -316,6 +327,8 @@ namespace GPUParticles
         const int PrewarmRestartCaptureFrame = 36;
         const int StopActionRestartFrame = 75;
         const int StopActionExplicitProbeFrame = 20;
+        const float CullingExitViewTime = 0.5f;
+        const float CullingReturnTime = 1.5f;
         static readonly Color32 RendererClampMarker =
             new Color32(242, 31, 242, 255);
         static readonly Color32 ScalingModeMarker =
@@ -333,6 +346,7 @@ namespace GPUParticles
         };
         Vector3 shurikenBasePositionWS;
         Vector3 gpuBasePositionWS;
+        Vector3 captureCameraBasePositionWS;
         ObservedRange shurikenCustomWorldXRange;
         ObservedRange gpuCustomWorldXRange;
         ObservedRange shurikenLifetimeRange;
@@ -373,6 +387,10 @@ namespace GPUParticles
         ObservedRange gpuScalingBirthXRange;
         ObservedRange shurikenPausedMeanAgeRange;
         ObservedRange gpuPausedMeanAgeRange;
+        ObservedRange shurikenCulledCountRange;
+        ObservedRange gpuCulledCountRange;
+        ObservedRange shurikenCulledMeanAgeRange;
+        ObservedRange gpuCulledMeanAgeRange;
 
         struct MarkerPixelBounds
         {
@@ -445,6 +463,9 @@ namespace GPUParticles
                 : Vector3.zero;
             gpuBasePositionWS = gpuParticles != null
                 ? gpuParticles.transform.position
+                : Vector3.zero;
+            captureCameraBasePositionWS = captureCamera != null
+                ? captureCamera.transform.position
                 : Vector3.zero;
 
             playbackInitialStopped = !IsPlaybackLifecycleProfile() ||
@@ -538,6 +559,12 @@ namespace GPUParticles
                 float nextSimulationTime = (playbackFrame + 1f) / fixedFrameRate;
                 MoveValidationCustomSpaces(nextSimulationTime);
             }
+            if (captureActive && IsCullingProfile())
+            {
+                float nextSimulationTime =
+                    (playbackFrame + 1f) / fixedFrameRate;
+                MoveValidationCamera(nextSimulationTime);
+            }
 
             if (Input.GetKeyDown(KeyCode.B)) SetDisplayMode(ParticleABDisplayMode.Both);
             if (Input.GetKeyDown(KeyCode.S)) SetDisplayMode(ParticleABDisplayMode.ShurikenOnly);
@@ -550,6 +577,14 @@ namespace GPUParticles
         void LateUpdate()
         {
             if (!captureActive) return;
+
+            if (IsCullingProfile() && captureCamera != null)
+            {
+                // Shuriken updates culling visibility from actual camera
+                // renders. Batch mode has no GameView render, so submit one
+                // deterministic visibility render every validation frame.
+                captureCamera.Render();
+            }
 
             if (IsPlaybackLifecycleProfile())
             {
@@ -641,6 +676,12 @@ namespace GPUParticles
                 ParticleABValidationProfile.CustomSimulationSpacePoint)
             {
                 ConfigureCustomSimulationSpaceProfile();
+                return;
+            }
+
+            if (IsCullingProfile())
+            {
+                ConfigureCullingProfile();
                 return;
             }
 
@@ -2283,6 +2324,46 @@ namespace GPUParticles
             gpuParticles.inheritVelocityLUT = profileInheritVelocityLUT;
         }
 
+        void ConfigureCullingProfile()
+        {
+            bool oneShot = validationProfile ==
+                ParticleABValidationProfile.CullingAutomaticOneShotPoint;
+            float duration = oneShot ? 0.6f : 4f;
+            ConfigureEmissionPointBase(duration, !oneShot);
+
+            ParticleSystemCullingMode mode = CullingModeForProfile();
+            var main = shuriken.main;
+            main.cullingMode = mode;
+            main.startLifetime = oneShot ? 0.6f : 4f;
+            main.playOnAwake = true;
+            main.prewarm = false;
+            gpuParticles.cullingMode = mode;
+            gpuParticles.SetStartLifetimeRange(
+                main.startLifetime.constant,
+                main.startLifetime.constant);
+            gpuParticles.playOnAwake = true;
+            gpuParticles.prewarm = false;
+
+            var emission = shuriken.emission;
+            emission.rateOverTime = oneShot ? 20f : 12f;
+            emission.rateOverDistance = 0f;
+            emission.SetBursts(Array.Empty<ParticleSystem.Burst>());
+            gpuParticles.SetEmissionRateOverTime(emission.rateOverTime);
+            gpuParticles.SetEmissionRateOverDistance(
+                emission.rateOverDistance);
+            gpuParticles.SetEmissionBursts(
+                Array.Empty<ParticleSystem.Burst>());
+
+            Bounds bounds = new Bounds(
+                Vector3.zero,
+                new Vector3(4f, 4f, 4f));
+            if (shurikenRenderer != null)
+            {
+                shurikenRenderer.localBounds = bounds;
+            }
+            gpuParticles.localCullingBounds = bounds;
+        }
+
         void ConfigureRotationOverLifetimeProfile()
         {
             ConfigureEmissionPointBase(5f, true);
@@ -3519,6 +3600,7 @@ namespace GPUParticles
             main.stopAction = ParticleSystemStopAction.None;
             main.emitterVelocityMode =
                 ParticleSystemEmitterVelocityMode.Transform;
+            main.cullingMode = ParticleSystemCullingMode.AlwaysSimulate;
 
             var emission = shuriken.emission;
             emission.enabled = true;
@@ -3579,6 +3661,8 @@ namespace GPUParticles
                 ParticleSystemEmitterVelocityMode.Transform;
             gpuParticles.customEmitterVelocity = Vector3.zero;
             gpuParticles.emitterVelocitySource = null;
+            gpuParticles.cullingMode =
+                ParticleSystemCullingMode.AlwaysSimulate;
             gpuParticles.scalingMode = ParticleSystemScalingMode.Hierarchy;
             gpuParticles.stopAction = ParticleSystemStopAction.None;
             gpuParticles.stopActionTarget = null;
@@ -3633,6 +3717,7 @@ namespace GPUParticles
                 : 1f;
             MoveValidationEmitters(0f);
             MoveValidationCustomSpaces(0f);
+            MoveValidationCamera(0f);
 
             bool suspendStopAction = IsStopActionProfile();
             ParticleSystemStopAction savedShurikenStopAction =
@@ -3660,7 +3745,9 @@ namespace GPUParticles
                 shuriken.useAutoRandomSeed = false;
                 shuriken.randomSeed = randomSeed == 0 ? 1u : randomSeed;
                 var main = shuriken.main;
-                main.cullingMode = ParticleSystemCullingMode.AlwaysSimulate;
+                main.cullingMode = IsCullingProfile()
+                    ? CullingModeForProfile()
+                    : ParticleSystemCullingMode.AlwaysSimulate;
                 if (!IsPlaybackLifecycleProfile())
                 {
                     shuriken.Play(true);
@@ -3703,6 +3790,28 @@ namespace GPUParticles
                 captureIndex = 1;
                 nextCaptureFrame = CaptureFrameForIndex(captureIndex);
             }
+        }
+
+        void MoveValidationCamera(float elapsed)
+        {
+            if (captureCamera == null) return;
+
+            Vector3 position = captureCameraBasePositionWS;
+            if (IsCullingProfile())
+            {
+                bool alwaysOffscreen = validationProfile ==
+                        ParticleABValidationProfile.CullingAlwaysSimulatePoint ||
+                    validationProfile ==
+                        ParticleABValidationProfile.CullingAutomaticOneShotPoint;
+                bool timedOffscreen = elapsed >= CullingExitViewTime &&
+                                      elapsed < CullingReturnTime;
+                if (alwaysOffscreen || timedOffscreen)
+                {
+                    position += Vector3.right * 100f;
+                }
+            }
+
+            captureCamera.transform.position = position;
         }
 
         void MoveValidationEmitters(float elapsed)
@@ -3823,6 +3932,35 @@ namespace GPUParticles
         {
             return validationProfile ==
                 ParticleABValidationProfile.CustomSimulationSpacePoint;
+        }
+
+        bool IsCullingProfile()
+        {
+            return validationProfile ==
+                       ParticleABValidationProfile.CullingAutomaticLoopPoint ||
+                   validationProfile ==
+                       ParticleABValidationProfile.CullingAutomaticOneShotPoint ||
+                   validationProfile ==
+                       ParticleABValidationProfile.CullingPausePoint ||
+                   validationProfile ==
+                       ParticleABValidationProfile.CullingPauseAndCatchupPoint ||
+                   validationProfile ==
+                       ParticleABValidationProfile.CullingAlwaysSimulatePoint;
+        }
+
+        ParticleSystemCullingMode CullingModeForProfile()
+        {
+            switch (validationProfile)
+            {
+                case ParticleABValidationProfile.CullingPausePoint:
+                    return ParticleSystemCullingMode.Pause;
+                case ParticleABValidationProfile.CullingPauseAndCatchupPoint:
+                    return ParticleSystemCullingMode.PauseAndCatchup;
+                case ParticleABValidationProfile.CullingAlwaysSimulatePoint:
+                    return ParticleSystemCullingMode.AlwaysSimulate;
+                default:
+                    return ParticleSystemCullingMode.Automatic;
+            }
         }
 
         bool IsInheritVelocityProfile()
@@ -4037,6 +4175,12 @@ namespace GPUParticles
             prewarmRestartGPUCount = 0;
             prewarmRestartShurikenMeanAge = 0f;
             prewarmRestartGPUMeanAge = 0f;
+            cullingOffscreenObserved = false;
+            cullingReturnObserved = false;
+            cullingReturnShurikenCount = 0;
+            cullingReturnGPUCount = 0;
+            cullingReturnShurikenMeanAge = 0f;
+            cullingReturnGPUMeanAge = 0f;
             if (IsStopActionProfile())
             {
                 ResetStopActionObservers();
@@ -4091,6 +4235,10 @@ namespace GPUParticles
             gpuScalingBirthXRange.Reset();
             shurikenPausedMeanAgeRange.Reset();
             gpuPausedMeanAgeRange.Reset();
+            shurikenCulledCountRange.Reset();
+            gpuCulledCountRange.Reset();
+            shurikenCulledMeanAgeRange.Reset();
+            gpuCulledMeanAgeRange.Reset();
             captureActive = true;
 
             Debug.Log($"Particle A/B RT capture started: {sessionFolder}", this);
@@ -5181,6 +5329,12 @@ namespace GPUParticles
                 gpuCount,
                 shurikenMeanAge,
                 gpuMeanAge);
+            ObserveCullingMetrics(
+                elapsed,
+                shurikenCount,
+                gpuCount,
+                shurikenMeanAge,
+                gpuMeanAge);
             float shurikenMeanLifetime = shurikenCount > 0
                 ? shurikenLifetimeSum / shurikenCount
                 : 0f;
@@ -6136,6 +6290,49 @@ namespace GPUParticles
             cameraCaptureRT = null;
         }
 
+        void ObserveCullingMetrics(
+            float elapsed,
+            int shurikenCount,
+            int gpuCount,
+            float shurikenMeanAge,
+            float gpuMeanAge)
+        {
+            if (!IsCullingProfile()) return;
+
+            bool alwaysOffscreen = validationProfile ==
+                    ParticleABValidationProfile.CullingAlwaysSimulatePoint ||
+                validationProfile ==
+                    ParticleABValidationProfile.CullingAutomaticOneShotPoint;
+            float observationStart = alwaysOffscreen
+                ? 0.25f
+                : CullingExitViewTime + 0.2f;
+            bool observeOffscreen = elapsed >= observationStart &&
+                                    elapsed <= CullingReturnTime - 0.1f;
+            if (observeOffscreen)
+            {
+                bool shurikenVisible = shurikenRenderer != null &&
+                                       shurikenRenderer.isVisible;
+                cullingOffscreenObserved |= !shurikenVisible &&
+                                            !gpuParticles.isVisible;
+                shurikenCulledCountRange.Observe(shurikenCount);
+                gpuCulledCountRange.Observe(gpuCount);
+                shurikenCulledMeanAgeRange.Observe(shurikenMeanAge);
+                gpuCulledMeanAgeRange.Observe(gpuMeanAge);
+            }
+
+            if (alwaysOffscreen || cullingReturnObserved ||
+                elapsed < CullingReturnTime + 0.2f)
+            {
+                return;
+            }
+
+            cullingReturnObserved = true;
+            cullingReturnShurikenCount = shurikenCount;
+            cullingReturnGPUCount = gpuCount;
+            cullingReturnShurikenMeanAge = shurikenMeanAge;
+            cullingReturnGPUMeanAge = gpuMeanAge;
+        }
+
         void ObservePlaybackMetrics(
             int shurikenCount,
             int gpuCount,
@@ -6235,6 +6432,11 @@ namespace GPUParticles
         void CompleteCapture()
         {
             captureActive = false;
+            if (captureCamera != null)
+            {
+                captureCamera.transform.position =
+                    captureCameraBasePositionWS;
+            }
             bool profileSpecificPassed;
             switch (validationProfile)
             {
@@ -6522,6 +6724,57 @@ namespace GPUParticles
                         ObservedSpread(gpuCustomWorldXRange) >= 1f;
                     break;
 
+                case ParticleABValidationProfile.CullingAutomaticLoopPoint:
+                case ParticleABValidationProfile.CullingPausePoint:
+                    profileSpecificPassed =
+                        cullingOffscreenObserved &&
+                        cullingReturnObserved &&
+                        ObservedSpread(shurikenCulledCountRange) <= 0.1f &&
+                        ObservedSpread(gpuCulledCountRange) <= 0.1f &&
+                        ObservedSpread(shurikenCulledMeanAgeRange) <= 0.03f &&
+                        ObservedSpread(gpuCulledMeanAgeRange) <= 0.03f &&
+                        cullingReturnShurikenCount >
+                            shurikenCulledCountRange.Maximum &&
+                        cullingReturnGPUCount >
+                            gpuCulledCountRange.Maximum;
+                    break;
+
+                case ParticleABValidationProfile.CullingPauseAndCatchupPoint:
+                    profileSpecificPassed =
+                        cullingOffscreenObserved &&
+                        cullingReturnObserved &&
+                        ObservedSpread(shurikenCulledCountRange) <= 0.1f &&
+                        ObservedSpread(gpuCulledCountRange) <= 0.1f &&
+                        ObservedSpread(shurikenCulledMeanAgeRange) <= 0.03f &&
+                        ObservedSpread(gpuCulledMeanAgeRange) <= 0.03f &&
+                        cullingReturnShurikenCount >=
+                            shurikenCulledCountRange.Maximum + 8f &&
+                        cullingReturnGPUCount >=
+                            gpuCulledCountRange.Maximum + 8f &&
+                        cullingReturnShurikenMeanAge >=
+                            shurikenCulledMeanAgeRange.Maximum + 0.25f &&
+                        cullingReturnGPUMeanAge >=
+                            gpuCulledMeanAgeRange.Maximum + 0.25f;
+                    break;
+
+                case ParticleABValidationProfile.CullingAlwaysSimulatePoint:
+                    profileSpecificPassed =
+                        cullingOffscreenObserved &&
+                        maximumShurikenParticleCount > 0 &&
+                        maximumGPUParticleCount > 0 &&
+                        ObservedSpread(shurikenCulledCountRange) >= 8f &&
+                        ObservedSpread(gpuCulledCountRange) >= 8f;
+                    break;
+
+                case ParticleABValidationProfile.CullingAutomaticOneShotPoint:
+                    profileSpecificPassed =
+                        cullingOffscreenObserved &&
+                        maximumShurikenParticleCount > 0 &&
+                        maximumGPUParticleCount > 0 &&
+                        shuriken.isStopped &&
+                        gpuParticles.isStopped;
+                    break;
+
                 case ParticleABValidationProfile.UnscaledTimePoint:
                     profileSpecificPassed = maximumMeanSpeedError <= 0.001f &&
                                             maximumMeanAgeError <= 0.001f &&
@@ -6760,6 +7013,8 @@ namespace GPUParticles
                         ? 1
                     : IsEmitterVelocityProfile()
                         ? 1
+                    : IsCullingProfile()
+                        ? 1
                     : 0;
             float allowedMeanAgeError = validationProfile ==
                     ParticleABValidationProfile.StartLifetimeCurvePoint
@@ -6778,6 +7033,8 @@ namespace GPUParticles
                         ? 0.03f
                     : IsEmitterVelocityProfile()
                         ? 0.03f
+                    : IsCullingProfile()
+                        ? 0.05f
                     : 0.001f;
             bool passed = maximumCountDelta <= allowedCountDelta &&
                           maximumMeanAgeError <= allowedMeanAgeError &&
@@ -6832,6 +7089,22 @@ namespace GPUParticles
                 $"{prewarmRestartShurikenMeanAge:R}; " +
                 $"prewarmRestartGPUMeanAge=" +
                 $"{prewarmRestartGPUMeanAge:R}; " +
+                $"cullingOffscreenObserved={cullingOffscreenObserved}; " +
+                $"cullingReturnObserved={cullingReturnObserved}; " +
+                $"cullingShurikenCountRange=" +
+                $"{FormatRange(shurikenCulledCountRange)}; " +
+                $"cullingGPUCountRange=" +
+                $"{FormatRange(gpuCulledCountRange)}; " +
+                $"cullingShurikenAgeRange=" +
+                $"{FormatRange(shurikenCulledMeanAgeRange)}; " +
+                $"cullingGPUAgeRange=" +
+                $"{FormatRange(gpuCulledMeanAgeRange)}; " +
+                $"cullingReturnCounts=" +
+                $"({cullingReturnShurikenCount}," +
+                $"{cullingReturnGPUCount}); " +
+                $"cullingReturnMeanAges=" +
+                $"({cullingReturnShurikenMeanAge:R}," +
+                $"{cullingReturnGPUMeanAge:R}); " +
                 $"maxMeanLifetimeError={maximumMeanLifetimeError:R}; " +
                 $"maxMeanStartRotationError=" +
                 $"{maximumMeanStartRotationError:R}; " +

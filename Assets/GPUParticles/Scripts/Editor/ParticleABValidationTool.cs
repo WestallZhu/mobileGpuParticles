@@ -516,6 +516,58 @@ namespace GPUParticles.Editor
             StartCapture(false, profile);
         }
 
+        [MenuItem("Tools/GPU Particles/Run Culling Automatic Loop A-B RT Capture")]
+        public static void RunCullingAutomaticLoopCaptureMenu()
+        {
+            StartCullingCaptureMenu(
+                ParticleABValidationProfile.CullingAutomaticLoopPoint);
+        }
+
+        [MenuItem("Tools/GPU Particles/Run Culling Automatic One Shot A-B RT Capture")]
+        public static void RunCullingAutomaticOneShotCaptureMenu()
+        {
+            StartCullingCaptureMenu(
+                ParticleABValidationProfile.CullingAutomaticOneShotPoint);
+        }
+
+        [MenuItem("Tools/GPU Particles/Run Culling Pause A-B RT Capture")]
+        public static void RunCullingPauseCaptureMenu()
+        {
+            StartCullingCaptureMenu(
+                ParticleABValidationProfile.CullingPausePoint);
+        }
+
+        [MenuItem("Tools/GPU Particles/Run Culling Pause Catchup A-B RT Capture")]
+        public static void RunCullingPauseAndCatchupCaptureMenu()
+        {
+            StartCullingCaptureMenu(
+                ParticleABValidationProfile.CullingPauseAndCatchupPoint);
+        }
+
+        [MenuItem("Tools/GPU Particles/Run Culling Always Simulate A-B RT Capture")]
+        public static void RunCullingAlwaysSimulateCaptureMenu()
+        {
+            StartCullingCaptureMenu(
+                ParticleABValidationProfile.CullingAlwaysSimulatePoint);
+        }
+
+        static void StartCullingCaptureMenu(
+            ParticleABValidationProfile profile)
+        {
+            if (EditorApplication.isPlaying)
+            {
+                Debug.LogWarning(
+                    "Stop Play Mode before starting a deterministic A/B capture.");
+                return;
+            }
+
+            if (!EditorSceneManager.SaveCurrentModifiedScenesIfUserWantsTo())
+            {
+                return;
+            }
+            StartCapture(false, profile);
+        }
+
         [MenuItem("Tools/GPU Particles/Run Lifetime by Emitter Speed A-B RT Capture")]
         public static void RunLifetimeByEmitterSpeedCaptureMenu()
         {
@@ -998,6 +1050,46 @@ namespace GPUParticles.Editor
                 ParticleABValidationProfile.EmitterVelocityRigidbodyPoint);
         }
 
+        public static void RunBatchCullingAutomaticLoopCapture()
+        {
+            ValidateCommonFeatureMapping();
+            StartCapture(
+                true,
+                ParticleABValidationProfile.CullingAutomaticLoopPoint);
+        }
+
+        public static void RunBatchCullingAutomaticOneShotCapture()
+        {
+            ValidateCommonFeatureMapping();
+            StartCapture(
+                true,
+                ParticleABValidationProfile.CullingAutomaticOneShotPoint);
+        }
+
+        public static void RunBatchCullingPauseCapture()
+        {
+            ValidateCommonFeatureMapping();
+            StartCapture(
+                true,
+                ParticleABValidationProfile.CullingPausePoint);
+        }
+
+        public static void RunBatchCullingPauseAndCatchupCapture()
+        {
+            ValidateCommonFeatureMapping();
+            StartCapture(
+                true,
+                ParticleABValidationProfile.CullingPauseAndCatchupPoint);
+        }
+
+        public static void RunBatchCullingAlwaysSimulateCapture()
+        {
+            ValidateCommonFeatureMapping();
+            StartCapture(
+                true,
+                ParticleABValidationProfile.CullingAlwaysSimulatePoint);
+        }
+
         public static void RunBatchLifetimeByEmitterSpeedCapture()
         {
             ValidateCommonFeatureMapping();
@@ -1157,6 +1249,7 @@ namespace GPUParticles.Editor
             shuriken.randomSeed = 12345;
             var main = shuriken.main;
             main.cullingMode = ParticleSystemCullingMode.AlwaysSimulate;
+            gpu.cullingMode = ParticleSystemCullingMode.AlwaysSimulate;
             bool validatePlaybackLifecycle = profile ==
                 ParticleABValidationProfile.PlaybackLifecyclePoint;
             bool validatePrewarm = profile ==
@@ -1175,6 +1268,7 @@ namespace GPUParticles.Editor
                 throw new MissingComponentException("The Shuriken system has no ParticleSystemRenderer.");
             }
             shurikenRenderer.sharedMaterial = GetOrCreateShurikenMaterial();
+            gpu.localCullingBounds = shurikenRenderer.localBounds;
 
             var controller = camera.GetComponent<ParticleABValidationController>();
             if (controller == null)
@@ -1261,6 +1355,13 @@ namespace GPUParticles.Editor
                 case ParticleABValidationProfile.InheritVelocityCurrentPoint: return 3.2f;
                 case ParticleABValidationProfile.EmitterVelocityCustomPoint: return 2.5f;
                 case ParticleABValidationProfile.EmitterVelocityRigidbodyPoint: return 2.5f;
+                case ParticleABValidationProfile.CullingAutomaticLoopPoint:
+                case ParticleABValidationProfile.CullingPausePoint:
+                case ParticleABValidationProfile.CullingPauseAndCatchupPoint:
+                    return 2.2f;
+                case ParticleABValidationProfile.CullingAutomaticOneShotPoint:
+                case ParticleABValidationProfile.CullingAlwaysSimulatePoint:
+                    return 1.6f;
                 case ParticleABValidationProfile.LifetimeByEmitterSpeedPoint: return 4.2f;
                 case ParticleABValidationProfile.ShapeSpherePoint:
                 case ParticleABValidationProfile.ShapeCirclePoint:
@@ -1309,6 +1410,18 @@ namespace GPUParticles.Editor
                 ParticleABValidationProfile.CustomSimulationSpacePoint)
             {
                 return 10f;
+            }
+            if (profile ==
+                    ParticleABValidationProfile.CullingAutomaticLoopPoint ||
+                profile ==
+                    ParticleABValidationProfile.CullingAutomaticOneShotPoint ||
+                profile == ParticleABValidationProfile.CullingPausePoint ||
+                profile ==
+                    ParticleABValidationProfile.CullingPauseAndCatchupPoint ||
+                profile ==
+                    ParticleABValidationProfile.CullingAlwaysSimulatePoint)
+            {
+                return 30f;
             }
 
             return profile == ParticleABValidationProfile.EmissionBurstPoint ||
@@ -1432,6 +1545,16 @@ namespace GPUParticles.Editor
                     return "TestResults/ParticleEmitterVelocityCustom";
                 case ParticleABValidationProfile.EmitterVelocityRigidbodyPoint:
                     return "TestResults/ParticleEmitterVelocityRigidbody";
+                case ParticleABValidationProfile.CullingAutomaticLoopPoint:
+                    return "TestResults/ParticleCullingAutomaticLoop";
+                case ParticleABValidationProfile.CullingAutomaticOneShotPoint:
+                    return "TestResults/ParticleCullingAutomaticOneShot";
+                case ParticleABValidationProfile.CullingPausePoint:
+                    return "TestResults/ParticleCullingPause";
+                case ParticleABValidationProfile.CullingPauseAndCatchupPoint:
+                    return "TestResults/ParticleCullingPauseCatchup";
+                case ParticleABValidationProfile.CullingAlwaysSimulatePoint:
+                    return "TestResults/ParticleCullingAlwaysSimulate";
                 case ParticleABValidationProfile.LifetimeByEmitterSpeedPoint:
                     return "TestResults/ParticleLifetimeByEmitterSpeed";
                 case ParticleABValidationProfile.ShapeSpherePoint:
@@ -1552,6 +1675,10 @@ namespace GPUParticles.Editor
                     owner.GetComponent<ParticleSystemRenderer>();
                 shurikenRenderer.minParticleSize = 0.075f;
                 shurikenRenderer.maxParticleSize = 0.325f;
+                Bounds rendererLocalBounds = new Bounds(
+                    new Vector3(1f, -2f, 3f),
+                    new Vector3(8f, 10f, 12f));
+                shurikenRenderer.localBounds = rendererLocalBounds;
                 AnimationCurve startLifetimeMinimumCurve =
                     AnimationCurve.Linear(0f, 0.75f, 1f, 1.25f);
                 AnimationCurve startLifetimeMaximumCurve =
@@ -1609,6 +1736,8 @@ namespace GPUParticles.Editor
                 main.emitterVelocityMode =
                     ParticleSystemEmitterVelocityMode.Custom;
                 main.emitterVelocity = new Vector3(1.25f, -2.5f, 3.75f);
+                main.cullingMode =
+                    ParticleSystemCullingMode.PauseAndCatchup;
 
                 var rotationOverLifetime = shuriken.rotationOverLifetime;
                 rotationOverLifetime.enabled = true;
@@ -1826,6 +1955,13 @@ namespace GPUParticles.Editor
                 Require(
                     gpu.emitterVelocitySource == shuriken,
                     "Main Emitter Velocity source was not mapped.");
+                Require(
+                    gpu.cullingMode ==
+                    ParticleSystemCullingMode.PauseAndCatchup,
+                    "Main Culling Mode was not mapped.");
+                Require(
+                    gpu.localCullingBounds == rendererLocalBounds,
+                    "Renderer Local Bounds were not mapped for culling.");
                 Require(gpu.screenSpaceSizeClampEnabled,
                     "Renderer screen-space size clamp was not enabled.");
                 RequireApproximately(

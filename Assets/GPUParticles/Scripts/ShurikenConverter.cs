@@ -34,6 +34,7 @@ namespace GPUParticles
             gpu.scalingMode = main.scalingMode;
             gpu.scalingSource = null;
             ApplyEmitterVelocity(ps, gpu);
+            gpu.cullingMode = main.cullingMode;
             ApplyMainRanges(ps, gpu, owner);
             gpu.simulationSpeed = main.simulationSpeed;
             gpu.useUnscaledTime = main.useUnscaledTime;
@@ -214,6 +215,7 @@ namespace GPUParticles
                 gpu.screenSpaceSizeClampEnabled = true;
                 gpu.minParticleSize = psr.minParticleSize;
                 gpu.maxParticleSize = psr.maxParticleSize;
+                gpu.localCullingBounds = psr.localBounds;
 
                 // Stretched-only
                 gpu.stretchedLengthScale = psr.lengthScale;
@@ -293,6 +295,7 @@ namespace GPUParticles
             gpu.scalingMode = main.scalingMode;
             gpu.scalingSource = originalOwner.transform;
             ApplyEmitterVelocity(particleSystem, gpu);
+            gpu.cullingMode = main.cullingMode;
             ApplyMainRanges(particleSystem, gpu, gpuChild);
             gpu.simulationSpeed = main.simulationSpeed;
             gpu.useUnscaledTime = main.useUnscaledTime;
@@ -472,6 +475,7 @@ namespace GPUParticles
                 gpu.screenSpaceSizeClampEnabled = true;
                 gpu.minParticleSize = psr.minParticleSize;
                 gpu.maxParticleSize = psr.maxParticleSize;
+                gpu.localCullingBounds = psr.localBounds;
 
                 gpu.stretchedLengthScale = psr.lengthScale;
                 gpu.stretchedVelocityScale = psr.velocityScale;
