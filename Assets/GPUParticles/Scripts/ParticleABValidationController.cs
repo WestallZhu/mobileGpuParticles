@@ -67,7 +67,33 @@ namespace GPUParticles
         PrewarmPoint,
         FlipRotationPoint,
         GravitySource2DPoint,
-        CustomSimulationSpacePoint
+        CustomSimulationSpacePoint,
+        StopActionCallbackPoint
+    }
+
+    [DisallowMultipleComponent]
+    public sealed class ParticleStopActionObserver : MonoBehaviour
+    {
+        public int CallbackCount { get; private set; }
+        public int FirstCallbackFrame { get; private set; } = -1;
+        public int LastCallbackFrame { get; private set; } = -1;
+
+        public void ResetObservation()
+        {
+            CallbackCount = 0;
+            FirstCallbackFrame = -1;
+            LastCallbackFrame = -1;
+        }
+
+        public void OnParticleSystemStopped()
+        {
+            if (CallbackCount == 0)
+            {
+                FirstCallbackFrame = Time.frameCount;
+            }
+            CallbackCount++;
+            LastCallbackFrame = Time.frameCount;
+        }
     }
 
     [DisallowMultipleComponent]
@@ -175,6 +201,16 @@ namespace GPUParticles
         int prewarmRestartGPUCount;
         float prewarmRestartShurikenMeanAge;
         float prewarmRestartGPUMeanAge;
+        ParticleStopActionObserver shurikenStopActionObserver;
+        ParticleStopActionObserver gpuStopActionObserver;
+        ParticleSystemSync stopActionSync;
+        bool stopActionRestartPlayingObserved;
+        GPUParticleSystem stopActionDisableProbe;
+        GPUParticleSystem stopActionDestroyProbe;
+        GameObject stopActionDisableTarget;
+        GameObject stopActionDestroyTarget;
+        bool stopActionDisableObserved;
+        bool stopActionDestroyObserved;
         bool gravityOverrideActive;
         Vector3 savedPhysicsGravity;
         Vector2 savedPhysics2DGravity;
@@ -276,6 +312,8 @@ namespace GPUParticles
         const int PrewarmRestartStopFrame = 31;
         const int PrewarmRestartPlayFrame = 32;
         const int PrewarmRestartCaptureFrame = 36;
+        const int StopActionRestartFrame = 75;
+        const int StopActionExplicitProbeFrame = 20;
         static readonly Color32 RendererClampMarker =
             new Color32(242, 31, 242, 255);
         static readonly Color32 ScalingModeMarker =
@@ -478,6 +516,7 @@ namespace GPUParticles
             if (profileRotationBySpeedLUT != null) Destroy(profileRotationBySpeedLUT);
             RestoreGravityOverride();
             DestroyCustomSimulationSpaces();
+            DestroyStopActionProbes();
             ReleaseCameraCaptureTarget();
         }
 
@@ -485,6 +524,7 @@ namespace GPUParticles
         {
             UpdatePlaybackLifecycle();
             UpdatePrewarmLifecycle();
+            UpdateStopActionLifecycle();
 
             if (captureActive && UsesMovingEmitterProfile())
             {
@@ -537,6 +577,8 @@ namespace GPUParticles
                 CommandBufferPool.Release(command);
             }
 
+            ObserveStopActionLifecycle();
+
             playbackFrame++;
             if (playbackFrame >= nextCaptureFrame)
             {
@@ -566,6 +608,12 @@ namespace GPUParticles
             if (IsPlaybackLifecycleProfile())
             {
                 ConfigurePlaybackLifecycleProfile();
+                return;
+            }
+
+            if (IsStopActionProfile())
+            {
+                ConfigureStopActionProfile();
                 return;
             }
 
@@ -875,6 +923,7 @@ namespace GPUParticles
             main.simulationSpeed = 1f;
             main.simulationSpace = ParticleSystemSimulationSpace.Local;
             main.customSimulationSpace = null;
+            main.stopAction = ParticleSystemStopAction.None;
 
             var emission = shuriken.emission;
             emission.enabled = true;
@@ -933,6 +982,8 @@ namespace GPUParticles
             gpuParticles.simulationSpeed = 1f;
             gpuParticles.simulationSpace = SimulationSpace.Local;
             gpuParticles.customSimulationSpace = null;
+            gpuParticles.stopAction = ParticleSystemStopAction.None;
+            gpuParticles.stopActionTarget = null;
             gpuParticles.colorOverLifetimeMode = ParticleSystemGradientMode.Gradient;
             gpuParticles.colorOverLifetimeLUT = GradientLUTBuilder.GetDefaultWhiteLUT();
             gpuParticles.sizeOverLifetimeSeparateAxes = false;
@@ -3021,6 +3072,195 @@ namespace GPUParticles
             }
         }
 
+        void ConfigureStopActionProfile()
+        {
+            ConfigureEmissionPointBase(0.5f, false);
+
+            stopActionSync = gpuParticles.GetComponent<ParticleSystemSync>();
+            if (stopActionSync != null)
+            {
+                // This profile runs the systems independently so each callback
+                // can be attributed to its own implementation.
+                stopActionSync.enabled = false;
+            }
+
+            var main = shuriken.main;
+            main.startLifetime = 0.4f;
+            main.startSpeed = 0f;
+            main.startSize = 0.6f;
+            main.stopAction = ParticleSystemStopAction.Callback;
+
+            var emission = shuriken.emission;
+            emission.rateOverTime = 20f;
+            emission.rateOverDistance = 0f;
+            emission.SetBursts(Array.Empty<ParticleSystem.Burst>());
+
+            gpuParticles.SetStartLifetimeRange(0.4f, 0.4f);
+            gpuParticles.SetStartSpeedRange(0f, 0f);
+            gpuParticles.SetStartSizeRange(0.6f, 0.6f);
+            gpuParticles.stopAction = ParticleSystemStopAction.Callback;
+            gpuParticles.stopActionTarget = null;
+            gpuParticles.SetEmissionRateOverTime(emission.rateOverTime);
+            gpuParticles.SetEmissionRateOverDistance(emission.rateOverDistance);
+            gpuParticles.SetEmissionBursts(Array.Empty<ParticleSystem.Burst>());
+
+            shurikenStopActionObserver =
+                shuriken.GetComponent<ParticleStopActionObserver>();
+            if (shurikenStopActionObserver == null)
+            {
+                shurikenStopActionObserver =
+                    shuriken.gameObject.AddComponent<
+                        ParticleStopActionObserver>();
+            }
+
+            gpuStopActionObserver =
+                gpuParticles.GetComponent<ParticleStopActionObserver>();
+            if (gpuStopActionObserver == null)
+            {
+                gpuStopActionObserver =
+                    gpuParticles.gameObject.AddComponent<
+                        ParticleStopActionObserver>();
+            }
+            ResetStopActionObservers();
+
+            stopActionDisableProbe = CreateStopActionProbe(
+                "Stop Action Disable Probe",
+                ParticleSystemStopAction.Disable,
+                out stopActionDisableTarget);
+            stopActionDestroyProbe = CreateStopActionProbe(
+                "Stop Action Destroy Probe",
+                ParticleSystemStopAction.Destroy,
+                out stopActionDestroyTarget);
+        }
+
+        static GPUParticleSystem CreateStopActionProbe(
+            string name,
+            ParticleSystemStopAction action,
+            out GameObject target)
+        {
+            var owner = new GameObject(name + " System");
+            target = new GameObject(name + " Target");
+            var probe = owner.AddComponent<GPUParticleSystem>();
+            probe.maxParticles = 1;
+            probe.renderEnabled = false;
+            probe.emissionEnabled = false;
+            probe.emissionLooping = false;
+            probe.emissionDuration = 0.05f;
+            probe.SetStartLifetimeRange(0.05f, 0.05f);
+            probe.playOnAwake = false;
+            probe.stopAction = action;
+            probe.stopActionTarget = target;
+            probe.ResetSimulation();
+            probe.InitializePlaybackFromSettings();
+            return probe;
+        }
+
+        void DestroyStopActionProbes()
+        {
+            DestroyStopActionProbeObject(
+                stopActionDisableProbe != null
+                    ? stopActionDisableProbe.gameObject
+                    : null);
+            DestroyStopActionProbeObject(
+                stopActionDestroyProbe != null
+                    ? stopActionDestroyProbe.gameObject
+                    : null);
+            DestroyStopActionProbeObject(stopActionDisableTarget);
+            DestroyStopActionProbeObject(stopActionDestroyTarget);
+            stopActionDisableProbe = null;
+            stopActionDestroyProbe = null;
+            stopActionDisableTarget = null;
+            stopActionDestroyTarget = null;
+        }
+
+        static void DestroyStopActionProbeObject(GameObject target)
+        {
+            if (target == null) return;
+            if (Application.isPlaying)
+            {
+                Destroy(target);
+            }
+            else
+            {
+                DestroyImmediate(target);
+            }
+        }
+
+        bool IsStopActionProfile()
+        {
+            return validationProfile ==
+                ParticleABValidationProfile.StopActionCallbackPoint;
+        }
+
+        void UpdateStopActionLifecycle()
+        {
+            if (!captureActive || !IsStopActionProfile() ||
+                shuriken == null || gpuParticles == null)
+            {
+                return;
+            }
+
+            if (playbackFrame == StopActionRestartFrame)
+            {
+                shuriken.Play(true);
+                gpuParticles.Play(false);
+            }
+            else if (playbackFrame == StopActionExplicitProbeFrame)
+            {
+                TriggerStopActionProbe(stopActionDisableProbe);
+                TriggerStopActionProbe(stopActionDestroyProbe);
+            }
+        }
+
+        static void TriggerStopActionProbe(GPUParticleSystem probe)
+        {
+            if (probe == null) return;
+            probe.Play(false);
+            probe.Stop(
+                false,
+                ParticleSystemStopBehavior.StopEmittingAndClear);
+        }
+
+        void ObserveStopActionLifecycle()
+        {
+            if (!captureActive || !IsStopActionProfile() ||
+                shuriken == null || gpuParticles == null)
+            {
+                return;
+            }
+
+            if (playbackFrame >= StopActionRestartFrame &&
+                shuriken.isPlaying && gpuParticles.isPlaying)
+            {
+                stopActionRestartPlayingObserved = true;
+            }
+            if (stopActionDisableTarget != null &&
+                !stopActionDisableTarget.activeSelf)
+            {
+                stopActionDisableObserved = true;
+            }
+            if (playbackFrame > StopActionExplicitProbeFrame &&
+                stopActionDestroyTarget == null)
+            {
+                stopActionDestroyObserved = true;
+            }
+        }
+
+        void ResetStopActionObservers()
+        {
+            if (shurikenStopActionObserver != null)
+            {
+                shurikenStopActionObserver.ResetObservation();
+            }
+            if (gpuStopActionObserver != null)
+            {
+                gpuStopActionObserver.ResetObservation();
+            }
+            stopActionRestartPlayingObserved = false;
+            stopActionDisableObserved = false;
+            stopActionDestroyObserved = false;
+        }
+
         void ConfigurePlaybackLifecycleProfile()
         {
             ConfigureEmissionPointBase(5f, true);
@@ -3187,6 +3427,7 @@ namespace GPUParticles
             main.simulationSpace = ParticleSystemSimulationSpace.Local;
             main.customSimulationSpace = null;
             main.scalingMode = ParticleSystemScalingMode.Hierarchy;
+            main.stopAction = ParticleSystemStopAction.None;
             main.emitterVelocityMode =
                 ParticleSystemEmitterVelocityMode.Transform;
 
@@ -3246,6 +3487,8 @@ namespace GPUParticles
             gpuParticles.simulationSpace = SimulationSpace.Local;
             gpuParticles.customSimulationSpace = null;
             gpuParticles.scalingMode = ParticleSystemScalingMode.Hierarchy;
+            gpuParticles.stopAction = ParticleSystemStopAction.None;
+            gpuParticles.stopActionTarget = null;
             gpuParticles.scalingSource = shuriken.transform;
             gpuParticles.colorOverLifetimeMode = ParticleSystemGradientMode.Gradient;
             gpuParticles.colorOverLifetimeLUT = GradientLUTBuilder.GetDefaultWhiteLUT();
@@ -3298,6 +3541,25 @@ namespace GPUParticles
             MoveValidationEmitters(0f);
             MoveValidationCustomSpaces(0f);
 
+            bool suspendStopAction = IsStopActionProfile();
+            ParticleSystemStopAction savedShurikenStopAction =
+                ParticleSystemStopAction.None;
+            ParticleSystemStopAction savedGPUStopAction =
+                ParticleSystemStopAction.None;
+            GameObject savedGPUStopActionTarget = null;
+            if (suspendStopAction && shuriken != null)
+            {
+                var main = shuriken.main;
+                savedShurikenStopAction = main.stopAction;
+                main.stopAction = ParticleSystemStopAction.None;
+            }
+            if (suspendStopAction && gpuParticles != null)
+            {
+                savedGPUStopAction = gpuParticles.stopAction;
+                savedGPUStopActionTarget = gpuParticles.stopActionTarget;
+                gpuParticles.stopAction = ParticleSystemStopAction.None;
+            }
+
             if (shuriken != null)
             {
                 shuriken.Stop(true, ParticleSystemStopBehavior.StopEmittingAndClear);
@@ -3325,6 +3587,21 @@ namespace GPUParticles
                 {
                     gpuParticles.Play(false);
                 }
+            }
+
+            if (suspendStopAction)
+            {
+                if (shuriken != null)
+                {
+                    var main = shuriken.main;
+                    main.stopAction = savedShurikenStopAction;
+                }
+                if (gpuParticles != null)
+                {
+                    gpuParticles.stopAction = savedGPUStopAction;
+                    gpuParticles.stopActionTarget = savedGPUStopActionTarget;
+                }
+                ResetStopActionObservers();
             }
 
             if (captureActive)
@@ -3658,6 +3935,10 @@ namespace GPUParticles
             prewarmRestartGPUCount = 0;
             prewarmRestartShurikenMeanAge = 0f;
             prewarmRestartGPUMeanAge = 0f;
+            if (IsStopActionProfile())
+            {
+                ResetStopActionObservers();
+            }
             shurikenLifetimeRange.Reset();
             gpuLifetimeRange.Reset();
             shurikenSpeedRange.Reset();
@@ -6057,6 +6338,27 @@ namespace GPUParticles
                         playbackClearObserved;
                     break;
 
+                case ParticleABValidationProfile.StopActionCallbackPoint:
+                    profileSpecificPassed =
+                        shurikenStopActionObserver != null &&
+                        gpuStopActionObserver != null &&
+                        shurikenStopActionObserver.CallbackCount == 2 &&
+                        gpuStopActionObserver.CallbackCount == 2 &&
+                        Mathf.Abs(
+                            shurikenStopActionObserver.FirstCallbackFrame -
+                            gpuStopActionObserver.FirstCallbackFrame) <= 3 &&
+                        Mathf.Abs(
+                            shurikenStopActionObserver.LastCallbackFrame -
+                            gpuStopActionObserver.LastCallbackFrame) <= 3 &&
+                        stopActionRestartPlayingObserved &&
+                        stopActionDisableObserved &&
+                        stopActionDestroyObserved &&
+                        shuriken.isStopped &&
+                        gpuParticles.isStopped &&
+                        maximumShurikenParticleCount > 0 &&
+                        maximumGPUParticleCount > 0;
+                    break;
+
                 case ParticleABValidationProfile.PrewarmPoint:
                     profileSpecificPassed =
                         prewarmFirstSnapshotObserved &&
@@ -6340,6 +6642,9 @@ namespace GPUParticles
                     : validationProfile ==
                         ParticleABValidationProfile.PlaybackLifecyclePoint
                         ? 1
+                    : validationProfile ==
+                        ParticleABValidationProfile.StopActionCallbackPoint
+                        ? 1
                     : 0;
             float allowedMeanAgeError = validationProfile ==
                     ParticleABValidationProfile.StartLifetimeCurvePoint
@@ -6353,6 +6658,9 @@ namespace GPUParticles
                         // one StopEmitting drain frame; it is not rendered, but
                         // its inclusion shifts the raw mean age for that sample.
                         ? 0.05f
+                    : validationProfile ==
+                        ParticleABValidationProfile.StopActionCallbackPoint
+                        ? 0.03f
                     : 0.001f;
             bool passed = maximumCountDelta <= allowedCountDelta &&
                           maximumMeanAgeError <= allowedMeanAgeError &&
@@ -6379,6 +6687,22 @@ namespace GPUParticles
                 $"{maximumGPUStoppedParticleCount}; " +
                 $"playbackDrainObserved={playbackDrainObserved}; " +
                 $"playbackClearObserved={playbackClearObserved}; " +
+                $"stopActionShurikenCallbacks=" +
+                $"{(shurikenStopActionObserver != null ? shurikenStopActionObserver.CallbackCount : 0)}; " +
+                $"stopActionGPUCallbacks=" +
+                $"{(gpuStopActionObserver != null ? gpuStopActionObserver.CallbackCount : 0)}; " +
+                $"stopActionShurikenFirstFrame=" +
+                $"{(shurikenStopActionObserver != null ? shurikenStopActionObserver.FirstCallbackFrame : -1)}; " +
+                $"stopActionGPUFirstFrame=" +
+                $"{(gpuStopActionObserver != null ? gpuStopActionObserver.FirstCallbackFrame : -1)}; " +
+                $"stopActionShurikenLastFrame=" +
+                $"{(shurikenStopActionObserver != null ? shurikenStopActionObserver.LastCallbackFrame : -1)}; " +
+                $"stopActionGPULastFrame=" +
+                $"{(gpuStopActionObserver != null ? gpuStopActionObserver.LastCallbackFrame : -1)}; " +
+                $"stopActionRestartPlayingObserved=" +
+                $"{stopActionRestartPlayingObserved}; " +
+                $"stopActionDisableObserved={stopActionDisableObserved}; " +
+                $"stopActionDestroyObserved={stopActionDestroyObserved}; " +
                 $"prewarmFirstShurikenCount={prewarmFirstShurikenCount}; " +
                 $"prewarmFirstGPUCount={prewarmFirstGPUCount}; " +
                 $"prewarmFirstShurikenMeanAge=" +

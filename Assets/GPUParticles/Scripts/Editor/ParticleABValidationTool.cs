@@ -261,6 +261,13 @@ namespace GPUParticles.Editor
                 ParticleABValidationProfile.PlaybackLifecyclePoint);
         }
 
+        [MenuItem("Tools/GPU Particles/Run Stop Action A-B RT Capture")]
+        public static void RunStopActionCaptureMenu()
+        {
+            StartStartSizeCapture(
+                ParticleABValidationProfile.StopActionCallbackPoint);
+        }
+
         [MenuItem("Tools/GPU Particles/Run Prewarm A-B RT Capture")]
         public static void RunPrewarmCaptureMenu()
         {
@@ -822,6 +829,14 @@ namespace GPUParticles.Editor
                 ParticleABValidationProfile.PlaybackLifecyclePoint);
         }
 
+        public static void RunBatchStopActionCapture()
+        {
+            ValidateCommonFeatureMapping();
+            StartCapture(
+                true,
+                ParticleABValidationProfile.StopActionCallbackPoint);
+        }
+
         public static void RunBatchPrewarmCapture()
         {
             ValidateCommonFeatureMapping();
@@ -1103,6 +1118,9 @@ namespace GPUParticles.Editor
             gpu.playOnAwake = !validatePlaybackLifecycle;
             main.prewarm = validatePrewarm;
             gpu.prewarm = validatePrewarm;
+            main.stopAction = ParticleSystemStopAction.None;
+            gpu.stopAction = ParticleSystemStopAction.None;
+            gpu.stopActionTarget = null;
 
             var shurikenRenderer = shuriken.GetComponent<ParticleSystemRenderer>();
             if (shurikenRenderer == null)
@@ -1171,6 +1189,8 @@ namespace GPUParticles.Editor
                     return 1.5f;
                 case ParticleABValidationProfile.PlaybackLifecyclePoint:
                     return 4.7f;
+                case ParticleABValidationProfile.StopActionCallbackPoint:
+                    return 2.6f;
                 case ParticleABValidationProfile.PrewarmPoint:
                     return 1f;
                 case ParticleABValidationProfile.FlipRotationPoint:
@@ -1216,6 +1236,11 @@ namespace GPUParticles.Editor
         static float CaptureFrequency(ParticleABValidationProfile profile)
         {
             if (profile == ParticleABValidationProfile.PlaybackLifecyclePoint)
+            {
+                return 10f;
+            }
+            if (profile ==
+                ParticleABValidationProfile.StopActionCallbackPoint)
             {
                 return 10f;
             }
@@ -1318,6 +1343,8 @@ namespace GPUParticles.Editor
                     return "TestResults/ParticleScalingShape";
                 case ParticleABValidationProfile.PlaybackLifecyclePoint:
                     return "TestResults/ParticlePlaybackLifecycle";
+                case ParticleABValidationProfile.StopActionCallbackPoint:
+                    return "TestResults/ParticleStopAction";
                 case ParticleABValidationProfile.PrewarmPoint:
                     return "TestResults/ParticlePrewarm";
                 case ParticleABValidationProfile.FlipRotationPoint:
@@ -1462,6 +1489,7 @@ namespace GPUParticles.Editor
                 main.useUnscaledTime = true;
                 main.playOnAwake = false;
                 main.prewarm = true;
+                main.stopAction = ParticleSystemStopAction.Destroy;
                 main.flipRotation = 0.65f;
                 main.gravitySource = ParticleSystemGravitySource.Physics2D;
                 main.scalingMode = ParticleSystemScalingMode.Local;
@@ -1701,6 +1729,12 @@ namespace GPUParticles.Editor
                     "Main Play On Awake was not mapped.");
                 Require(gpu.prewarm,
                     "Main Prewarm was not mapped.");
+                Require(
+                    gpu.stopAction == ParticleSystemStopAction.Destroy,
+                    "Main Stop Action was not mapped.");
+                Require(
+                    gpu.stopActionTarget == null,
+                    "Same-GameObject Stop Action should use the GPU owner.");
                 RequireApproximately(
                     gpu.flipRotation,
                     0.65f,

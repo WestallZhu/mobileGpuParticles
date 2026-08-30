@@ -25,6 +25,7 @@ namespace GPUParticles
         private bool cachedUseUnscaledTime;
         private bool cachedPlayOnAwake;
         private bool cachedPrewarm;
+        private ParticleSystemStopAction cachedStopAction;
         private float cachedStartRotation;
         private float cachedFlipRotation;
         private float cachedRotationOverLifetime;
@@ -199,6 +200,7 @@ namespace GPUParticles
             cachedUseUnscaledTime = main.useUnscaledTime;
             cachedPlayOnAwake = main.playOnAwake;
             cachedPrewarm = main.prewarm;
+            cachedStopAction = main.stopAction;
             cachedStartRotation = main.startRotation.mode == ParticleSystemCurveMode.Constant ? main.startRotation.constant : cachedStartRotation;
             cachedFlipRotation = main.flipRotation;
             cachedEmissionEnabled = emission.enabled;
@@ -313,6 +315,17 @@ namespace GPUParticles
             {
                 targetGPUParticleSystem.prewarm = main.prewarm;
                 cachedPrewarm = main.prewarm;
+            }
+
+            if (force ||
+                main.stopAction != cachedStopAction ||
+                targetGPUParticleSystem.stopActionTarget !=
+                sourceParticleSystem.gameObject)
+            {
+                targetGPUParticleSystem.stopAction = main.stopAction;
+                targetGPUParticleSystem.stopActionTarget =
+                    sourceParticleSystem.gameObject;
+                cachedStopAction = main.stopAction;
             }
 
             ParticleSystem.MinMaxCurve startLifetime = main.startLifetime;

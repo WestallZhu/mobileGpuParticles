@@ -81,6 +81,11 @@ namespace GPUParticles
         public bool useUnscaledTime;
         public bool playOnAwake = true;
         public bool prewarm;
+        public ParticleSystemStopAction stopAction =
+            ParticleSystemStopAction.None;
+        [Tooltip("Optional GameObject that receives Main Stop Action. " +
+                 "Leave empty to use this GPU particle GameObject.")]
+        public GameObject stopActionTarget;
         public ParticleSystemScalingMode scalingMode =
             ParticleSystemScalingMode.Hierarchy;
         [Tooltip("Optional source Transform used for Shuriken Local scaling when the GPU system is created as a child.")]
@@ -273,6 +278,8 @@ namespace GPUParticles
         float emitCarry = 0f;
         float distanceEmitCarry;
         float emissionTime;
+        float latestParticleBirthTime;
+        bool particleBirthObserved;
         Vector3 previousEmitterPositionWS;
         bool previousEmitterPositionValid;
         Vector3 previousEmitterVelocityWS;
@@ -284,6 +291,8 @@ namespace GPUParticles
         float stoppingElapsed;
         float stoppingDuration;
         bool prewarmPending;
+        bool stopActionPending;
+        bool stopActionInvoked;
         const float PrewarmStep = 1f / 60f;
 
         enum PlaybackState
@@ -607,6 +616,11 @@ namespace GPUParticles
             InitializePlaybackFromSettings();
         }
 
+        void Update()
+        {
+            ApplyPendingStopAction();
+        }
+
         void OnDisable()
         {
             Active.Remove(this);
@@ -760,6 +774,7 @@ namespace GPUParticles
 
         internal void InitializePlaybackFromSettings()
         {
+            ResetEmissionTimeline();
             playbackState = !Application.isPlaying || playOnAwake
                 ? PlaybackState.Playing
                 : PlaybackState.Stopped;
@@ -767,6 +782,8 @@ namespace GPUParticles
             stoppingElapsed = 0f;
             stoppingDuration = 0f;
             prewarmPending = ShouldPrewarm();
+            stopActionPending = false;
+            stopActionInvoked = false;
             lastSimulatedFrame = -1;
         }
 
@@ -824,6 +841,8 @@ namespace GPUParticles
             stoppingElapsed = 0f;
             stoppingDuration = 0f;
             prewarmPending = !resumeFromPause && ShouldPrewarm();
+            stopActionPending = false;
+            stopActionInvoked = false;
             lastSimulatedFrame = -1;
         }
 
@@ -838,6 +857,17 @@ namespace GPUParticles
 
         void StopSelf(ParticleSystemStopBehavior stopBehavior)
         {
+            bool wasActive = playbackState != PlaybackState.Stopped;
+            if (!wasActive)
+            {
+                if (stopBehavior ==
+                    ParticleSystemStopBehavior.StopEmittingAndClear)
+                {
+                    ResetSimulation();
+                }
+                return;
+            }
+
             playbackState = stopBehavior ==
                 ParticleSystemStopBehavior.StopEmitting
                     ? PlaybackState.Stopping
@@ -854,6 +884,56 @@ namespace GPUParticles
                 ParticleSystemStopBehavior.StopEmittingAndClear)
             {
                 ResetSimulation();
+                QueueStopAction();
+            }
+        }
+
+        void CompletePlayback()
+        {
+            playbackState = PlaybackState.Stopped;
+            resumeState = PlaybackState.Playing;
+            stoppingElapsed = stoppingDuration;
+            prewarmPending = false;
+            QueueStopAction();
+        }
+
+        void QueueStopAction()
+        {
+            if (stopActionInvoked ||
+                stopAction == ParticleSystemStopAction.None)
+            {
+                return;
+            }
+
+            stopActionPending = true;
+        }
+
+        void ApplyPendingStopAction()
+        {
+            if (!stopActionPending || stopActionInvoked) return;
+
+            stopActionPending = false;
+            stopActionInvoked = true;
+            GameObject target = stopActionTarget != null
+                ? stopActionTarget
+                : gameObject;
+            if (target == null) return;
+
+            switch (stopAction)
+            {
+                case ParticleSystemStopAction.Callback:
+                    target.SendMessage(
+                        "OnParticleSystemStopped",
+                        SendMessageOptions.DontRequireReceiver);
+                    break;
+
+                case ParticleSystemStopAction.Disable:
+                    target.SetActive(false);
+                    break;
+
+                case ParticleSystemStopAction.Destroy:
+                    Destroy(target);
+                    break;
             }
         }
 
@@ -896,6 +976,8 @@ namespace GPUParticles
             emitCarry = 0f;
             distanceEmitCarry = 0f;
             emissionTime = 0f;
+            latestParticleBirthTime = 0f;
+            particleBirthObserved = false;
             previousEmitterPositionWS = transform.position;
             previousEmitterPositionValid = true;
             previousEmitterVelocityWS = Vector3.zero;
@@ -903,6 +985,14 @@ namespace GPUParticles
             System.Array.Clear(stepBurstCounts, 0, stepBurstCounts.Length);
             System.Array.Clear(stepBurstAges, 0, stepBurstAges.Length);
             simulationTick = 0;
+        }
+
+        void ObserveParticleBirthTime(float birthTime)
+        {
+            latestParticleBirthTime = particleBirthObserved
+                ? Mathf.Max(latestParticleBirthTime, birthTime)
+                : birthTime;
+            particleBirthObserved = true;
         }
 
         bool IsActivelyEmitting()
@@ -2033,16 +2123,34 @@ namespace GPUParticles
                 !Application.isPlaying ||
                 playbackState == PlaybackState.Playing);
 
-            if (Application.isPlaying &&
-                playbackState == PlaybackState.Stopping)
+            if (!Application.isPlaying) return;
+
+            if (playbackState == PlaybackState.Playing &&
+                HasNaturallyCompleted())
+            {
+                CompletePlayback();
+            }
+            else if (playbackState == PlaybackState.Stopping)
             {
                 stoppingElapsed += dt;
                 if (stoppingElapsed + 1e-5f >= stoppingDuration)
                 {
-                    playbackState = PlaybackState.Stopped;
-                    stoppingElapsed = stoppingDuration;
+                    CompletePlayback();
                 }
             }
+        }
+
+        bool HasNaturallyCompleted()
+        {
+            if (emissionLooping) return false;
+
+            float emissionEnd = ResolveEmissionStartDelay() +
+                                Mathf.Max(0.05f, emissionDuration);
+            float drainEnd = particleBirthObserved
+                ? latestParticleBirthTime + MaximumParticleLifetime()
+                : emissionEnd;
+            float completionTime = Mathf.Max(emissionEnd, drainEnd);
+            return emissionTime + 1e-5f >= completionTime;
         }
 
         float FrameDeltaTime()
@@ -2265,6 +2373,34 @@ namespace GPUParticles
             int burstEmitCount = TrimBurstStepGroups(
                 maxParticles - continuousEmitCount - distanceEmitCount);
             int emitCount = continuousEmitCount + distanceEmitCount + burstEmitCount;
+            if (continuousEmitCount > 0)
+            {
+                float latestSpawnOffset = emissionRate > 1e-6f
+                    ? emissionWindowStart +
+                      (continuousEmitCount - emitCarryPrev) / emissionRate
+                    : dt;
+                ObserveParticleBirthTime(
+                    stepStart + Mathf.Clamp(latestSpawnOffset, 0f, dt));
+            }
+            if (distanceEmitCount > 0)
+            {
+                ObserveParticleBirthTime(stepEnd);
+            }
+            if (burstEmitCount > 0)
+            {
+                float latestBurstBirthTime = float.NegativeInfinity;
+                for (int i = 0; i < stepBurstGroupCount; i++)
+                {
+                    if (stepBurstCounts[i] <= 0) continue;
+                    latestBurstBirthTime = Mathf.Max(
+                        latestBurstBirthTime,
+                        stepEnd - Mathf.Max(0f, stepBurstAges[i]));
+                }
+                if (!float.IsNegativeInfinity(latestBurstBirthTime))
+                {
+                    ObserveParticleBirthTime(latestBurstBirthTime);
+                }
+            }
             int emitStart = emitCursor;
             emitCursor = (emitCursor + emitCount) % maxParticles;
             emissionTime = stepEnd;

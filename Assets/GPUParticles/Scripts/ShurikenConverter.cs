@@ -38,6 +38,8 @@ namespace GPUParticles
             gpu.useUnscaledTime = main.useUnscaledTime;
             gpu.playOnAwake = main.playOnAwake;
             gpu.prewarm = main.prewarm;
+            gpu.stopAction = main.stopAction;
+            gpu.stopActionTarget = null;
 
             ApplyForceOverLifetime(ps, gpu, owner);
             ApplyVelocityOverLifetime(ps, gpu, owner);
@@ -294,6 +296,8 @@ namespace GPUParticles
             gpu.useUnscaledTime = main.useUnscaledTime;
             gpu.playOnAwake = main.playOnAwake;
             gpu.prewarm = main.prewarm;
+            gpu.stopAction = main.stopAction;
+            gpu.stopActionTarget = originalOwner;
 
             ApplyForceOverLifetime(particleSystem, gpu, gpuChild);
             ApplyVelocityOverLifetime(particleSystem, gpu, gpuChild);
