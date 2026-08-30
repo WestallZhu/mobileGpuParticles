@@ -49,6 +49,7 @@ namespace GPUParticles
         private float lastStartColorLUTUpdate = 0f;
         private float lastStartSpeedLUTUpdate = 0f;
         private float lastStartSizeLUTUpdate = 0f;
+        private float lastGravityModifierLUTUpdate = 0f;
         private float lastSizeLUTUpdate = 0f;
         private float lastForceLUTUpdate = 0f;
         private float lastVelocityLUTUpdate = 0f;
@@ -72,6 +73,7 @@ namespace GPUParticles
         private Texture2D generatedStartColorLUT;
         private Texture2D generatedStartSpeedLUT;
         private Texture2D generatedStartSizeLUT;
+        private Texture2D generatedGravityModifierLUT;
         private Texture2D generatedSizeLUT;
         private Texture2D generatedColorBySpeedLUT;
         private Texture2D generatedSizeBySpeedLUT;
@@ -305,9 +307,32 @@ namespace GPUParticles
                 lastStartColorLUTUpdate = Time.realtimeSinceStartup;
             }
 
+            ParticleSystem.MinMaxCurve gravityModifier = main.gravityModifier;
             ShurikenMinMaxUtility.TryGetConstantRange(
-                main.gravityModifier, out minimum, out maximum);
+                gravityModifier, out minimum, out maximum);
             targetGPUParticleSystem.SetGravityModifierRange(minimum, maximum);
+            targetGPUParticleSystem.gravityModifierMode = gravityModifier.mode;
+            bool updateGravityModifierLUT = force ||
+                Time.realtimeSinceStartup - lastGravityModifierLUTUpdate >
+                LUT_UPDATE_INTERVAL;
+            if (updateGravityModifierLUT)
+            {
+                DestroyGeneratedTexture(ref generatedGravityModifierLUT);
+                if (IsCurveMode(gravityModifier.mode))
+                {
+                    generatedGravityModifierLUT = CurveLUTBuilder.BuildSigned(
+                        gravityModifier,
+                        assetName: "GravityModifier_LUT");
+                    targetGPUParticleSystem.gravityModifierLUT =
+                        generatedGravityModifierLUT;
+                }
+                else
+                {
+                    targetGPUParticleSystem.gravityModifierLUT =
+                        CurveLUTBuilder.GetDefaultZeroLUT();
+                }
+                lastGravityModifierLUTUpdate = Time.realtimeSinceStartup;
+            }
 
             // Simulation Speed
             float newSimulationSpeed = main.simulationSpeed;
@@ -820,6 +845,7 @@ namespace GPUParticles
             DestroyGeneratedTexture(ref generatedStartColorLUT);
             DestroyGeneratedTexture(ref generatedStartSpeedLUT);
             DestroyGeneratedTexture(ref generatedStartSizeLUT);
+            DestroyGeneratedTexture(ref generatedGravityModifierLUT);
             DestroyGeneratedColorLUT();
             DestroyGeneratedSizeLUT();
             DestroyGeneratedColorBySpeedLUT();

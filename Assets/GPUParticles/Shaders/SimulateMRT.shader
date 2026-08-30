@@ -35,6 +35,7 @@ Shader "Hidden/GPUParticles/SimulateMRT"
             TEXTURE2D(_StartSpeedLUT);
             TEXTURE2D(_StartSizeLUT);
             TEXTURE2D(_StartColorLUT);
+            TEXTURE2D(_GravityModifierLUT);
             TEXTURE2D(_GradLUT);         SAMPLER(sampler_GradLUT);
             TEXTURE2D(_SizeLUT);         SAMPLER(sampler_SizeLUT);
             TEXTURE2D(_ColorBySpeedLUT); SAMPLER(sampler_ColorBySpeedLUT);
@@ -73,6 +74,9 @@ Shader "Hidden/GPUParticles/SimulateMRT"
                 float3  _GravityWS;          // NOTE: contains space-correct gravity (WS or LS)
                 float3  _GravityWSMin;
                 int     _RandomizeGravityModifier;
+                float3  _GravityBase;
+                int     _GravityModifierMode;
+                float   _GravityModifierLUTInvWidth;
                 int     _SimulationSpace;    // 0 Local, 1 World
                 uint    _EmitStart;
                 uint    _EmitCount;
@@ -288,6 +292,20 @@ Shader "Hidden/GPUParticles/SimulateMRT"
                 float activeTime = max(
                     0.0,
                     _EmissionTimeAfterStep - particleAge - _EmissionStartDelay);
+                float duration = max(0.05, _EmissionDuration);
+                if (_EmissionLooping == 0)
+                {
+                    return saturate(activeTime / duration);
+                }
+
+                return frac(activeTime / duration);
+            }
+
+            float CurrentSystemTime()
+            {
+                float activeTime = max(
+                    0.0,
+                    _EmissionTimeAfterStep - _EmissionStartDelay);
                 float duration = max(0.05, _EmissionDuration);
                 if (_EmissionLooping == 0)
                 {
@@ -834,6 +852,39 @@ Shader "Hidden/GPUParticles/SimulateMRT"
                 return lerp(minimum, maximum, randomValue);
             }
 
+            float3 GravityForCurrentSystemTime(uint id)
+            {
+                if (_GravityModifierMode == 0) // Constant
+                {
+                    return _GravityWS;
+                }
+
+                float randomValue = Hash01(id ^ 0x27D4EB2Fu);
+                if (_GravityModifierMode == 3) // TwoConstants
+                {
+                    return lerp(
+                        _GravityWSMin,
+                        _GravityWS,
+                        randomValue);
+                }
+
+                float lutPosition = LUTPosition(
+                    CurrentSystemTime(),
+                    _GravityModifierLUTInvWidth);
+                float maximum = SAMPLE_TEXTURE2D_LOD(
+                    _GravityModifierLUT, sampler_SizeLUT,
+                    float2(lutPosition, 0.75), 0).r;
+                if (_GravityModifierMode != 2) // Curve
+                {
+                    return _GravityBase * maximum;
+                }
+
+                float minimum = SAMPLE_TEXTURE2D_LOD(
+                    _GravityModifierLUT, sampler_SizeLUT,
+                    float2(lutPosition, 0.25), 0).r;
+                return _GravityBase * lerp(minimum, maximum, randomValue);
+            }
+
             float SizeOverLifetime(uint id, float normalizedAge)
             {
                 float lutPosition = LUTPosition(normalizedAge, _SizeLUTInvWidth);
@@ -972,9 +1023,7 @@ Shader "Hidden/GPUParticles/SimulateMRT"
                 float particleStartSize = RandomRange(
                     id, 0x1B56C4E9u, _RandomizeStartSize, _StartSizeMin, _StartSize);
                 float4 particleStartColor = _StartColor;
-                float3 particleGravity = _RandomizeGravityModifier != 0
-                    ? lerp(_GravityWSMin, _GravityWS, Hash01(id ^ 0x27D4EB2Fu))
-                    : _GravityWS;
+                float3 particleGravity = GravityForCurrentSystemTime(id);
 
                 // Out-of-cap pixels remain dead
                 if (id >= _MaxParticles)

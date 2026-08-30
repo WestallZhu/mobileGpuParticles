@@ -64,6 +64,9 @@ namespace GPUParticles
             ParticleSystemGradientMode.Color;
         public Texture2D startColorLUT;
         public float gravityModifier = 0.0f;
+        public ParticleSystemCurveMode gravityModifierMode =
+            ParticleSystemCurveMode.Constant;
+        public Texture2D gravityModifierLUT;
         [Min(0.0f)] public float simulationSpeed = 1.0f;
         public float startRotation = 0.0f;
         public float rotationOverLifetime = 0.0f;
@@ -299,6 +302,13 @@ namespace GPUParticles
         static readonly int _GravityWS  = Shader.PropertyToID("_GravityWS");
         static readonly int _GravityWSMin = Shader.PropertyToID("_GravityWSMin");
         static readonly int _RandomizeGravityModifier = Shader.PropertyToID("_RandomizeGravityModifier");
+        static readonly int _GravityBase = Shader.PropertyToID("_GravityBase");
+        static readonly int _GravityModifierMode =
+            Shader.PropertyToID("_GravityModifierMode");
+        static readonly int _GravityModifierLUT =
+            Shader.PropertyToID("_GravityModifierLUT");
+        static readonly int _GravityModifierLUTInvWidth =
+            Shader.PropertyToID("_GravityModifierLUTInvWidth");
         static readonly int _SimulationSpace = Shader.PropertyToID("_SimulationSpace");
         static readonly int _EmitStart  = Shader.PropertyToID("_EmitStart");
         static readonly int _EmitCount  = Shader.PropertyToID("_EmitCount");
@@ -663,6 +673,9 @@ namespace GPUParticles
             gravityModifierMin = Mathf.Min(minimum, maximum);
             gravityModifier = Mathf.Max(minimum, maximum);
             randomizeGravityModifier = !Mathf.Approximately(gravityModifierMin, gravityModifier);
+            gravityModifierMode = randomizeGravityModifier
+                ? ParticleSystemCurveMode.TwoConstants
+                : ParticleSystemCurveMode.Constant;
         }
 
         public void SetStartRotationRange(float minimum, float maximum)
@@ -1430,6 +1443,9 @@ namespace GPUParticles
             Texture2D selectedStartColorLUT = startColorLUT != null
                 ? startColorLUT
                 : GradientLUTBuilder.GetDefaultWhiteLUT();
+            Texture2D selectedGravityModifierLUT = gravityModifierLUT != null
+                ? gravityModifierLUT
+                : CurveLUTBuilder.GetDefaultZeroLUT();
             Texture2D selectedColorOverLifetimeLUT = colorOverLifetimeLUT != null
                 ? colorOverLifetimeLUT
                 : GradientLUTBuilder.GetDefaultWhiteLUT();
@@ -1466,6 +1482,8 @@ namespace GPUParticles
             simulateMaterial.SetTexture(_StartSpeedLUT, selectedStartSpeedLUT);
             simulateMaterial.SetTexture(_StartSizeLUT, selectedStartSizeLUT);
             simulateMaterial.SetTexture(_StartColorLUT, selectedStartColorLUT);
+            simulateMaterial.SetTexture(
+                _GravityModifierLUT, selectedGravityModifierLUT);
             simulateMaterial.SetTexture("_SizeLUT", selectedSizeOverLifetimeLUT);
             simulateMaterial.SetTexture(_ColorBySpeedLUT, selectedColorBySpeedLUT);
             simulateMaterial.SetTexture(_SizeBySpeedLUT, selectedSizeBySpeedLUT);
@@ -1493,6 +1511,9 @@ namespace GPUParticles
             simulateMaterial.SetFloat(
                 _StartColorLUTInvWidth,
                 InverseTextureWidth(selectedStartColorLUT));
+            simulateMaterial.SetFloat(
+                _GravityModifierLUTInvWidth,
+                InverseTextureWidth(selectedGravityModifierLUT));
             simulateMaterial.SetFloat(
                 _SizeLUTInvWidth, InverseTextureWidth(selectedSizeOverLifetimeLUT));
             simulateMaterial.SetFloat(
@@ -1557,6 +1578,9 @@ namespace GPUParticles
 
             Vector3 gWorld = Physics.gravity * gravityModifier;
             Vector3 gWorldMin = Physics.gravity * gravityModifierMin;
+            Vector3 gravityBase = simulationSpace == SimulationSpace.World
+                ? Physics.gravity
+                : transform.InverseTransformDirection(Physics.gravity);
             Vector3 gSim = (simulationSpace == SimulationSpace.World) ? gWorld : transform.InverseTransformDirection(gWorld);
             Vector3 gSimMin = simulationSpace == SimulationSpace.World
                 ? gWorldMin
@@ -1565,6 +1589,17 @@ namespace GPUParticles
             simulateMaterial.SetVector(_GravityWSMin,
                 new Vector4(gSimMin.x, gSimMin.y, gSimMin.z, 0));
             simulateMaterial.SetInt(_RandomizeGravityModifier, randomizeGravityModifier ? 1 : 0);
+            simulateMaterial.SetVector(
+                _GravityBase,
+                new Vector4(gravityBase.x, gravityBase.y, gravityBase.z, 0f));
+            ParticleSystemCurveMode selectedGravityModifierMode =
+                gravityModifierMode == ParticleSystemCurveMode.Constant &&
+                randomizeGravityModifier
+                    ? ParticleSystemCurveMode.TwoConstants
+                    : gravityModifierMode;
+            simulateMaterial.SetInt(
+                _GravityModifierMode,
+                (int)selectedGravityModifierMode);
 
             simulateMaterial.SetInt(_SimulationSpace, (int)simulationSpace);
             simulateMaterial.SetInt(_EmitStart, emitStart);

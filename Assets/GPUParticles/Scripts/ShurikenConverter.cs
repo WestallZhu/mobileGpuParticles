@@ -548,8 +548,17 @@ namespace GPUParticles
                     assetName: "StartColor_LUT")
                 : GradientLUTBuilder.GetDefaultWhiteLUT();
 
-            GetCurveRange(main.gravityModifier, "Gravity Modifier", context, out minimum, out maximum);
+            ParticleSystem.MinMaxCurve gravityModifier = main.gravityModifier;
+            ShurikenMinMaxUtility.TryGetConstantRange(
+                gravityModifier, out minimum, out maximum);
             gpu.SetGravityModifierRange(minimum, maximum);
+            gpu.gravityModifierMode = gravityModifier.mode;
+            gpu.gravityModifierLUT = IsCurveMode(gravityModifier.mode)
+                ? CurveLUTBuilder.BuildSigned(
+                    gravityModifier,
+                    saveAsAsset: true,
+                    assetName: "GravityModifier_LUT")
+                : CurveLUTBuilder.GetDefaultZeroLUT();
 
             ParticleSystem.MinMaxCurve startRotation = main.startRotation3D
                 ? main.startRotationZ
