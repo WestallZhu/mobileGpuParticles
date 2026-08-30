@@ -89,7 +89,8 @@ namespace GPUParticles
         StopActionCallbackPoint,
         TextureSheetBlendLifetimePoint,
         TextureSheetBlendSpeedPoint,
-        TextureSheetBlendFPSPoint
+        TextureSheetBlendFPSPoint,
+        MaterialColorModesPoint
     }
 
     [DisallowMultipleComponent]
@@ -212,6 +213,17 @@ namespace GPUParticles
         float maximumTextureSheetBlendColorError;
         bool hasCurrentShurikenTextureSheetBlendColor;
         Color currentShurikenTextureSheetBlendColor;
+        int materialColorComparableSamples;
+        int materialColorClassificationFailures;
+        int shurikenMaterialColorModeMask;
+        int gpuMaterialColorModeMask;
+        float maximumMaterialColorError;
+        readonly float[] maximumMaterialColorModeErrors = new float[6];
+        readonly Vector3[] shurikenMaterialColorSums = new Vector3[6];
+        readonly int[] shurikenMaterialColorSamples = new int[6];
+        bool hasCurrentShurikenMaterialColor;
+        Color currentShurikenMaterialColor;
+        int currentShurikenMaterialColorMode = -1;
         float maximumScreenSizePixelError;
         int screenSizeClassificationFailures;
         int currentShurikenScreenSizePixels = -1;
@@ -276,6 +288,8 @@ namespace GPUParticles
         Texture2D profileTextureSheetStartLUT;
         Texture2D profileTextureSheetAtlas;
         Material profileTextureSheetMaterial;
+        Texture2D profileMaterialColorTexture;
+        Material profileMaterialColorMaterial;
         Texture2D profileColorLUT;
         Texture2D profileStartColorLUT;
         Texture2D profileStartLifetimeLUT;
@@ -325,6 +339,14 @@ namespace GPUParticles
         AnimationCurve profileSizeMinimumCurve;
         AnimationCurve profileSizeMaximumCurve;
         static readonly Vector3 ValidationForce = new Vector3(2f, -1f, 0.5f);
+        static readonly Color MaterialColorTextureColor =
+            new Color(0.55f, 0.9f, 0.35f, 1f);
+        static readonly Color MaterialColorBaseColor =
+            new Color(0.65f, 0.8f, 0.7f, 1f);
+        static readonly Color MaterialColorParticleColor =
+            new Color(0.8f, 0.18f, 0.62f, 1f);
+        const float MaterialColorModeInterval = 0.5f;
+        const int MaterialColorModeCount = 6;
         static readonly Vector3 RotationBySpeedAcceleration = Vector3.right * 2f;
         static readonly Vector3 LimitVelocityAxesAcceleration =
             new Vector3(10f, 4f, -8f);
@@ -583,6 +605,14 @@ namespace GPUParticles
             {
                 Destroy(profileTextureSheetMaterial);
             }
+            if (profileMaterialColorTexture != null)
+            {
+                Destroy(profileMaterialColorTexture);
+            }
+            if (profileMaterialColorMaterial != null)
+            {
+                Destroy(profileMaterialColorMaterial);
+            }
             if (profileColorLUT != null) Destroy(profileColorLUT);
             if (profileStartColorLUT != null) Destroy(profileStartColorLUT);
             if (profileStartLifetimeLUT != null) Destroy(profileStartLifetimeLUT);
@@ -641,6 +671,13 @@ namespace GPUParticles
             UpdatePlaybackLifecycle();
             UpdatePrewarmLifecycle();
             UpdateStopActionLifecycle();
+
+            if (captureActive && IsMaterialColorProfile())
+            {
+                float nextSimulationTime =
+                    (playbackFrame + 1f) / fixedFrameRate;
+                UpdateMaterialColorMode(nextSimulationTime);
+            }
 
             if (captureActive && UsesMovingEmitterProfile())
             {
@@ -734,6 +771,7 @@ namespace GPUParticles
 
             ResetBySpeedModules();
             ResetTextureSheetAnimation();
+            ResetMaterialParameters();
 
             if (IsPlaybackLifecycleProfile())
             {
@@ -850,6 +888,12 @@ namespace GPUParticles
             {
                 ConfigureTextureSheetAnimationProfile(
                     ParticleSystemAnimationTimeMode.FPS);
+                return;
+            }
+
+            if (IsMaterialColorProfile())
+            {
+                ConfigureMaterialColorProfile();
                 return;
             }
 
@@ -3347,6 +3391,188 @@ namespace GPUParticles
             return atlas;
         }
 
+        void ConfigureMaterialColorProfile()
+        {
+            const float lifetime = 4f;
+            ConfigureEmissionPointBase(lifetime, false);
+
+            var main = shuriken.main;
+            main.maxParticles = 1;
+            main.startLifetime = lifetime;
+            main.startSpeed = 0f;
+            main.startSize = 3f;
+            main.startColor = MaterialColorParticleColor;
+            main.gravityModifier = 0f;
+
+            var emission = shuriken.emission;
+            emission.enabled = true;
+            emission.rateOverTime = 0f;
+            emission.rateOverDistance = 0f;
+            var burst = new ParticleSystem.Burst(0f, 1)
+            {
+                probability = 1f
+            };
+            emission.SetBursts(new[] { burst });
+
+            gpuParticles.maxParticles = 1;
+            gpuParticles.emissionEnabled = true;
+            gpuParticles.SetEmissionRateOverTime(0f);
+            gpuParticles.SetEmissionRateOverDistance(0f);
+            gpuParticles.SetEmissionBursts(new[] { burst });
+            gpuParticles.SetStartLifetimeRange(lifetime, lifetime);
+            gpuParticles.SetStartSpeedRange(0f, 0f);
+            gpuParticles.SetStartSizeRange(3f, 3f);
+            gpuParticles.SetStartColorRange(
+                MaterialColorParticleColor,
+                MaterialColorParticleColor,
+                false);
+            gpuParticles.startColorLUT =
+                GradientLUTBuilder.GetDefaultWhiteLUT();
+
+            if (profileMaterialColorTexture != null)
+            {
+                Destroy(profileMaterialColorTexture);
+            }
+            profileMaterialColorTexture = CreateMaterialColorTexture();
+
+            if (profileMaterialColorMaterial != null)
+            {
+                Destroy(profileMaterialColorMaterial);
+            }
+            Shader shader = Shader.Find(
+                "Universal Render Pipeline/Particles/Unlit");
+            if (shader == null)
+            {
+                throw new InvalidOperationException(
+                    "URP particle shader was not found for material color validation.");
+            }
+            profileMaterialColorMaterial = new Material(shader)
+            {
+                name = "MaterialColorAB_Profile_Material",
+                hideFlags = HideFlags.HideAndDontSave,
+                renderQueue = (int)RenderQueue.Transparent
+            };
+            profileMaterialColorMaterial.SetTexture(
+                "_BaseMap", profileMaterialColorTexture);
+            profileMaterialColorMaterial.SetColor(
+                "_BaseColor", MaterialColorBaseColor);
+            ConfigureTransparentAlphaMaterial(profileMaterialColorMaterial);
+            SetParticleMaterialColorMode(
+                profileMaterialColorMaterial,
+                GPUParticleColorMode.Multiply);
+
+            if (shurikenRenderer != null)
+            {
+                shurikenRenderer.sharedMaterial =
+                    profileMaterialColorMaterial;
+                shurikenRenderer.renderMode =
+                    ParticleSystemRenderMode.Billboard;
+                shurikenRenderer.alignment =
+                    ParticleSystemRenderSpace.View;
+            }
+
+            gpuParticles.baseMap = profileMaterialColorTexture;
+            gpuParticles.materialBaseColor = MaterialColorBaseColor;
+            gpuParticles.materialColorMode =
+                GPUParticleColorMode.Multiply;
+            gpuParticles.renderMode = GPURenderMode.Billboard;
+            gpuParticles.renderAlignment = GPUAlignment.View;
+            gpuParticles.pivot = Vector2.zero;
+        }
+
+        static Texture2D CreateMaterialColorTexture()
+        {
+            const int size = 16;
+            var pixels = new Color32[size * size];
+            Color32 color = MaterialColorTextureColor;
+            for (int i = 0; i < pixels.Length; i++)
+            {
+                pixels[i] = color;
+            }
+
+            var texture = new Texture2D(
+                size, size, TextureFormat.RGBA32, false, false)
+            {
+                name = "MaterialColorAB_Profile_Texture",
+                filterMode = FilterMode.Point,
+                wrapMode = TextureWrapMode.Clamp,
+                hideFlags = HideFlags.HideAndDontSave
+            };
+            texture.SetPixels32(pixels);
+            texture.Apply(false, false);
+            return texture;
+        }
+
+        static void ConfigureTransparentAlphaMaterial(Material material)
+        {
+            if (material == null) return;
+            material.SetFloat("_Surface", 1f);
+            material.SetFloat("_Blend", 0f);
+            material.SetFloat("_SrcBlend", (float)BlendMode.SrcAlpha);
+            material.SetFloat(
+                "_DstBlend", (float)BlendMode.OneMinusSrcAlpha);
+            material.SetFloat("_SrcBlendAlpha", (float)BlendMode.One);
+            material.SetFloat(
+                "_DstBlendAlpha", (float)BlendMode.OneMinusSrcAlpha);
+            material.SetFloat("_ZWrite", 0f);
+            material.EnableKeyword("_SURFACE_TYPE_TRANSPARENT");
+            material.DisableKeyword("_ALPHAPREMULTIPLY_ON");
+            material.DisableKeyword("_ALPHAMODULATE_ON");
+        }
+
+        void UpdateMaterialColorMode(float elapsed)
+        {
+            int modeIndex = Mathf.Clamp(
+                Mathf.FloorToInt(
+                    Mathf.Max(0f, elapsed) / MaterialColorModeInterval),
+                0,
+                MaterialColorModeCount - 1);
+            var mode = (GPUParticleColorMode)modeIndex;
+            SetParticleMaterialColorMode(
+                profileMaterialColorMaterial,
+                mode);
+            gpuParticles.materialColorMode = mode;
+        }
+
+        static void SetParticleMaterialColorMode(
+            Material material,
+            GPUParticleColorMode mode)
+        {
+            if (material == null) return;
+            material.SetFloat("_ColorMode", (float)mode);
+            material.DisableKeyword("_COLOROVERLAY_ON");
+            material.DisableKeyword("_COLORCOLOR_ON");
+            material.DisableKeyword("_COLORADDSUBDIFF_ON");
+
+            switch (mode)
+            {
+                case GPUParticleColorMode.Additive:
+                    material.EnableKeyword("_COLORADDSUBDIFF_ON");
+                    material.SetVector(
+                        "_BaseColorAddSubDiff",
+                        new Vector4(1f, 0f, 0f, 0f));
+                    break;
+                case GPUParticleColorMode.Subtractive:
+                    material.EnableKeyword("_COLORADDSUBDIFF_ON");
+                    material.SetVector(
+                        "_BaseColorAddSubDiff",
+                        new Vector4(-1f, 0f, 0f, 0f));
+                    break;
+                case GPUParticleColorMode.Overlay:
+                    material.EnableKeyword("_COLOROVERLAY_ON");
+                    break;
+                case GPUParticleColorMode.Color:
+                    material.EnableKeyword("_COLORCOLOR_ON");
+                    break;
+                case GPUParticleColorMode.Difference:
+                    material.EnableKeyword("_COLORADDSUBDIFF_ON");
+                    material.SetVector(
+                        "_BaseColorAddSubDiff",
+                        new Vector4(-1f, 1f, 0f, 0f));
+                    break;
+            }
+        }
+
         void ConfigureShapeProfile()
         {
             ConfigureEmissionPointBase(2f, true);
@@ -3644,6 +3870,19 @@ namespace GPUParticles
                 CurveLUTBuilder.GetDefaultLinear01LUT();
             gpuParticles.textureSheetStartFrameLUT =
                 CurveLUTBuilder.GetDefaultZeroLUT();
+        }
+
+        void ResetMaterialParameters()
+        {
+            gpuParticles.materialBaseColor = Color.white;
+            gpuParticles.materialColorMode =
+                GPUParticleColorMode.Multiply;
+        }
+
+        bool IsMaterialColorProfile()
+        {
+            return validationProfile ==
+                ParticleABValidationProfile.MaterialColorModesPoint;
         }
 
         bool IsTextureSheetProfile()
@@ -4916,6 +5155,26 @@ namespace GPUParticles
             maximumTextureSheetBlendColorError = 0f;
             hasCurrentShurikenTextureSheetBlendColor = false;
             currentShurikenTextureSheetBlendColor = Color.clear;
+            materialColorComparableSamples = 0;
+            materialColorClassificationFailures = 0;
+            shurikenMaterialColorModeMask = 0;
+            gpuMaterialColorModeMask = 0;
+            maximumMaterialColorError = 0f;
+            Array.Clear(
+                maximumMaterialColorModeErrors,
+                0,
+                maximumMaterialColorModeErrors.Length);
+            Array.Clear(
+                shurikenMaterialColorSums,
+                0,
+                shurikenMaterialColorSums.Length);
+            Array.Clear(
+                shurikenMaterialColorSamples,
+                0,
+                shurikenMaterialColorSamples.Length);
+            hasCurrentShurikenMaterialColor = false;
+            currentShurikenMaterialColor = Color.clear;
+            currentShurikenMaterialColorMode = -1;
             maximumScreenSizePixelError = 0f;
             screenSizeClassificationFailures = 0;
             currentShurikenScreenSizePixels = -1;
@@ -5113,6 +5372,20 @@ namespace GPUParticles
                     cameraImage, out Color blendColor);
                 ObserveTextureSheetBlendColor(
                     mode, colorValid, blendColor);
+            }
+            if (IsMaterialColorProfile() &&
+                mode != ParticleABDisplayMode.Both)
+            {
+                bool colorValid = TryMeasureMaterialColor(
+                    cameraImage, mode, out Color materialColor);
+                ObserveMaterialColor(
+                    mode,
+                    colorValid,
+                    materialColor,
+                    Mathf.Clamp(
+                        (int)gpuParticles.materialColorMode,
+                        0,
+                        MaterialColorModeCount - 1));
             }
             int screenSizePixels = IsRendererScreenSizeClampProfile() &&
                                    mode != ParticleABDisplayMode.Both
@@ -5529,6 +5802,134 @@ namespace GPUParticles
 
             hasCurrentShurikenTextureSheetBlendColor = false;
             currentShurikenTextureSheetBlendColor = Color.clear;
+        }
+
+        bool TryMeasureMaterialColor(
+            Texture2D image,
+            ParticleABDisplayMode mode,
+            out Color color)
+        {
+            Transform emitter = mode == ParticleABDisplayMode.ShurikenOnly
+                ? (shuriken != null ? shuriken.transform : null)
+                : (gpuParticles != null ? gpuParticles.transform : null);
+            if (image == null || captureCamera == null || emitter == null)
+            {
+                color = Color.clear;
+                return false;
+            }
+
+            Vector3 viewport = captureCamera.WorldToViewportPoint(
+                emitter.position);
+            if (viewport.z <= 0f ||
+                viewport.x <= 0f || viewport.x >= 1f ||
+                viewport.y <= 0f || viewport.y >= 1f)
+            {
+                color = Color.clear;
+                return false;
+            }
+
+            int centerX = Mathf.RoundToInt(
+                viewport.x * (image.width - 1));
+            int centerY = Mathf.RoundToInt(
+                viewport.y * (image.height - 1));
+            const int sampleRadius = 8;
+            int minimumX = Mathf.Max(0, centerX - sampleRadius);
+            int maximumX = Mathf.Min(
+                image.width - 1, centerX + sampleRadius);
+            int minimumY = Mathf.Max(0, centerY - sampleRadius);
+            int maximumY = Mathf.Min(
+                image.height - 1, centerY + sampleRadius);
+            Color32[] pixels = image.GetPixels32();
+            Vector3 sum = Vector3.zero;
+            int sampleCount = 0;
+            for (int y = minimumY; y <= maximumY; y++)
+            {
+                int row = y * image.width;
+                for (int x = minimumX; x <= maximumX; x++)
+                {
+                    Color32 pixel = pixels[row + x];
+                    sum += new Vector3(pixel.r, pixel.g, pixel.b);
+                    sampleCount++;
+                }
+            }
+
+            if (sampleCount < 32)
+            {
+                color = Color.clear;
+                return false;
+            }
+
+            Vector3 average = sum / (255f * sampleCount);
+            color = new Color(average.x, average.y, average.z, 1f);
+            return true;
+        }
+
+        void ObserveMaterialColor(
+            ParticleABDisplayMode mode,
+            bool valid,
+            Color color,
+            int colorMode)
+        {
+            if (!IsMaterialColorProfile() ||
+                mode == ParticleABDisplayMode.Both)
+            {
+                return;
+            }
+
+            int modeBit = 1 << colorMode;
+            if (mode == ParticleABDisplayMode.ShurikenOnly)
+            {
+                hasCurrentShurikenMaterialColor = valid;
+                currentShurikenMaterialColor = color;
+                currentShurikenMaterialColorMode = colorMode;
+                if (!valid)
+                {
+                    materialColorClassificationFailures++;
+                    return;
+                }
+
+                shurikenMaterialColorModeMask |= modeBit;
+                shurikenMaterialColorSums[colorMode] +=
+                    new Vector3(color.r, color.g, color.b);
+                shurikenMaterialColorSamples[colorMode]++;
+                return;
+            }
+
+            if (!valid)
+            {
+                materialColorClassificationFailures++;
+            }
+            else
+            {
+                gpuMaterialColorModeMask |= modeBit;
+            }
+
+            if (valid &&
+                hasCurrentShurikenMaterialColor &&
+                currentShurikenMaterialColorMode == colorMode)
+            {
+                materialColorComparableSamples++;
+                float error = Mathf.Max(
+                    Mathf.Abs(
+                        currentShurikenMaterialColor.r - color.r),
+                    Mathf.Max(
+                        Mathf.Abs(
+                            currentShurikenMaterialColor.g - color.g),
+                        Mathf.Abs(
+                            currentShurikenMaterialColor.b - color.b)));
+                maximumMaterialColorError = Mathf.Max(
+                    maximumMaterialColorError, error);
+                maximumMaterialColorModeErrors[colorMode] = Mathf.Max(
+                    maximumMaterialColorModeErrors[colorMode], error);
+            }
+            else
+            {
+                materialColorClassificationFailures++;
+            }
+
+            hasCurrentShurikenMaterialColor = false;
+            currentShurikenMaterialColor = Color.clear;
+            currentShurikenMaterialColorMode = -1;
         }
 
         void ObserveTextureSheetFrames(int shurikenFrame, int gpuFrame)
@@ -8308,6 +8709,21 @@ namespace GPUParticles
                                             ShapeArcGridPass(0x1F);
                     break;
 
+                case ParticleABValidationProfile.MaterialColorModesPoint:
+                    profileSpecificPassed =
+                        maximumMeanSpeedError <= 0.01f &&
+                        maximumMeanPositionError <= 0.04f &&
+                        maximumShurikenParticleCount == 1 &&
+                        maximumGPUParticleCount == 1 &&
+                        materialColorComparableSamples >= 50 &&
+                        materialColorClassificationFailures == 0 &&
+                        maximumMaterialColorError <= 0.08f &&
+                        shurikenMaterialColorModeMask == 0x3F &&
+                        gpuMaterialColorModeMask == 0x3F &&
+                        MaterialColorModesHaveSamples(5) &&
+                        MaterialColorModesAreDistinct(0.15f);
+                    break;
+
                 case ParticleABValidationProfile.TextureSheetBlendLifetimePoint:
                 case ParticleABValidationProfile.TextureSheetBlendSpeedPoint:
                 case ParticleABValidationProfile.TextureSheetBlendFPSPoint:
@@ -8626,6 +9042,19 @@ namespace GPUParticles
                 $"gpuTextureSheetBlendRanges=" +
                 $"({FormatRange(gpuTextureSheetBlendRedRange)}," +
                 $"{FormatRange(gpuTextureSheetBlendGreenRange)}); " +
+                $"materialColorComparableSamples=" +
+                $"{materialColorComparableSamples}; " +
+                $"materialColorClassificationFailures=" +
+                $"{materialColorClassificationFailures}; " +
+                $"maxMaterialColorError={maximumMaterialColorError:R}; " +
+                $"shurikenMaterialColorModeMask=" +
+                $"0x{shurikenMaterialColorModeMask:X2}; " +
+                $"gpuMaterialColorModeMask=" +
+                $"0x{gpuMaterialColorModeMask:X2}; " +
+                $"materialColorModeErrors=" +
+                $"{FormatMaterialColorModeErrors()}; " +
+                $"shurikenMaterialColorModeMeans=" +
+                $"{FormatMaterialColorModeMeans()}; " +
                 $"maxScreenSizePixelError={maximumScreenSizePixelError:R}; " +
                 $"screenSizeClassificationFailures=" +
                 $"{screenSizeClassificationFailures}; " +
@@ -8732,6 +9161,79 @@ namespace GPUParticles
                 UnityEditor.EditorApplication.Exit(passed ? 0 : 1);
             }
 #endif
+        }
+
+        bool MaterialColorModesHaveSamples(int minimumSamples)
+        {
+            for (int i = 0; i < MaterialColorModeCount; i++)
+            {
+                if (shurikenMaterialColorSamples[i] < minimumSamples)
+                {
+                    return false;
+                }
+            }
+            return true;
+        }
+
+        bool MaterialColorModesAreDistinct(float minimumDistance)
+        {
+            if (!MaterialColorModesHaveSamples(1)) return false;
+
+            float maximumDistance = 0f;
+            for (int first = 0; first < MaterialColorModeCount; first++)
+            {
+                Vector3 firstMean = shurikenMaterialColorSums[first] /
+                    shurikenMaterialColorSamples[first];
+                for (int second = first + 1;
+                    second < MaterialColorModeCount;
+                    second++)
+                {
+                    Vector3 secondMean = shurikenMaterialColorSums[second] /
+                        shurikenMaterialColorSamples[second];
+                    maximumDistance = Mathf.Max(
+                        maximumDistance,
+                        Vector3.Distance(firstMean, secondMean));
+                }
+            }
+            return maximumDistance >= minimumDistance;
+        }
+
+        string FormatMaterialColorModeErrors()
+        {
+            var text = new StringBuilder("[");
+            for (int i = 0; i < MaterialColorModeCount; i++)
+            {
+                if (i > 0) text.Append(',');
+                text.Append(
+                    maximumMaterialColorModeErrors[i].ToString(
+                        "R", CultureInfo.InvariantCulture));
+            }
+            return text.Append(']').ToString();
+        }
+
+        string FormatMaterialColorModeMeans()
+        {
+            var text = new StringBuilder("[");
+            for (int i = 0; i < MaterialColorModeCount; i++)
+            {
+                if (i > 0) text.Append(',');
+                if (shurikenMaterialColorSamples[i] <= 0)
+                {
+                    text.Append("[]");
+                    continue;
+                }
+
+                Vector3 mean = shurikenMaterialColorSums[i] /
+                    shurikenMaterialColorSamples[i];
+                text.Append('(')
+                    .Append(mean.x.ToString("R", CultureInfo.InvariantCulture))
+                    .Append(',')
+                    .Append(mean.y.ToString("R", CultureInfo.InvariantCulture))
+                    .Append(',')
+                    .Append(mean.z.ToString("R", CultureInfo.InvariantCulture))
+                    .Append(')');
+            }
+            return text.Append(']').ToString();
         }
 
         static string FormatRange(ObservedRange range)

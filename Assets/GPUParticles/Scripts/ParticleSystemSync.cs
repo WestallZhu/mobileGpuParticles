@@ -13,6 +13,8 @@ namespace GPUParticles
         private GPUParticleSystem targetGPUParticleSystem;
         private ParticleSystemRenderer sourceRenderer;
         private Texture2D cachedBaseMap;
+        private Color cachedMaterialBaseColor;
+        private GPUParticleColorMode cachedMaterialColorMode;
         private bool cachedTextureSheetFrameBlending;
 
         // 缓存上次的值以检测变化
@@ -1763,15 +1765,33 @@ namespace GPUParticles
         {
             if (sourceRenderer == null) return;
 
-            Texture2D baseMap = TryGetBaseMap(sourceRenderer);
+            Material material = ShurikenConverter.GetPrimaryMaterial(
+                sourceRenderer);
+            Texture2D baseMap = ShurikenConverter.TryGetBaseMap(
+                sourceRenderer);
             if (force || baseMap != cachedBaseMap)
             {
                 targetGPUParticleSystem.baseMap = baseMap != null ? baseMap : Texture2D.whiteTexture;
                 cachedBaseMap = baseMap;
             }
 
-            bool frameBlending = UsesFlipbookBlending(
-                sourceRenderer.sharedMaterial);
+            Color baseColor = ShurikenConverter.GetMaterialBaseColor(material);
+            if (force || baseColor != cachedMaterialBaseColor)
+            {
+                targetGPUParticleSystem.materialBaseColor = baseColor;
+                cachedMaterialBaseColor = baseColor;
+            }
+
+            GPUParticleColorMode colorMode =
+                ShurikenConverter.GetMaterialColorMode(material);
+            if (force || colorMode != cachedMaterialColorMode)
+            {
+                targetGPUParticleSystem.materialColorMode = colorMode;
+                cachedMaterialColorMode = colorMode;
+            }
+
+            bool frameBlending =
+                ShurikenConverter.UsesFlipbookBlending(material);
             if (force ||
                 frameBlending != cachedTextureSheetFrameBlending)
             {
@@ -1779,52 +1799,6 @@ namespace GPUParticles
                     frameBlending;
                 cachedTextureSheetFrameBlending = frameBlending;
             }
-        }
-
-        static bool UsesFlipbookBlending(Material material)
-        {
-            if (material == null) return false;
-            return (material.HasProperty("_FlipbookBlending") &&
-                    material.GetFloat("_FlipbookBlending") > 0.5f) ||
-                   material.IsKeywordEnabled("_FLIPBOOKBLENDING_ON");
-        }
-
-        static Texture2D TryGetBaseMap(ParticleSystemRenderer renderer)
-        {
-            if (renderer == null) return null;
-
-            Texture2D baseMap = TryGetBaseMap(renderer.sharedMaterial);
-            if (baseMap != null) return baseMap;
-
-            var materials = renderer.sharedMaterials;
-            if (materials == null) return null;
-
-            foreach (var material in materials)
-            {
-                baseMap = TryGetBaseMap(material);
-                if (baseMap != null) return baseMap;
-            }
-
-            return null;
-        }
-
-        static Texture2D TryGetBaseMap(Material material)
-        {
-            if (material == null) return null;
-
-            if (material.HasProperty("_BaseMap"))
-            {
-                var texture = material.GetTexture("_BaseMap") as Texture2D;
-                if (texture != null) return texture;
-            }
-
-            if (material.HasProperty("_MainTex"))
-            {
-                var texture = material.GetTexture("_MainTex") as Texture2D;
-                if (texture != null) return texture;
-            }
-
-            return material.mainTexture as Texture2D;
         }
 
         void SyncColorOverLifetime(bool force = false)

@@ -50,6 +50,7 @@ namespace GPUParticles
             ApplyLifetimeByEmitterSpeed(ps, gpu);
             ApplyNoise(ps, gpu);
             ApplyCollision(ps, gpu, owner);
+            ApplyMaterialParameters(psr, gpu);
             ApplyTextureSheetAnimation(ps, gpu, owner);
 
             ApplyEmission(ps, gpu, owner);
@@ -234,29 +235,6 @@ namespace GPUParticles
 
             Debug.Log("Shuriken → GPU conversion complete (Shapes + Renderer mapping).", owner);
 
-            // Base map (texture) from ParticleSystemRenderer material
-            if (psr != null)
-            {
-                Texture2D baseTex = null;
-                // Prefer sharedMaterial to avoid instantiating
-                var mat = psr.sharedMaterial;
-                baseTex = TryGetBaseMap(mat);
-                if (baseTex == null && psr.sharedMaterials != null)
-                {
-                    foreach (var m in psr.sharedMaterials)
-                    {
-                        baseTex = TryGetBaseMap(m);
-                        if (baseTex != null) break;
-                    }
-                }
-                if (baseTex != null)
-                {
-                    gpu.baseMap = baseTex;
-                    // Optional: note assignment for clarity during conversion
-                    Debug.Log($"Assigned baseMap from material '{mat?.name ?? "<array>"}': {baseTex.name}", owner);
-                }
-            }
-
             gpu.InitializePlaybackFromSettings();
             Debug.Log("Shuriken → GPU (MRT) basic conversion complete.", owner);
         }
@@ -318,6 +296,7 @@ namespace GPUParticles
             ApplyLifetimeByEmitterSpeed(particleSystem, gpu);
             ApplyNoise(particleSystem, gpu);
             ApplyCollision(particleSystem, gpu, gpuChild);
+            ApplyMaterialParameters(psr, gpu);
             ApplyTextureSheetAnimation(particleSystem, gpu, gpuChild);
 
             ApplyEmission(particleSystem, gpu, gpuChild);
@@ -498,24 +477,6 @@ namespace GPUParticles
                 gpu.rotateWithStretchDirection = psr.rotateWithStretchDirection;
             }
 
-            // Base map (texture) from ParticleSystemRenderer material
-            if (psr != null)
-            {
-                Texture2D baseTex = TryGetBaseMap(psr.sharedMaterial);
-                if (baseTex == null && psr.sharedMaterials != null)
-                {
-                    foreach (var m in psr.sharedMaterials)
-                    {
-                        baseTex = TryGetBaseMap(m);
-                        if (baseTex != null) break;
-                    }
-                }
-                if (baseTex != null)
-                {
-                    gpu.baseMap = baseTex;
-                }
-            }
-
             // 添加运行时同步组件（会在Awake中自动初始化）
             gpuChild.AddComponent<ParticleSystemSync>();
             gpu.InitializePlaybackFromSettings();
@@ -523,21 +484,125 @@ namespace GPUParticles
             Debug.Log($"Shuriken → GPU conversion complete on new child node: {gpuChild.name}", gpuChild);
         }
 
-        private static Texture2D TryGetBaseMap(Material m)
+        public static void ApplyMaterialParameters(
+            ParticleSystemRenderer renderer,
+            GPUParticleSystem gpu)
         {
-            if (m == null) return null;
-            // URP Lit/Unlit commonly use _BaseMap; legacy uses _MainTex
-            if (m.HasProperty("_BaseMap"))
+            if (gpu == null) return;
+
+            Material material = GetPrimaryMaterial(renderer);
+            gpu.baseMap = TryGetBaseMap(renderer) ?? Texture2D.whiteTexture;
+            gpu.materialBaseColor = GetMaterialBaseColor(material);
+            gpu.materialColorMode = GetMaterialColorMode(material);
+            gpu.textureSheetFrameBlending = UsesFlipbookBlending(material);
+        }
+
+        internal static Material GetPrimaryMaterial(
+            ParticleSystemRenderer renderer)
+        {
+            if (renderer == null) return null;
+            Material material = renderer.sharedMaterial;
+            if (material != null) return material;
+
+            Material[] materials = renderer.sharedMaterials;
+            if (materials == null) return null;
+            for (int i = 0; i < materials.Length; i++)
             {
-                var t = m.GetTexture("_BaseMap") as Texture2D;
-                if (t != null) return t;
+                if (materials[i] != null) return materials[i];
             }
-            if (m.HasProperty("_MainTex"))
+            return null;
+        }
+
+        internal static Texture2D TryGetBaseMap(
+            ParticleSystemRenderer renderer)
+        {
+            if (renderer == null) return null;
+            Texture2D texture = TryGetBaseMap(renderer.sharedMaterial);
+            if (texture != null) return texture;
+
+            Material[] materials = renderer.sharedMaterials;
+            if (materials == null) return null;
+            for (int i = 0; i < materials.Length; i++)
             {
-                var t = m.GetTexture("_MainTex") as Texture2D;
-                if (t != null) return t;
+                texture = TryGetBaseMap(materials[i]);
+                if (texture != null) return texture;
             }
-            return m.mainTexture as Texture2D;
+            return null;
+        }
+
+        internal static Texture2D TryGetBaseMap(Material material)
+        {
+            if (material == null) return null;
+            // URP Lit/Unlit commonly use _BaseMap; legacy uses _MainTex.
+            if (material.HasProperty("_BaseMap"))
+            {
+                var texture = material.GetTexture("_BaseMap") as Texture2D;
+                if (texture != null) return texture;
+            }
+            if (material.HasProperty("_MainTex"))
+            {
+                var texture = material.GetTexture("_MainTex") as Texture2D;
+                if (texture != null) return texture;
+            }
+            return material.mainTexture as Texture2D;
+        }
+
+        internal static Color GetMaterialBaseColor(Material material)
+        {
+            if (material == null) return Color.white;
+            if (material.HasProperty("_BaseColor"))
+            {
+                return material.GetColor("_BaseColor");
+            }
+            if (material.HasProperty("_Color"))
+            {
+                return material.GetColor("_Color");
+            }
+            if (material.HasProperty("_TintColor"))
+            {
+                return material.GetColor("_TintColor");
+            }
+            return Color.white;
+        }
+
+        internal static GPUParticleColorMode GetMaterialColorMode(
+            Material material)
+        {
+            if (material == null)
+            {
+                return GPUParticleColorMode.Multiply;
+            }
+            if (material.IsKeywordEnabled("_COLOROVERLAY_ON"))
+            {
+                return GPUParticleColorMode.Overlay;
+            }
+            if (material.IsKeywordEnabled("_COLORCOLOR_ON"))
+            {
+                return GPUParticleColorMode.Color;
+            }
+            if (!material.IsKeywordEnabled("_COLORADDSUBDIFF_ON"))
+            {
+                return GPUParticleColorMode.Multiply;
+            }
+
+            Vector4 operation = material.HasProperty("_BaseColorAddSubDiff")
+                ? material.GetVector("_BaseColorAddSubDiff")
+                : Vector4.zero;
+            if (operation.y > 0.5f)
+            {
+                return GPUParticleColorMode.Difference;
+            }
+            return operation.x >= 0f
+                ? GPUParticleColorMode.Additive
+                : GPUParticleColorMode.Subtractive;
+        }
+
+        internal static bool UsesFlipbookBlending(Material material)
+        {
+            if (material == null) return false;
+            return (material.HasProperty("_FlipbookBlending") &&
+                    material.GetFloat("_FlipbookBlending") > 0.5f) ||
+                   material.IsKeywordEnabled("_FLIPBOOKBLENDING_ON");
         }
 
         static void ApplyMainRanges(
@@ -1069,16 +1134,7 @@ namespace GPUParticles
             Object context)
         {
             var textureSheet = particleSystem.textureSheetAnimation;
-            var particleRenderer =
-                particleSystem.GetComponent<ParticleSystemRenderer>();
-            Material particleMaterial = particleRenderer != null
-                ? particleRenderer.sharedMaterial
-                : null;
-            bool usesFrameBlending = particleMaterial != null &&
-                ((particleMaterial.HasProperty("_FlipbookBlending") &&
-                  particleMaterial.GetFloat("_FlipbookBlending") > 0.5f) ||
-                 particleMaterial.IsKeywordEnabled("_FLIPBOOKBLENDING_ON"));
-            gpu.textureSheetFrameBlending = usesFrameBlending;
+            bool usesFrameBlending = gpu.textureSheetFrameBlending;
             gpu.textureSheetMode = textureSheet.mode;
             gpu.textureSheetAnimation = textureSheet.animation;
             gpu.textureSheetTimeMode = textureSheet.timeMode;

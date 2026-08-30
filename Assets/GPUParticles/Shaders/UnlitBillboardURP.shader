@@ -3,6 +3,7 @@ Shader "GPUParticles/UnlitBillboardURP"
     Properties
     {
         _BaseMap("Texture", 2D) = "white" {}
+        [MainColor] _BaseColor("Base Color", Color) = (1,1,1,1)
         _MinAlphaCull("MinAlphaCull", Range(0,1)) = 0.001
     }
     SubShader
@@ -19,6 +20,7 @@ Shader "GPUParticles/UnlitBillboardURP"
             #pragma vertex Vert
             #pragma fragment Frag
             #include "Packages/com.unity.render-pipelines.universal/ShaderLibrary/Core.hlsl"
+            #include "Packages/com.unity.render-pipelines.core/ShaderLibrary/Color.hlsl"
 
             // MRT state from simulation
             TEXTURE2D(_CurPosLife); SAMPLER(sampler_CurPosLife);
@@ -108,6 +110,10 @@ Shader "GPUParticles/UnlitBillboardURP"
                 int   _TextureSheetBlendNextUV;
                 float _TextureSheetFrameLUTInvWidth;
                 float _TextureSheetStartLUTInvWidth;
+
+                float4 _BaseColor;
+                int   _ParticleColorMode;
+                float3 _padMaterialColor;
 
                 // emitter transforms (for LS->WS)
                 float4x4 _EmitterLocalToWorld;
@@ -1044,6 +1050,54 @@ Shader "GPUParticles/UnlitBillboardURP"
                 return o;
             }
 
+            float4 MixParticleColor(
+                float4 baseColor,
+                float4 particleColor)
+            {
+                if (_ParticleColorMode == 3) // Overlay
+                {
+                    float4 output = baseColor;
+                    output.rgb = lerp(
+                        1.0 - 2.0 * (1.0 - baseColor.rgb) *
+                            (1.0 - particleColor.rgb),
+                        2.0 * baseColor.rgb * particleColor.rgb,
+                        step(baseColor.rgb, 0.5));
+                    output.a *= particleColor.a;
+                    return output;
+                }
+                if (_ParticleColorMode == 4) // Color
+                {
+                    float3 baseHSV = RgbToHsv(baseColor.rgb);
+                    float3 particleHSV = RgbToHsv(particleColor.rgb);
+                    float3 mixedHSV = float3(
+                        particleHSV.x,
+                        particleHSV.y,
+                        baseHSV.z);
+                    return float4(
+                        HsvToRgb(mixedHSV),
+                        baseColor.a * particleColor.a);
+                }
+                if (_ParticleColorMode == 1) // Additive
+                {
+                    return float4(
+                        baseColor.rgb + particleColor.rgb,
+                        baseColor.a * particleColor.a);
+                }
+                if (_ParticleColorMode == 2) // Subtractive
+                {
+                    return float4(
+                        baseColor.rgb - particleColor.rgb,
+                        baseColor.a * particleColor.a);
+                }
+                if (_ParticleColorMode == 5) // Difference
+                {
+                    return float4(
+                        abs(baseColor.rgb - particleColor.rgb),
+                        baseColor.a * particleColor.a);
+                }
+                return baseColor * particleColor;
+            }
+
             half4 Frag(VOut i) : SV_Target
             {
                 float4 baseCol = SAMPLE_TEXTURE2D(_BaseMap, sampler_BaseMap, i.uv);
@@ -1053,7 +1107,8 @@ Shader "GPUParticles/UnlitBillboardURP"
                         _BaseMap, sampler_BaseMap, i.uvNext);
                     baseCol = lerp(baseCol, nextCol, saturate(i.frameBlend));
                 }
-                return baseCol * i.col;
+                baseCol *= _BaseColor;
+                return MixParticleColor(baseCol, i.col);
             }
             ENDHLSL
         }

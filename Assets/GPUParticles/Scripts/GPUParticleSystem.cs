@@ -25,6 +25,15 @@ namespace GPUParticles
 
     public enum GPURenderMode { Billboard = 0, HorizontalBillboard = 1, VerticalBillboard = 2, StretchedBillboard = 3 }
     public enum GPUAlignment  { View = 0, Facing = 1, World = 2, Local = 3, Velocity = 4 }
+    public enum GPUParticleColorMode
+    {
+        Multiply = 0,
+        Additive = 1,
+        Subtractive = 2,
+        Overlay = 3,
+        Color = 4,
+        Difference = 5
+    }
 
     [ExecuteAlways]
     public class GPUParticleSystem : MonoBehaviour
@@ -247,6 +256,9 @@ namespace GPUParticles
 
         [Header("Rendering")]
         public Texture2D baseMap;
+        public Color materialBaseColor = Color.white;
+        public GPUParticleColorMode materialColorMode =
+            GPUParticleColorMode.Multiply;
         [Range(0,1)] public float minAlphaCull = 0.001f;
         public bool renderEnabled = true;
 
@@ -733,6 +745,10 @@ namespace GPUParticles
             Shader.PropertyToID("_TextureSheetFrameOverTimeLUT");
         static readonly int _TextureSheetStartFrameLUT =
             Shader.PropertyToID("_TextureSheetStartFrameLUT");
+        static readonly int _MaterialBaseColor =
+            Shader.PropertyToID("_BaseColor");
+        static readonly int _MaterialColorMode =
+            Shader.PropertyToID("_ParticleColorMode");
         static readonly int _TextureSheetFrameLUTInvWidth =
             Shader.PropertyToID("_TextureSheetFrameLUTInvWidth");
         static readonly int _TextureSheetStartLUTInvWidth =
@@ -3419,6 +3435,10 @@ namespace GPUParticles
             renderMaterial.SetTexture(_CurColor,   colorRT[ping]);
             renderMaterial.SetTexture(_CurRotationPhase, rotationPhaseRT[ping]);
             renderMaterial.SetTexture("_BaseMap", baseMap != null ? baseMap : Texture2D.whiteTexture);
+            renderMaterial.SetColor(_MaterialBaseColor, materialBaseColor);
+            renderMaterial.SetInt(
+                _MaterialColorMode,
+                Mathf.Clamp((int)materialColorMode, 0, 5));
 
             renderMaterial.SetInt(_GridSize, gridSize);
             renderMaterial.SetInt(_MaxParticles, maxParticles);

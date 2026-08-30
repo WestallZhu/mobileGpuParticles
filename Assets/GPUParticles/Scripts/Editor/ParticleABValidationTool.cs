@@ -692,6 +692,13 @@ namespace GPUParticles.Editor
                 ParticleABValidationProfile.TextureSheetBlendFPSPoint);
         }
 
+        [MenuItem("Tools/GPU Particles/Run Material Color Modes A-B RT Capture")]
+        public static void RunMaterialColorModesCaptureMenu()
+        {
+            StartTextureSheetCaptureMenu(
+                ParticleABValidationProfile.MaterialColorModesPoint);
+        }
+
         [MenuItem("Tools/GPU Particles/Run Shape Sphere A-B RT Capture")]
         public static void RunShapeSphereCaptureMenu()
         {
@@ -1404,6 +1411,14 @@ namespace GPUParticles.Editor
                 ParticleABValidationProfile.TextureSheetBlendFPSPoint);
         }
 
+        public static void RunBatchMaterialColorModesCapture()
+        {
+            ValidateCommonFeatureMapping();
+            StartCapture(
+                true,
+                ParticleABValidationProfile.MaterialColorModesPoint);
+        }
+
         public static void RunBatchRotationOverLifetimeCapture()
         {
             ValidateCommonFeatureMapping();
@@ -1621,6 +1636,8 @@ namespace GPUParticles.Editor
                 case ParticleABValidationProfile.TextureSheetBlendSpeedPoint:
                 case ParticleABValidationProfile.TextureSheetBlendFPSPoint:
                     return 3.8f;
+                case ParticleABValidationProfile.MaterialColorModesPoint:
+                    return 3f;
                 case ParticleABValidationProfile.RotationOverLifetimeCurvePoint: return 2.5f;
                 case ParticleABValidationProfile.RotationBySpeedCurvePoint: return 2.5f;
                 case ParticleABValidationProfile.ColorSizeOverLifetimeRandomizedPoint: return 2f;
@@ -1722,7 +1739,8 @@ namespace GPUParticles.Editor
                    profile == ParticleABValidationProfile.TextureSheetSingleRowPoint ||
                    profile == ParticleABValidationProfile.TextureSheetBlendLifetimePoint ||
                    profile == ParticleABValidationProfile.TextureSheetBlendSpeedPoint ||
-                   profile == ParticleABValidationProfile.TextureSheetBlendFPSPoint
+                   profile == ParticleABValidationProfile.TextureSheetBlendFPSPoint ||
+                   profile == ParticleABValidationProfile.MaterialColorModesPoint
                 ? 20f
                 : 5f;
         }
@@ -1871,6 +1889,8 @@ namespace GPUParticles.Editor
                     return "TestResults/ParticleTextureSheetBlendSpeed";
                 case ParticleABValidationProfile.TextureSheetBlendFPSPoint:
                     return "TestResults/ParticleTextureSheetBlendFPS";
+                case ParticleABValidationProfile.MaterialColorModesPoint:
+                    return "TestResults/ParticleMaterialColorModes";
                 case ParticleABValidationProfile.RotationOverLifetimeCurvePoint:
                     return "TestResults/ParticleRotationOverLifetime";
                 case ParticleABValidationProfile.RotationBySpeedCurvePoint:
@@ -3408,6 +3428,7 @@ namespace GPUParticles.Editor
                 ValidateNoiseMapping();
                 ValidateCollisionMapping();
                 ValidateTextureSheetFrameBlendingMapping();
+                ValidateMaterialColorMapping();
                 Debug.Log("PARTICLE_COMMON_FEATURE_MAPPING_RESULT:PASS");
             }
             finally
@@ -4131,6 +4152,101 @@ namespace GPUParticles.Editor
                 {
                     CleanupGeneratedValidationTexture(generatedTextures[i]);
                 }
+            }
+        }
+
+        static void ValidateMaterialColorMapping()
+        {
+            var owner = new GameObject(
+                "ParticleMaterialColorMappingValidation");
+            owner.SetActive(false);
+            Material material = null;
+            try
+            {
+                var shuriken = owner.AddComponent<ParticleSystem>();
+                ParticleSystem.MainModule main = shuriken.main;
+                main.playOnAwake = false;
+                var renderer = owner.GetComponent<ParticleSystemRenderer>();
+
+                Shader shader = Shader.Find(
+                    "Universal Render Pipeline/Particles/Unlit");
+                Require(shader != null,
+                    "URP particle shader was not found for material color mapping.");
+                material = new Material(shader);
+                Color expectedBaseColor =
+                    new Color(0.25f, 0.5f, 0.75f, 0.8f);
+                material.SetTexture("_BaseMap", Texture2D.whiteTexture);
+                material.SetColor("_BaseColor", expectedBaseColor);
+                SetMaterialColorModeForValidation(
+                    material,
+                    GPUParticleColorMode.Difference);
+                renderer.sharedMaterial = material;
+
+                ShurikenConverter.Convert(owner);
+                var gpu = owner.GetComponent<GPUParticleSystem>();
+                Require(gpu != null,
+                    "Material color conversion did not create a GPU system.");
+                Require(gpu.baseMap == Texture2D.whiteTexture,
+                    "Material Base Map was not mapped.");
+                RequireColorApproximately(
+                    gpu.materialBaseColor,
+                    expectedBaseColor,
+                    "Material Base Color");
+                Require(gpu.materialColorMode ==
+                        GPUParticleColorMode.Difference,
+                    "Particle Difference Color Mode was not mapped.");
+
+                for (int i = 0; i < 6; i++)
+                {
+                    var expectedMode = (GPUParticleColorMode)i;
+                    SetMaterialColorModeForValidation(
+                        material, expectedMode);
+                    ShurikenConverter.ApplyMaterialParameters(renderer, gpu);
+                    Require(gpu.materialColorMode == expectedMode,
+                        $"Particle Color Mode {expectedMode} was not mapped.");
+                }
+            }
+            finally
+            {
+                Object.DestroyImmediate(owner);
+                Object.DestroyImmediate(material);
+            }
+        }
+
+        static void SetMaterialColorModeForValidation(
+            Material material,
+            GPUParticleColorMode mode)
+        {
+            material.SetFloat("_ColorMode", (float)mode);
+            material.DisableKeyword("_COLOROVERLAY_ON");
+            material.DisableKeyword("_COLORCOLOR_ON");
+            material.DisableKeyword("_COLORADDSUBDIFF_ON");
+            switch (mode)
+            {
+                case GPUParticleColorMode.Additive:
+                    material.EnableKeyword("_COLORADDSUBDIFF_ON");
+                    material.SetVector(
+                        "_BaseColorAddSubDiff",
+                        new Vector4(1f, 0f, 0f, 0f));
+                    break;
+                case GPUParticleColorMode.Subtractive:
+                    material.EnableKeyword("_COLORADDSUBDIFF_ON");
+                    material.SetVector(
+                        "_BaseColorAddSubDiff",
+                        new Vector4(-1f, 0f, 0f, 0f));
+                    break;
+                case GPUParticleColorMode.Overlay:
+                    material.EnableKeyword("_COLOROVERLAY_ON");
+                    break;
+                case GPUParticleColorMode.Color:
+                    material.EnableKeyword("_COLORCOLOR_ON");
+                    break;
+                case GPUParticleColorMode.Difference:
+                    material.EnableKeyword("_COLORADDSUBDIFF_ON");
+                    material.SetVector(
+                        "_BaseColorAddSubDiff",
+                        new Vector4(-1f, 1f, 0f, 0f));
+                    break;
             }
         }
 
