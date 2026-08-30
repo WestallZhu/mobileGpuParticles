@@ -54,6 +54,9 @@ namespace GPUParticles
         public float startSpeed = 5.0f;
         [Min(0.0f)] public float startSize = 0.1f;
         public Color startColor = Color.white;
+        public ParticleSystemGradientMode startColorMode =
+            ParticleSystemGradientMode.Color;
+        public Texture2D startColorLUT;
         public float gravityModifier = 0.0f;
         [Min(0.0f)] public float simulationSpeed = 1.0f;
         public float startRotation = 0.0f;
@@ -263,6 +266,10 @@ namespace GPUParticles
         static readonly int _StartColor = Shader.PropertyToID("_StartColor");
         static readonly int _StartColorMin = Shader.PropertyToID("_StartColorMin");
         static readonly int _RandomizeStartColor = Shader.PropertyToID("_RandomizeStartColor");
+        static readonly int _StartColorMode = Shader.PropertyToID("_StartColorMode");
+        static readonly int _StartColorLUT = Shader.PropertyToID("_StartColorLUT");
+        static readonly int _StartColorLUTInvWidth =
+            Shader.PropertyToID("_StartColorLUTInvWidth");
         static readonly int _StartRotation = Shader.PropertyToID("_StartRotation");
         static readonly int _StartRotationMin = Shader.PropertyToID("_StartRotationMin");
         static readonly int _RandomizeStartRotation = Shader.PropertyToID("_RandomizeStartRotation");
@@ -287,6 +294,12 @@ namespace GPUParticles
         static readonly int _ContinuousEmissionWindowStart =
             Shader.PropertyToID("_ContinuousEmissionWindowStart");
         static readonly int _DistanceEmitCount = Shader.PropertyToID("_DistanceEmitCount");
+        static readonly int _EmissionTimeAfterStep =
+            Shader.PropertyToID("_EmissionTimeAfterStep");
+        static readonly int _EmissionStartDelay =
+            Shader.PropertyToID("_EmissionStartDelay");
+        static readonly int _EmissionDuration = Shader.PropertyToID("_EmissionDuration");
+        static readonly int _EmissionLooping = Shader.PropertyToID("_EmissionLooping");
         static readonly int _BurstCounts0 = Shader.PropertyToID("_BurstCounts0");
         static readonly int _BurstCounts1 = Shader.PropertyToID("_BurstCounts1");
         static readonly int _BurstAges0 = Shader.PropertyToID("_BurstAges0");
@@ -620,6 +633,9 @@ namespace GPUParticles
             startColorMin = minimum;
             startColor = maximum;
             randomizeStartColor = randomized;
+            startColorMode = randomized
+                ? ParticleSystemGradientMode.TwoColors
+                : ParticleSystemGradientMode.Color;
         }
 
         public void SetGravityModifierRange(float minimum, float maximum)
@@ -1385,6 +1401,9 @@ namespace GPUParticles
             simulateMaterial.SetTexture(_CurVelSize, velSize[src]);
             simulateMaterial.SetTexture(_CurColor,   colorRT[src]);
             simulateMaterial.SetTexture(_CurRotationPhase, rotationPhaseRT[src]);
+            Texture2D selectedStartColorLUT = startColorLUT != null
+                ? startColorLUT
+                : GradientLUTBuilder.GetDefaultWhiteLUT();
             Texture2D selectedColorOverLifetimeLUT = colorOverLifetimeLUT != null
                 ? colorOverLifetimeLUT
                 : GradientLUTBuilder.GetDefaultWhiteLUT();
@@ -1418,6 +1437,7 @@ namespace GPUParticles
                     : CurveLUTBuilder.GetDefaultUnitLUT();
 
             simulateMaterial.SetTexture("_GradLUT", selectedColorOverLifetimeLUT);
+            simulateMaterial.SetTexture(_StartColorLUT, selectedStartColorLUT);
             simulateMaterial.SetTexture("_SizeLUT", selectedSizeOverLifetimeLUT);
             simulateMaterial.SetTexture(_ColorBySpeedLUT, selectedColorBySpeedLUT);
             simulateMaterial.SetTexture(_SizeBySpeedLUT, selectedSizeBySpeedLUT);
@@ -1436,6 +1456,9 @@ namespace GPUParticles
                 selectedLifetimeByEmitterSpeedLUT);
             simulateMaterial.SetFloat(
                 _GradLUTInvWidth, InverseTextureWidth(selectedColorOverLifetimeLUT));
+            simulateMaterial.SetFloat(
+                _StartColorLUTInvWidth,
+                InverseTextureWidth(selectedStartColorLUT));
             simulateMaterial.SetFloat(
                 _SizeLUTInvWidth, InverseTextureWidth(selectedSizeOverLifetimeLUT));
             simulateMaterial.SetFloat(
@@ -1476,6 +1499,13 @@ namespace GPUParticles
             simulateMaterial.SetColor(_StartColor, startColor);
             simulateMaterial.SetColor(_StartColorMin, startColorMin);
             simulateMaterial.SetInt(_RandomizeStartColor, randomizeStartColor ? 1 : 0);
+            ParticleSystemGradientMode selectedStartColorMode =
+                startColorMode == ParticleSystemGradientMode.Color &&
+                randomizeStartColor
+                    ? ParticleSystemGradientMode.TwoColors
+                    : startColorMode;
+            simulateMaterial.SetInt(
+                _StartColorMode, (int)selectedStartColorMode);
 
             Vector3 gWorld = Physics.gravity * gravityModifier;
             Vector3 gWorldMin = Physics.gravity * gravityModifierMin;
@@ -1496,6 +1526,11 @@ namespace GPUParticles
             simulateMaterial.SetInt(_ContinuousEmitCount, continuousEmitCount);
             simulateMaterial.SetFloat(_ContinuousEmissionWindowStart, emissionWindowStart);
             simulateMaterial.SetInt(_DistanceEmitCount, distanceEmitCount);
+            simulateMaterial.SetFloat(_EmissionTimeAfterStep, stepEnd);
+            simulateMaterial.SetFloat(_EmissionStartDelay, startDelay);
+            simulateMaterial.SetFloat(
+                _EmissionDuration, Mathf.Max(0.05f, emissionDuration));
+            simulateMaterial.SetInt(_EmissionLooping, emissionLooping ? 1 : 0);
             simulateMaterial.SetVector(_BurstCounts0, new Vector4(
                 stepBurstCounts[0], stepBurstCounts[1], stepBurstCounts[2], stepBurstCounts[3]));
             simulateMaterial.SetVector(_BurstCounts1, new Vector4(

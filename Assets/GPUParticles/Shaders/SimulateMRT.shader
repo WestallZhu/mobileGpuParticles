@@ -32,6 +32,7 @@ Shader "Hidden/GPUParticles/SimulateMRT"
             TEXTURE2D(_CurVelSize);      SAMPLER(sampler_CurVelSize);
             TEXTURE2D(_CurColor);        SAMPLER(sampler_CurColor);
             TEXTURE2D(_CurRotationPhase); SAMPLER(sampler_CurRotationPhase);
+            TEXTURE2D(_StartColorLUT);
             TEXTURE2D(_GradLUT);         SAMPLER(sampler_GradLUT);
             TEXTURE2D(_SizeLUT);         SAMPLER(sampler_SizeLUT);
             TEXTURE2D(_ColorBySpeedLUT); SAMPLER(sampler_ColorBySpeedLUT);
@@ -61,6 +62,8 @@ Shader "Hidden/GPUParticles/SimulateMRT"
                 float4  _StartColor;
                 float4  _StartColorMin;
                 int     _RandomizeStartColor;
+                int     _StartColorMode;
+                float   _StartColorLUTInvWidth;
                 float3  _GravityWS;          // NOTE: contains space-correct gravity (WS or LS)
                 float3  _GravityWSMin;
                 int     _RandomizeGravityModifier;
@@ -72,6 +75,10 @@ Shader "Hidden/GPUParticles/SimulateMRT"
                 uint    _ContinuousEmitCount;
                 float   _ContinuousEmissionWindowStart;
                 uint    _DistanceEmitCount;
+                float   _EmissionTimeAfterStep;
+                float   _EmissionStartDelay;
+                float   _EmissionDuration;
+                int     _EmissionLooping;
                 float4  _BurstCounts0;
                 float4  _BurstCounts1;
                 float4  _BurstAges0;
@@ -268,6 +275,26 @@ Shader "Hidden/GPUParticles/SimulateMRT"
                 }
 
                 return 0.0;
+            }
+
+            float StartColorSystemTime(float particleAge)
+            {
+                float activeTime = max(
+                    0.0,
+                    _EmissionTimeAfterStep - particleAge - _EmissionStartDelay);
+                float duration = max(0.05, _EmissionDuration);
+                if (_EmissionLooping == 0)
+                {
+                    return saturate(activeTime / duration);
+                }
+
+                float systemTime = frac(activeTime / duration);
+                // Shuriken assigns the final LUT bin to the next loop. A fixed
+                // bin also keeps the birth color stable when frame time changes.
+                const float loopBoundaryWindow = 1.0 / 256.0;
+                return systemTime >= 1.0 - loopBoundaryWindow
+                    ? 0.0
+                    : systemTime;
             }
 
             // --- Helpers ---
@@ -696,6 +723,40 @@ Shader "Hidden/GPUParticles/SimulateMRT"
                 return lerp(minimum, maximum, randomValue);
             }
 
+            float4 StartColorAtBirth(uint id, float particleAge)
+            {
+                if (_StartColorMode == 0) // Color
+                {
+                    return _StartColor;
+                }
+                if (_StartColorMode == 2) // TwoColors
+                {
+                    return lerp(
+                        _StartColorMin,
+                        _StartColor,
+                        Hash01(id ^ 0xC2B2AE35u));
+                }
+
+                float randomValue = Hash01(id ^ 0xA511E9B3u);
+                float sampleTime = _StartColorMode == 4 // RandomColor
+                    ? randomValue
+                    : StartColorSystemTime(particleAge);
+                float lutPosition = LUTPosition(
+                    sampleTime, _StartColorLUTInvWidth);
+                float4 maximum = SAMPLE_TEXTURE2D_LOD(
+                    _StartColorLUT, sampler_GradLUT,
+                    float2(lutPosition, 0.75), 0);
+                if (_StartColorMode != 3) // Gradient or RandomColor
+                {
+                    return maximum;
+                }
+
+                float4 minimum = SAMPLE_TEXTURE2D_LOD(
+                    _StartColorLUT, sampler_GradLUT,
+                    float2(lutPosition, 0.25), 0);
+                return lerp(minimum, maximum, randomValue);
+            }
+
             float SizeOverLifetime(uint id, float normalizedAge)
             {
                 float lutPosition = LUTPosition(normalizedAge, _SizeLUTInvWidth);
@@ -833,9 +894,7 @@ Shader "Hidden/GPUParticles/SimulateMRT"
                     id, 0xB5297A4Du, _RandomizeStartSpeed, _StartSpeedMin, _StartSpeed);
                 float particleStartSize = RandomRange(
                     id, 0x1B56C4E9u, _RandomizeStartSize, _StartSizeMin, _StartSize);
-                float4 particleStartColor = _RandomizeStartColor != 0
-                    ? lerp(_StartColorMin, _StartColor, Hash01(id ^ 0xC2B2AE35u))
-                    : _StartColor;
+                float4 particleStartColor = _StartColor;
                 float3 particleGravity = _RandomizeGravityModifier != 0
                     ? lerp(_GravityWSMin, _GravityWS, Hash01(id ^ 0x27D4EB2Fu))
                     : _GravityWS;
@@ -855,6 +914,9 @@ Shader "Hidden/GPUParticles/SimulateMRT"
                 float stepDt = 0.0;
                 if (spawn)
                 {
+                    uint emitOrdinal = EmitOrdinal(
+                        id, _EmitStart, (uint)_MaxParticles);
+                    stepDt = SpawnAgeThisFrame(emitOrdinal);
                     float3 urnd = Hash03(id * 9781u + 0x9E3779B9u);
                     float2 u2a = urnd.xy;
                     float2 u2b = float2(urnd.y, urnd.z);
@@ -1181,9 +1243,6 @@ Shader "Hidden/GPUParticles/SimulateMRT"
                     col = particleStartColor * lutColSpawn * colorBySpeedSpawn;
                     size = particleStartSize * lutSizeSpawn * sizeBySpeedSpawn;
 
-                    uint emitOrdinal = EmitOrdinal(id, _EmitStart, (uint)_MaxParticles);
-                    stepDt = SpawnAgeThisFrame(emitOrdinal);
-
                     // ToSimSpacePos uses the current emitter transform. Move a
                     // world-space birth back to its sub-frame emitter position so
                     // moving Rate-over-Time, Rate-over-Distance and Burst particles
@@ -1212,6 +1271,10 @@ Shader "Hidden/GPUParticles/SimulateMRT"
                     life = max(0.0, life - stepDt);
                     float normalizedAgeAfterStep = saturate(
                         1.0 - (life / max(particleStartLifetime, 1e-5)));
+                    float particleAgeAfterStep = max(
+                        0.0, particleStartLifetime - life);
+                    particleStartColor = StartColorAtBirth(
+                        id, particleAgeAfterStep);
                     float speedBeforeStep = length(vel);
 
                     // Stored velocity includes the prior frame's inherited component

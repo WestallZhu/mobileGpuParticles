@@ -519,16 +519,17 @@ namespace GPUParticles
             GetCurveRange(startSize, "Start Size", context, out minimum, out maximum);
             gpu.SetStartSizeRange(minimum, maximum);
 
-            bool supportedColor = ShurikenMinMaxUtility.TryGetColorRange(
+            ShurikenMinMaxUtility.TryGetColorRange(
                 main.startColor, out Color minimumColor, out Color maximumColor);
             gpu.SetStartColorRange(minimumColor, maximumColor,
                 main.startColor.mode == ParticleSystemGradientMode.TwoColors);
-            if (!supportedColor)
-            {
-                Debug.LogWarning(
-                    "Start Color Gradient modes require system-time sampling and currently use the first color.",
-                    context);
-            }
+            gpu.startColorMode = main.startColor.mode;
+            gpu.startColorLUT = IsStartColorGradientMode(main.startColor.mode)
+                ? GradientLUTBuilder.Build(
+                    main.startColor,
+                    saveAsAsset: true,
+                    assetName: "StartColor_LUT")
+                : GradientLUTBuilder.GetDefaultWhiteLUT();
 
             GetCurveRange(main.gravityModifier, "Gravity Modifier", context, out minimum, out maximum);
             gpu.SetGravityModifierRange(minimum, maximum);
@@ -584,6 +585,14 @@ namespace GPUParticles
                     $"{label} Curve modes require system-time sampling and currently use the value at t=0.",
                     context);
             }
+        }
+
+        static bool IsStartColorGradientMode(
+            ParticleSystemGradientMode mode)
+        {
+            return mode == ParticleSystemGradientMode.Gradient ||
+                   mode == ParticleSystemGradientMode.TwoGradients ||
+                   mode == ParticleSystemGradientMode.RandomColor;
         }
 
         static void ApplyForceOverLifetime(

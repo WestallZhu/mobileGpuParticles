@@ -46,6 +46,7 @@ namespace GPUParticles
 
         // LUT缓存（避免每帧重建）
         private float lastColorLUTUpdate = 0f;
+        private float lastStartColorLUTUpdate = 0f;
         private float lastSizeLUTUpdate = 0f;
         private float lastForceLUTUpdate = 0f;
         private float lastVelocityLUTUpdate = 0f;
@@ -66,6 +67,7 @@ namespace GPUParticles
         private Texture2D generatedTextureSheetFrameLUT;
         private Texture2D generatedTextureSheetStartLUT;
         private Texture2D generatedColorLUT;
+        private Texture2D generatedStartColorLUT;
         private Texture2D generatedSizeLUT;
         private Texture2D generatedColorBySpeedLUT;
         private Texture2D generatedSizeBySpeedLUT;
@@ -232,6 +234,28 @@ namespace GPUParticles
                 main.startColor, out Color minimumColor, out Color maximumColor);
             targetGPUParticleSystem.SetStartColorRange(minimumColor, maximumColor,
                 main.startColor.mode == ParticleSystemGradientMode.TwoColors);
+            targetGPUParticleSystem.startColorMode = main.startColor.mode;
+            bool updateStartColorLUT = force ||
+                Time.realtimeSinceStartup - lastStartColorLUTUpdate >
+                LUT_UPDATE_INTERVAL;
+            if (updateStartColorLUT)
+            {
+                DestroyGeneratedTexture(ref generatedStartColorLUT);
+                if (IsStartColorGradientMode(main.startColor.mode))
+                {
+                    generatedStartColorLUT = GradientLUTBuilder.Build(
+                        main.startColor,
+                        assetName: "StartColor_LUT");
+                    targetGPUParticleSystem.startColorLUT =
+                        generatedStartColorLUT;
+                }
+                else
+                {
+                    targetGPUParticleSystem.startColorLUT =
+                        GradientLUTBuilder.GetDefaultWhiteLUT();
+                }
+                lastStartColorLUTUpdate = Time.realtimeSinceStartup;
+            }
 
             ShurikenMinMaxUtility.TryGetConstantRange(
                 main.gravityModifier, out minimum, out maximum);
@@ -745,6 +769,7 @@ namespace GPUParticles
             DestroyGeneratedInheritVelocityLUT();
             DestroyGeneratedLifetimeByEmitterSpeedLUT();
             DestroyGeneratedTextureSheetLUTs();
+            DestroyGeneratedTexture(ref generatedStartColorLUT);
             DestroyGeneratedColorLUT();
             DestroyGeneratedSizeLUT();
             DestroyGeneratedColorBySpeedLUT();
@@ -819,6 +844,14 @@ namespace GPUParticles
             if (Application.isPlaying) Destroy(texture);
             else DestroyImmediate(texture);
             texture = null;
+        }
+
+        static bool IsStartColorGradientMode(
+            ParticleSystemGradientMode mode)
+        {
+            return mode == ParticleSystemGradientMode.Gradient ||
+                   mode == ParticleSystemGradientMode.TwoGradients ||
+                   mode == ParticleSystemGradientMode.RandomColor;
         }
 
         void DestroyGeneratedColorLUT()
