@@ -93,7 +93,8 @@ namespace GPUParticles
         MaterialColorModesPoint,
         MaterialBlendModesPoint,
         MaterialAlphaClipPoint,
-        MaterialSoftParticlesPoint
+        MaterialSoftParticlesPoint,
+        MaterialCameraFadingPoint
     }
 
     [DisallowMultipleComponent]
@@ -264,6 +265,19 @@ namespace GPUParticles
         Color currentShurikenMaterialSoftParticleColor;
         int currentShurikenMaterialSoftParticleState = -1;
         int activeMaterialSoftParticleState;
+        int materialCameraFadeComparableSamples;
+        int materialCameraFadeClassificationFailures;
+        int shurikenMaterialCameraFadeStateMask;
+        int gpuMaterialCameraFadeStateMask;
+        float maximumMaterialCameraFadeColorError;
+        readonly float[] maximumMaterialCameraFadeStateErrors = new float[4];
+        readonly Vector3[] shurikenMaterialCameraFadeColorSums =
+            new Vector3[4];
+        readonly int[] shurikenMaterialCameraFadeSamples = new int[4];
+        bool hasCurrentShurikenMaterialCameraFadeColor;
+        Color currentShurikenMaterialCameraFadeColor;
+        int currentShurikenMaterialCameraFadeState = -1;
+        int activeMaterialCameraFadeState;
         float maximumScreenSizePixelError;
         int screenSizeClassificationFailures;
         int currentShurikenScreenSizePixels = -1;
@@ -426,6 +440,21 @@ namespace GPUParticles
         const float MaterialSoftParticleStateInterval = 0.6f;
         const int MaterialSoftParticleStateCount = 4;
         const float MaterialSoftParticleCameraDepth = 12f;
+        static readonly Color MaterialCameraFadeTextureColor =
+            new Color(0.9f, 0.22f, 0.08f, 0.8f);
+        static readonly Color MaterialCameraFadeBackgroundColor =
+            new Color(0.08f, 0.15f, 0.24f, 1f);
+        static readonly float[] MaterialCameraFadeDepths =
+        {
+            1.4f,
+            1.4f,
+            2f,
+            3.2f
+        };
+        const float MaterialCameraFadeNearDistance = 1f;
+        const float MaterialCameraFadeFarDistance = 3f;
+        const float MaterialCameraFadeStateInterval = 0.6f;
+        const int MaterialCameraFadeStateCount = 4;
         static readonly Vector3 RotationBySpeedAcceleration = Vector3.right * 2f;
         static readonly Vector3 LimitVelocityAxesAcceleration =
             new Vector3(10f, 4f, -8f);
@@ -783,6 +812,12 @@ namespace GPUParticles
                     (playbackFrame + 1f) / fixedFrameRate;
                 UpdateMaterialSoftParticleState(nextSimulationTime);
             }
+            if (captureActive && IsMaterialCameraFadingProfile())
+            {
+                float nextSimulationTime =
+                    (playbackFrame + 1f) / fixedFrameRate;
+                UpdateMaterialCameraFadingState(nextSimulationTime);
+            }
 
             if (captureActive && UsesMovingEmitterProfile())
             {
@@ -1017,6 +1052,12 @@ namespace GPUParticles
             if (IsMaterialSoftParticlesProfile())
             {
                 ConfigureMaterialSoftParticlesProfile();
+                return;
+            }
+
+            if (IsMaterialCameraFadingProfile())
+            {
+                ConfigureMaterialCameraFadingProfile();
                 return;
             }
 
@@ -4420,6 +4461,248 @@ namespace GPUParticles
                 cameraTransform.rotation);
         }
 
+        void ConfigureMaterialCameraFadingProfile()
+        {
+            const float lifetime = 4f;
+            const float particleSize = 0.4f;
+            ConfigureEmissionPointBase(lifetime, false);
+
+            var main = shuriken.main;
+            main.maxParticles = 1;
+            main.startLifetime = lifetime;
+            main.startSpeed = 0f;
+            main.startSize = particleSize;
+            main.startColor = Color.white;
+            main.gravityModifier = 0f;
+
+            var emission = shuriken.emission;
+            emission.enabled = true;
+            emission.rateOverTime = 0f;
+            emission.rateOverDistance = 0f;
+            var burst = new ParticleSystem.Burst(0f, 1)
+            {
+                probability = 1f
+            };
+            emission.SetBursts(new[] { burst });
+
+            gpuParticles.maxParticles = 1;
+            gpuParticles.emissionEnabled = true;
+            gpuParticles.SetEmissionRateOverTime(0f);
+            gpuParticles.SetEmissionRateOverDistance(0f);
+            gpuParticles.SetEmissionBursts(new[] { burst });
+            gpuParticles.SetStartLifetimeRange(lifetime, lifetime);
+            gpuParticles.SetStartSpeedRange(0f, 0f);
+            gpuParticles.SetStartSizeRange(particleSize, particleSize);
+            gpuParticles.SetStartColorRange(
+                Color.white, Color.white, false);
+            gpuParticles.startColorLUT =
+                GradientLUTBuilder.GetDefaultWhiteLUT();
+
+            if (profileMaterialColorTexture != null)
+            {
+                Destroy(profileMaterialColorTexture);
+            }
+            profileMaterialColorTexture = CreateMaterialCameraFadeTexture();
+
+            if (profileMaterialColorMaterial != null)
+            {
+                Destroy(profileMaterialColorMaterial);
+            }
+            Shader particleShader = Shader.Find(
+                "Universal Render Pipeline/Particles/Unlit");
+            if (particleShader == null)
+            {
+                throw new InvalidOperationException(
+                    "URP particle shader was not found for camera fade validation.");
+            }
+            profileMaterialColorMaterial = new Material(particleShader)
+            {
+                name = "MaterialCameraFadeAB_Profile_Material",
+                hideFlags = HideFlags.HideAndDontSave,
+                renderQueue = (int)RenderQueue.Transparent
+            };
+            profileMaterialColorMaterial.SetTexture(
+                "_BaseMap", profileMaterialColorTexture);
+            profileMaterialColorMaterial.SetColor(
+                "_BaseColor", Color.white);
+            ConfigureTransparentAlphaMaterial(profileMaterialColorMaterial);
+            SetParticleMaterialColorMode(
+                profileMaterialColorMaterial,
+                GPUParticleColorMode.Multiply);
+            SetParticleMaterialSoftParticleState(
+                profileMaterialColorMaterial, 0);
+            SetParticleMaterialCameraFadingState(
+                profileMaterialColorMaterial, 0);
+
+            if (shurikenRenderer != null)
+            {
+                shurikenRenderer.sharedMaterial =
+                    profileMaterialColorMaterial;
+                shurikenRenderer.renderMode =
+                    ParticleSystemRenderMode.Billboard;
+                shurikenRenderer.alignment =
+                    ParticleSystemRenderSpace.View;
+                shurikenRenderer.minParticleSize = 0f;
+                shurikenRenderer.maxParticleSize = 1f;
+            }
+
+            gpuParticles.baseMap = profileMaterialColorTexture;
+            gpuParticles.materialBaseColor = Color.white;
+            gpuParticles.materialColorMode =
+                GPUParticleColorMode.Multiply;
+            gpuParticles.materialBlendOperation = BlendOp.Add;
+            gpuParticles.materialSourceBlend = BlendMode.SrcAlpha;
+            gpuParticles.materialDestinationBlend =
+                BlendMode.OneMinusSrcAlpha;
+            gpuParticles.materialSourceBlendAlpha = BlendMode.One;
+            gpuParticles.materialDestinationBlendAlpha =
+                BlendMode.OneMinusSrcAlpha;
+            gpuParticles.materialAlphaPremultiply = false;
+            gpuParticles.materialAlphaModulate = false;
+            gpuParticles.materialZWrite = false;
+            gpuParticles.materialAlphaClip = false;
+            gpuParticles.materialSoftParticles = false;
+            gpuParticles.materialSoftParticleFadeParams = Vector2.zero;
+            ApplyGPUMaterialCameraFadingState(0);
+            gpuParticles.renderMode = GPURenderMode.Billboard;
+            gpuParticles.renderAlignment = GPUAlignment.View;
+            gpuParticles.pivot = Vector2.zero;
+
+            UpdateMaterialCameraFadePositions(0);
+            if (captureCamera != null)
+            {
+                captureCamera.clearFlags = CameraClearFlags.SolidColor;
+                captureCamera.backgroundColor =
+                    MaterialCameraFadeBackgroundColor;
+            }
+        }
+
+        static Texture2D CreateMaterialCameraFadeTexture()
+        {
+            const int size = 16;
+            var pixels = new Color32[size * size];
+            Color32 color = MaterialCameraFadeTextureColor;
+            for (int i = 0; i < pixels.Length; i++)
+            {
+                pixels[i] = color;
+            }
+
+            var texture = new Texture2D(
+                size, size, TextureFormat.RGBA32, false, false)
+            {
+                name = "MaterialCameraFadeAB_Profile_Texture",
+                filterMode = FilterMode.Point,
+                wrapMode = TextureWrapMode.Clamp,
+                hideFlags = HideFlags.HideAndDontSave
+            };
+            texture.SetPixels32(pixels);
+            texture.Apply(false, false);
+            return texture;
+        }
+
+        void UpdateMaterialCameraFadingState(float elapsed)
+        {
+            int state = Mathf.Clamp(
+                Mathf.FloorToInt(
+                    Mathf.Max(0f, elapsed) /
+                    MaterialCameraFadeStateInterval),
+                0,
+                MaterialCameraFadeStateCount - 1);
+            SetParticleMaterialCameraFadingState(
+                profileMaterialColorMaterial,
+                state);
+            ApplyGPUMaterialCameraFadingState(state);
+            UpdateMaterialCameraFadePositions(state);
+        }
+
+        static void SetParticleMaterialCameraFadingState(
+            Material material,
+            int state)
+        {
+            if (material == null) return;
+            state = Mathf.Clamp(
+                state, 0, MaterialCameraFadeStateCount - 1);
+            bool enabled = state > 0;
+            float inverseFadeDistance = 1f /
+                (MaterialCameraFadeFarDistance -
+                 MaterialCameraFadeNearDistance);
+            material.SetFloat(
+                "_CameraFadingEnabled", enabled ? 1f : 0f);
+            material.SetFloat(
+                "_CameraNearFadeDistance",
+                MaterialCameraFadeNearDistance);
+            material.SetFloat(
+                "_CameraFarFadeDistance",
+                MaterialCameraFadeFarDistance);
+            material.SetVector(
+                "_CameraFadeParams",
+                enabled
+                    ? new Vector4(
+                        MaterialCameraFadeNearDistance,
+                        inverseFadeDistance,
+                        0f,
+                        0f)
+                    : new Vector4(
+                        0f,
+                        float.PositiveInfinity,
+                        0f,
+                        0f));
+            if (enabled)
+            {
+                material.EnableKeyword("_FADING_ON");
+            }
+            else
+            {
+                material.DisableKeyword("_FADING_ON");
+            }
+        }
+
+        void ApplyGPUMaterialCameraFadingState(int state)
+        {
+            activeMaterialCameraFadeState = Mathf.Clamp(
+                state, 0, MaterialCameraFadeStateCount - 1);
+            gpuParticles.materialCameraFading =
+                activeMaterialCameraFadeState > 0;
+            gpuParticles.materialCameraFadeParams =
+                gpuParticles.materialCameraFading
+                    ? new Vector2(
+                        MaterialCameraFadeNearDistance,
+                        1f / (MaterialCameraFadeFarDistance -
+                              MaterialCameraFadeNearDistance))
+                    : Vector2.zero;
+        }
+
+        void UpdateMaterialCameraFadePositions(int state)
+        {
+            if (captureCamera == null) return;
+
+            state = Mathf.Clamp(
+                state, 0, MaterialCameraFadeStateCount - 1);
+            float depth = MaterialCameraFadeDepths[state];
+            float horizontalOffset = depth * 0.28f;
+            float verticalOffset = -depth * 0.12f;
+            float screenSizeScale = depth / MaterialCameraFadeDepths[0];
+            Transform cameraTransform = captureCamera.transform;
+            Vector3 shurikenPosition = cameraTransform.TransformPoint(
+                new Vector3(
+                    -horizontalOffset,
+                    verticalOffset,
+                    depth));
+            Vector3 gpuPosition = cameraTransform.TransformPoint(
+                new Vector3(
+                    horizontalOffset,
+                    verticalOffset,
+                    depth));
+            shuriken.transform.position = shurikenPosition;
+            gpuParticles.transform.position = gpuPosition;
+            shuriken.transform.localScale =
+                Vector3.one * screenSizeScale;
+            gpuParticles.transform.localScale =
+                Vector3.one * screenSizeScale;
+            shurikenBasePositionWS = shurikenPosition;
+            gpuBasePositionWS = gpuPosition;
+        }
+
         void ConfigureShapeProfile()
         {
             ConfigureEmissionPointBase(2f, true);
@@ -4738,6 +5021,8 @@ namespace GPUParticles
             gpuParticles.materialAlphaCutoff = 0.5f;
             gpuParticles.materialSoftParticles = false;
             gpuParticles.materialSoftParticleFadeParams = Vector2.zero;
+            gpuParticles.materialCameraFading = false;
+            gpuParticles.materialCameraFadeParams = Vector2.zero;
         }
 
         bool IsMaterialColorProfile()
@@ -4762,6 +5047,12 @@ namespace GPUParticles
         {
             return validationProfile ==
                 ParticleABValidationProfile.MaterialSoftParticlesPoint;
+        }
+
+        bool IsMaterialCameraFadingProfile()
+        {
+            return validationProfile ==
+                ParticleABValidationProfile.MaterialCameraFadingPoint;
         }
 
         bool IsTextureSheetProfile()
@@ -6117,6 +6408,27 @@ namespace GPUParticles
             currentShurikenMaterialSoftParticleColor = Color.clear;
             currentShurikenMaterialSoftParticleState = -1;
             activeMaterialSoftParticleState = 0;
+            materialCameraFadeComparableSamples = 0;
+            materialCameraFadeClassificationFailures = 0;
+            shurikenMaterialCameraFadeStateMask = 0;
+            gpuMaterialCameraFadeStateMask = 0;
+            maximumMaterialCameraFadeColorError = 0f;
+            Array.Clear(
+                maximumMaterialCameraFadeStateErrors,
+                0,
+                maximumMaterialCameraFadeStateErrors.Length);
+            Array.Clear(
+                shurikenMaterialCameraFadeColorSums,
+                0,
+                shurikenMaterialCameraFadeColorSums.Length);
+            Array.Clear(
+                shurikenMaterialCameraFadeSamples,
+                0,
+                shurikenMaterialCameraFadeSamples.Length);
+            hasCurrentShurikenMaterialCameraFadeColor = false;
+            currentShurikenMaterialCameraFadeColor = Color.clear;
+            currentShurikenMaterialCameraFadeState = -1;
+            activeMaterialCameraFadeState = 0;
             maximumScreenSizePixelError = 0f;
             screenSizeClassificationFailures = 0;
             currentShurikenScreenSizePixels = -1;
@@ -6361,6 +6673,19 @@ namespace GPUParticles
                     colorValid,
                     materialColor,
                     activeMaterialSoftParticleState);
+            }
+            if (IsMaterialCameraFadingProfile() &&
+                mode != ParticleABDisplayMode.Both)
+            {
+                bool colorValid = TryMeasureMaterialColor(
+                    cameraImage,
+                    mode,
+                    out Color materialColor);
+                ObserveMaterialCameraFadeColor(
+                    mode,
+                    colorValid,
+                    materialColor,
+                    activeMaterialCameraFadeState);
             }
             int screenSizePixels = IsRendererScreenSizeClampProfile() &&
                                    mode != ParticleABDisplayMode.Both
@@ -7112,6 +7437,79 @@ namespace GPUParticles
             hasCurrentShurikenMaterialSoftParticleColor = false;
             currentShurikenMaterialSoftParticleColor = Color.clear;
             currentShurikenMaterialSoftParticleState = -1;
+        }
+
+        void ObserveMaterialCameraFadeColor(
+            ParticleABDisplayMode mode,
+            bool valid,
+            Color color,
+            int state)
+        {
+            if (!IsMaterialCameraFadingProfile() ||
+                mode == ParticleABDisplayMode.Both)
+            {
+                return;
+            }
+
+            state = Mathf.Clamp(
+                state, 0, MaterialCameraFadeStateCount - 1);
+            int stateBit = 1 << state;
+            if (mode == ParticleABDisplayMode.ShurikenOnly)
+            {
+                hasCurrentShurikenMaterialCameraFadeColor = valid;
+                currentShurikenMaterialCameraFadeColor = color;
+                currentShurikenMaterialCameraFadeState = state;
+                if (!valid)
+                {
+                    materialCameraFadeClassificationFailures++;
+                    return;
+                }
+
+                shurikenMaterialCameraFadeStateMask |= stateBit;
+                shurikenMaterialCameraFadeColorSums[state] +=
+                    new Vector3(color.r, color.g, color.b);
+                shurikenMaterialCameraFadeSamples[state]++;
+                return;
+            }
+
+            if (!valid)
+            {
+                materialCameraFadeClassificationFailures++;
+            }
+            else
+            {
+                gpuMaterialCameraFadeStateMask |= stateBit;
+            }
+
+            if (valid &&
+                hasCurrentShurikenMaterialCameraFadeColor &&
+                currentShurikenMaterialCameraFadeState == state)
+            {
+                materialCameraFadeComparableSamples++;
+                float error = Mathf.Max(
+                    Mathf.Abs(
+                        currentShurikenMaterialCameraFadeColor.r -
+                        color.r),
+                    Mathf.Max(
+                        Mathf.Abs(
+                            currentShurikenMaterialCameraFadeColor.g -
+                            color.g),
+                        Mathf.Abs(
+                            currentShurikenMaterialCameraFadeColor.b -
+                            color.b)));
+                maximumMaterialCameraFadeColorError = Mathf.Max(
+                    maximumMaterialCameraFadeColorError, error);
+                maximumMaterialCameraFadeStateErrors[state] = Mathf.Max(
+                    maximumMaterialCameraFadeStateErrors[state], error);
+            }
+            else
+            {
+                materialCameraFadeClassificationFailures++;
+            }
+
+            hasCurrentShurikenMaterialCameraFadeColor = false;
+            currentShurikenMaterialCameraFadeColor = Color.clear;
+            currentShurikenMaterialCameraFadeState = -1;
         }
 
         void ObserveTextureSheetFrames(int shurikenFrame, int gpuFrame)
@@ -9951,6 +10349,21 @@ namespace GPUParticles
                         MaterialSoftParticleSemanticsPass();
                     break;
 
+                case ParticleABValidationProfile.MaterialCameraFadingPoint:
+                    profileSpecificPassed =
+                        maximumMeanSpeedError <= 0.01f &&
+                        maximumMeanPositionError <= 0.04f &&
+                        maximumShurikenParticleCount == 1 &&
+                        maximumGPUParticleCount == 1 &&
+                        materialCameraFadeComparableSamples >= 40 &&
+                        materialCameraFadeClassificationFailures == 0 &&
+                        maximumMaterialCameraFadeColorError <= 0.08f &&
+                        shurikenMaterialCameraFadeStateMask == 0x0F &&
+                        gpuMaterialCameraFadeStateMask == 0x0F &&
+                        MaterialCameraFadeStatesHaveSamples(5) &&
+                        MaterialCameraFadeSemanticsPass();
+                    break;
+
                 case ParticleABValidationProfile.TextureSheetBlendLifetimePoint:
                 case ParticleABValidationProfile.TextureSheetBlendSpeedPoint:
                 case ParticleABValidationProfile.TextureSheetBlendFPSPoint:
@@ -10323,6 +10736,20 @@ namespace GPUParticles
                 $"{FormatMaterialSoftParticleStateErrors()}; " +
                 $"shurikenMaterialSoftParticleStateMeans=" +
                 $"{FormatMaterialSoftParticleStateMeans()}; " +
+                $"materialCameraFadeComparableSamples=" +
+                $"{materialCameraFadeComparableSamples}; " +
+                $"materialCameraFadeClassificationFailures=" +
+                $"{materialCameraFadeClassificationFailures}; " +
+                $"maxMaterialCameraFadeColorError=" +
+                $"{maximumMaterialCameraFadeColorError:R}; " +
+                $"shurikenMaterialCameraFadeStateMask=" +
+                $"0x{shurikenMaterialCameraFadeStateMask:X2}; " +
+                $"gpuMaterialCameraFadeStateMask=" +
+                $"0x{gpuMaterialCameraFadeStateMask:X2}; " +
+                $"materialCameraFadeStateErrors=" +
+                $"{FormatMaterialCameraFadeStateErrors()}; " +
+                $"shurikenMaterialCameraFadeStateMeans=" +
+                $"{FormatMaterialCameraFadeStateMeans()}; " +
                 $"maxScreenSizePixelError={maximumScreenSizePixelError:R}; " +
                 $"screenSizeClassificationFailures=" +
                 $"{screenSizeClassificationFailures}; " +
@@ -10711,6 +11138,77 @@ namespace GPUParticles
                 }
 
                 Vector3 mean = MaterialSoftParticleMeanColor(i);
+                text.Append('(')
+                    .Append(mean.x.ToString("R", CultureInfo.InvariantCulture))
+                    .Append(',')
+                    .Append(mean.y.ToString("R", CultureInfo.InvariantCulture))
+                    .Append(',')
+                    .Append(mean.z.ToString("R", CultureInfo.InvariantCulture))
+                    .Append(')');
+            }
+            return text.Append(']').ToString();
+        }
+
+        bool MaterialCameraFadeStatesHaveSamples(int minimumSamples)
+        {
+            for (int i = 0; i < MaterialCameraFadeStateCount; i++)
+            {
+                if (shurikenMaterialCameraFadeSamples[i] < minimumSamples)
+                {
+                    return false;
+                }
+            }
+            return true;
+        }
+
+        bool MaterialCameraFadeSemanticsPass()
+        {
+            if (!MaterialCameraFadeStatesHaveSamples(1)) return false;
+
+            float fullRed = MaterialCameraFadeMeanColor(0).x;
+            float nearRed = MaterialCameraFadeMeanColor(1).x;
+            float middleRed = MaterialCameraFadeMeanColor(2).x;
+            float farRed = MaterialCameraFadeMeanColor(3).x;
+            return fullRed - nearRed >= 0.2f &&
+                   middleRed - nearRed >= 0.1f &&
+                   fullRed - middleRed >= 0.08f &&
+                   Mathf.Abs(fullRed - farRed) <= 0.04f;
+        }
+
+        Vector3 MaterialCameraFadeMeanColor(int state)
+        {
+            return shurikenMaterialCameraFadeSamples[state] > 0
+                ? shurikenMaterialCameraFadeColorSums[state] /
+                  shurikenMaterialCameraFadeSamples[state]
+                : Vector3.zero;
+        }
+
+        string FormatMaterialCameraFadeStateErrors()
+        {
+            var text = new StringBuilder("[");
+            for (int i = 0; i < MaterialCameraFadeStateCount; i++)
+            {
+                if (i > 0) text.Append(',');
+                text.Append(
+                    maximumMaterialCameraFadeStateErrors[i].ToString(
+                        "R", CultureInfo.InvariantCulture));
+            }
+            return text.Append(']').ToString();
+        }
+
+        string FormatMaterialCameraFadeStateMeans()
+        {
+            var text = new StringBuilder("[");
+            for (int i = 0; i < MaterialCameraFadeStateCount; i++)
+            {
+                if (i > 0) text.Append(',');
+                if (shurikenMaterialCameraFadeSamples[i] <= 0)
+                {
+                    text.Append("[]");
+                    continue;
+                }
+
+                Vector3 mean = MaterialCameraFadeMeanColor(i);
                 text.Append('(')
                     .Append(mean.x.ToString("R", CultureInfo.InvariantCulture))
                     .Append(',')

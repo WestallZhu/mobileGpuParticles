@@ -519,6 +519,10 @@ namespace GPUParticles
             gpu.materialSoftParticles = UsesSoftParticles(material);
             gpu.materialSoftParticleFadeParams =
                 GetMaterialSoftParticleFadeParams(material);
+            gpu.materialCameraFading = UsesCameraFading(material);
+            gpu.materialCameraFadeParams = gpu.materialCameraFading
+                ? GetMaterialCameraFadeParams(material)
+                : Vector2.zero;
             gpu.textureSheetFrameBlending = UsesFlipbookBlending(material);
         }
 
@@ -670,6 +674,27 @@ namespace GPUParticles
 
             Vector4 parameters = material.GetVector(
                 "_SoftParticleFadeParams");
+            return new Vector2(parameters.x, parameters.y);
+        }
+
+        internal static bool UsesCameraFading(Material material)
+        {
+            return material != null &&
+                material.HasProperty("_CameraFadingEnabled") &&
+                material.GetFloat("_CameraFadingEnabled") > 0.5f &&
+                material.IsKeywordEnabled("_FADING_ON");
+        }
+
+        internal static Vector2 GetMaterialCameraFadeParams(
+            Material material)
+        {
+            if (material == null ||
+                !material.HasProperty("_CameraFadeParams"))
+            {
+                return Vector2.zero;
+            }
+
+            Vector4 parameters = material.GetVector("_CameraFadeParams");
             return new Vector2(parameters.x, parameters.y);
         }
 

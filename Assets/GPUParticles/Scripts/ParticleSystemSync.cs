@@ -27,6 +27,8 @@ namespace GPUParticles
         private float cachedMaterialAlphaCutoff;
         private bool cachedMaterialSoftParticles;
         private Vector2 cachedMaterialSoftParticleFadeParams;
+        private bool cachedMaterialCameraFading;
+        private Vector2 cachedMaterialCameraFadeParams;
         private bool cachedTextureSheetFrameBlending;
 
         // 缓存上次的值以检测变化
@@ -1928,6 +1930,28 @@ namespace GPUParticles
                     softParticleFadeParams;
                 cachedMaterialSoftParticleFadeParams =
                     softParticleFadeParams;
+            }
+
+            bool cameraFading =
+                ShurikenConverter.UsesCameraFading(material);
+            if (force ||
+                cameraFading != cachedMaterialCameraFading)
+            {
+                targetGPUParticleSystem.materialCameraFading =
+                    cameraFading;
+                cachedMaterialCameraFading = cameraFading;
+            }
+
+            Vector2 cameraFadeParams = cameraFading
+                ? ShurikenConverter.GetMaterialCameraFadeParams(material)
+                : Vector2.zero;
+            if (force ||
+                (cameraFadeParams - cachedMaterialCameraFadeParams)
+                    .sqrMagnitude > 0.00000001f)
+            {
+                targetGPUParticleSystem.materialCameraFadeParams =
+                    cameraFadeParams;
+                cachedMaterialCameraFadeParams = cameraFadeParams;
             }
 
             bool frameBlending =

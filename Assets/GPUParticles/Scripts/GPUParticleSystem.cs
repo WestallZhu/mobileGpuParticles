@@ -273,6 +273,8 @@ namespace GPUParticles
         [Range(0f, 1f)] public float materialAlphaCutoff = 0.5f;
         public bool materialSoftParticles;
         public Vector2 materialSoftParticleFadeParams;
+        public bool materialCameraFading;
+        public Vector2 materialCameraFadeParams;
         [Range(0,1)] public float minAlphaCull = 0.001f;
         public bool renderEnabled = true;
 
@@ -787,6 +789,10 @@ namespace GPUParticles
             Shader.PropertyToID("_SoftParticlesEnabled");
         static readonly int _MaterialSoftParticleFadeParams =
             Shader.PropertyToID("_SoftParticleFadeParams");
+        static readonly int _MaterialCameraFading =
+            Shader.PropertyToID("_CameraFadingEnabled");
+        static readonly int _MaterialCameraFadeParams =
+            Shader.PropertyToID("_CameraFadeParams");
         static readonly int _TextureSheetFrameLUTInvWidth =
             Shader.PropertyToID("_TextureSheetFrameLUTInvWidth");
         static readonly int _TextureSheetStartLUTInvWidth =
@@ -3515,6 +3521,16 @@ namespace GPUParticles
                 new Vector4(
                     materialSoftParticleFadeParams.x,
                     materialSoftParticleFadeParams.y,
+                    0f,
+                    0f));
+            renderMaterial.SetInt(
+                _MaterialCameraFading,
+                materialCameraFading ? 1 : 0);
+            renderMaterial.SetVector(
+                _MaterialCameraFadeParams,
+                new Vector4(
+                    materialCameraFadeParams.x,
+                    materialCameraFadeParams.y,
                     0f,
                     0f));
 

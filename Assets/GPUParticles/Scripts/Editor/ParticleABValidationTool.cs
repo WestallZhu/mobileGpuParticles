@@ -720,6 +720,13 @@ namespace GPUParticles.Editor
                 ParticleABValidationProfile.MaterialSoftParticlesPoint);
         }
 
+        [MenuItem("Tools/GPU Particles/Run Material Camera Fading A-B RT Capture")]
+        public static void RunMaterialCameraFadingCaptureMenu()
+        {
+            StartTextureSheetCaptureMenu(
+                ParticleABValidationProfile.MaterialCameraFadingPoint);
+        }
+
         [MenuItem("Tools/GPU Particles/Run Shape Sphere A-B RT Capture")]
         public static void RunShapeSphereCaptureMenu()
         {
@@ -1464,6 +1471,14 @@ namespace GPUParticles.Editor
                 ParticleABValidationProfile.MaterialSoftParticlesPoint);
         }
 
+        public static void RunBatchMaterialCameraFadingCapture()
+        {
+            ValidateCommonFeatureMapping();
+            StartCapture(
+                true,
+                ParticleABValidationProfile.MaterialCameraFadingPoint);
+        }
+
         public static void RunBatchRotationOverLifetimeCapture()
         {
             ValidateCommonFeatureMapping();
@@ -1689,6 +1704,8 @@ namespace GPUParticles.Editor
                     return 2.4f;
                 case ParticleABValidationProfile.MaterialSoftParticlesPoint:
                     return 2.4f;
+                case ParticleABValidationProfile.MaterialCameraFadingPoint:
+                    return 2.4f;
                 case ParticleABValidationProfile.RotationOverLifetimeCurvePoint: return 2.5f;
                 case ParticleABValidationProfile.RotationBySpeedCurvePoint: return 2.5f;
                 case ParticleABValidationProfile.ColorSizeOverLifetimeRandomizedPoint: return 2f;
@@ -1794,7 +1811,8 @@ namespace GPUParticles.Editor
                     profile == ParticleABValidationProfile.MaterialColorModesPoint ||
                     profile == ParticleABValidationProfile.MaterialBlendModesPoint ||
                     profile == ParticleABValidationProfile.MaterialAlphaClipPoint ||
-                    profile == ParticleABValidationProfile.MaterialSoftParticlesPoint
+                    profile == ParticleABValidationProfile.MaterialSoftParticlesPoint ||
+                    profile == ParticleABValidationProfile.MaterialCameraFadingPoint
                 ? 20f
                 : 5f;
         }
@@ -1951,6 +1969,8 @@ namespace GPUParticles.Editor
                     return "TestResults/ParticleMaterialAlphaClip";
                 case ParticleABValidationProfile.MaterialSoftParticlesPoint:
                     return "TestResults/ParticleMaterialSoftParticles";
+                case ParticleABValidationProfile.MaterialCameraFadingPoint:
+                    return "TestResults/ParticleMaterialCameraFading";
                 case ParticleABValidationProfile.RotationOverLifetimeCurvePoint:
                     return "TestResults/ParticleRotationOverLifetime";
                 case ParticleABValidationProfile.RotationBySpeedCurvePoint:
@@ -3492,6 +3512,7 @@ namespace GPUParticles.Editor
                 ValidateMaterialBlendMapping();
                 ValidateMaterialAlphaClipMapping();
                 ValidateMaterialSoftParticleMapping();
+                ValidateMaterialCameraFadingMapping();
                 Debug.Log("PARTICLE_COMMON_FEATURE_MAPPING_RESULT:PASS");
             }
             finally
@@ -4543,6 +4564,84 @@ namespace GPUParticles.Editor
                     gpu.materialSoftParticleFadeParams.y,
                     0f,
                     "Disabled Soft Particle Inverse Fade Distance");
+            }
+            finally
+            {
+                Object.DestroyImmediate(owner);
+                Object.DestroyImmediate(material);
+            }
+        }
+
+        static void ValidateMaterialCameraFadingMapping()
+        {
+            var owner = new GameObject(
+                "ParticleMaterialCameraFadingMappingValidation");
+            owner.SetActive(false);
+            Material material = null;
+            try
+            {
+                var shuriken = owner.AddComponent<ParticleSystem>();
+                ParticleSystem.MainModule main = shuriken.main;
+                main.playOnAwake = false;
+                var renderer = owner.GetComponent<ParticleSystemRenderer>();
+
+                Shader shader = Shader.Find(
+                    "Universal Render Pipeline/Particles/Unlit");
+                Require(shader != null,
+                    "URP particle shader was not found for camera fade mapping.");
+                material = new Material(shader);
+                material.SetFloat(
+                    "_Surface",
+                    (float)BaseShaderGUI.SurfaceType.Transparent);
+                material.SetFloat(
+                    "_Blend", (float)BaseShaderGUI.BlendMode.Alpha);
+                BaseShaderGUI.SetupMaterialBlendMode(material);
+                material.SetFloat("_CameraFadingEnabled", 1f);
+                material.SetFloat("_CameraNearFadeDistance", 1f);
+                material.SetFloat("_CameraFarFadeDistance", 3f);
+                material.SetVector(
+                    "_CameraFadeParams",
+                    new Vector4(1f, 0.5f, 0f, 0f));
+                material.EnableKeyword("_FADING_ON");
+                renderer.sharedMaterial = material;
+
+                ShurikenConverter.Convert(owner);
+                var gpu = owner.GetComponent<GPUParticleSystem>();
+                Require(gpu != null,
+                    "Camera fade conversion did not create a GPU system.");
+                Require(gpu.materialCameraFading,
+                    "Enabled Camera Fading was not mapped.");
+                RequireApproximately(
+                    gpu.materialCameraFadeParams.x,
+                    1f,
+                    "Camera Fade Near Distance");
+                RequireApproximately(
+                    gpu.materialCameraFadeParams.y,
+                    0.5f,
+                    "Camera Fade Inverse Distance");
+
+                material.SetFloat("_CameraFadingEnabled", 0f);
+                material.SetVector(
+                    "_CameraFadeParams",
+                    new Vector4(
+                        0f,
+                        float.PositiveInfinity,
+                        0f,
+                        0f));
+                material.SetFloat("_SoftParticlesEnabled", 1f);
+                material.EnableKeyword("_SOFTPARTICLES_ON");
+                material.EnableKeyword("_FADING_ON");
+                ShurikenConverter.ApplyMaterialParameters(renderer, gpu);
+                Require(!gpu.materialCameraFading,
+                    "Soft Particles shared fading keyword was mapped as Camera Fading.");
+                RequireApproximately(
+                    gpu.materialCameraFadeParams.x,
+                    0f,
+                    "Disabled Camera Fade Near Distance");
+                RequireApproximately(
+                    gpu.materialCameraFadeParams.y,
+                    0f,
+                    "Disabled Camera Fade Inverse Distance");
             }
             finally
             {

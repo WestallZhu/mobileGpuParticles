@@ -16,6 +16,8 @@ Shader "GPUParticles/UnlitBillboardURP"
         _Cutoff("Alpha Cutoff", Range(0,1)) = 0.5
         [Toggle] _SoftParticlesEnabled("Soft Particles", Float) = 0
         [HideInInspector] _SoftParticleFadeParams("Soft Particle Fade Params", Vector) = (0,0,0,0)
+        [Toggle] _CameraFadingEnabled("Camera Fading", Float) = 0
+        [HideInInspector] _CameraFadeParams("Camera Fade Params", Vector) = (0,0,0,0)
         _MinAlphaCull("MinAlphaCull", Range(0,1)) = 0.001
     }
     SubShader
@@ -136,6 +138,9 @@ Shader "GPUParticles/UnlitBillboardURP"
                 int   _SoftParticlesEnabled;
                 float2 _SoftParticleFadeParams;
                 float _padMaterialSoftParticles;
+                int   _CameraFadingEnabled;
+                float2 _CameraFadeParams;
+                float _padMaterialCameraFading;
 
                 // emitter transforms (for LS->WS)
                 float4x4 _EmitterLocalToWorld;
@@ -1171,6 +1176,26 @@ Shader "GPUParticles/UnlitBillboardURP"
                 return color;
             }
 
+            float CameraFade(float4 projectedPosition)
+            {
+                float particleDepth = LinearEyeDepth(
+                    projectedPosition.z / projectedPosition.w,
+                    _ZBufferParams);
+                return saturate(
+                    (particleDepth - _CameraFadeParams.x) *
+                    _CameraFadeParams.y);
+            }
+
+            float4 ApplyCameraFade(float4 color, float fade)
+            {
+                if (_AlphaPremultiply != 0)
+                {
+                    return color * fade;
+                }
+                color.a *= fade;
+                return color;
+            }
+
             half4 Frag(VOut i) : SV_Target
             {
                 float4 baseCol = SAMPLE_TEXTURE2D(_BaseMap, sampler_BaseMap, i.uv);
@@ -1199,6 +1224,12 @@ Shader "GPUParticles/UnlitBillboardURP"
                     result = ApplySoftParticleFade(
                         result,
                         SoftParticleFade(i.projectedPosition));
+                }
+                if (_CameraFadingEnabled != 0)
+                {
+                    result = ApplyCameraFade(
+                        result,
+                        CameraFade(i.projectedPosition));
                 }
                 return result;
             }
