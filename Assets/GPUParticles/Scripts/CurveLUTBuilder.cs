@@ -13,8 +13,34 @@ namespace GPUParticles
             bool saveAsAsset = false,
             string assetName = "SizeOverLife_LUT")
         {
+            return BuildSampled(
+                curve, resolution, saveAsAsset, assetName, clampNonNegative: true);
+        }
+
+        public static Texture2D BuildSigned(
+            ParticleSystem.MinMaxCurve curve,
+            int resolution = 256,
+            bool saveAsAsset = false,
+            string assetName = "RotationBySpeed_LUT")
+        {
+            return BuildSampled(
+                curve, resolution, saveAsAsset, assetName, clampNonNegative: false);
+        }
+
+        static Texture2D BuildSampled(
+            ParticleSystem.MinMaxCurve curve,
+            int resolution,
+            bool saveAsAsset,
+            string assetName,
+            bool clampNonNegative)
+        {
             resolution = Mathf.Max(2, resolution);
-            if (string.IsNullOrEmpty(assetName)) assetName = "SizeOverLife_LUT";
+            if (string.IsNullOrEmpty(assetName))
+            {
+                assetName = clampNonNegative
+                    ? "SizeOverLife_LUT"
+                    : "RotationBySpeed_LUT";
+            }
             var tex = new Texture2D(resolution, 2, TextureFormat.RHalf, false, true)
             {
                 name = assetName,
@@ -33,9 +59,15 @@ namespace GPUParticles
             for (int i = 0; i < resolution; i++)
             {
                 float t = i / (float)(resolution - 1);
-                pixels[i] = new Color(Mathf.Max(0f, curve.Evaluate(t, 0f)), 0f, 0f, 1f);
-                pixels[resolution + i] = new Color(
-                    Mathf.Max(0f, curve.Evaluate(t, 1f)), 0f, 0f, 1f);
+                float minimum = curve.Evaluate(t, 0f);
+                float maximum = curve.Evaluate(t, 1f);
+                if (clampNonNegative)
+                {
+                    minimum = Mathf.Max(0f, minimum);
+                    maximum = Mathf.Max(0f, maximum);
+                }
+                pixels[i] = new Color(minimum, 0f, 0f, 1f);
+                pixels[resolution + i] = new Color(maximum, 0f, 0f, 1f);
             }
             tex.SetPixels(pixels);
             tex.Apply(false, false);

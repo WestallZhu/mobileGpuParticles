@@ -50,6 +50,7 @@ namespace GPUParticles
         private float lastColorBySpeedLUTUpdate = 0f;
         private float lastSizeBySpeedLUTUpdate = 0f;
         private float lastRotationLUTUpdate = 0f;
+        private float lastRotationBySpeedLUTUpdate = 0f;
         private float lastEmissionTimelineUpdate = 0f;
         private Texture2D generatedForceLUT;
         private Texture2D generatedVelocityLUT;
@@ -58,6 +59,7 @@ namespace GPUParticles
         private Texture2D generatedColorBySpeedLUT;
         private Texture2D generatedSizeBySpeedLUT;
         private Texture2D generatedRotationLUT;
+        private Texture2D generatedRotationBySpeedLUT;
         private const float LUT_UPDATE_INTERVAL = 0.1f; // 每0.1秒更新一次LUT
 
         private bool isInitialized = false;
@@ -105,6 +107,7 @@ namespace GPUParticles
             SyncSizeOverLifetime(true);
             SyncColorBySpeed(true);
             SyncSizeBySpeed(true);
+            SyncRotationBySpeed(true);
             isInitialized = true;
         }
 
@@ -170,6 +173,7 @@ namespace GPUParticles
             SyncSizeOverLifetime();
             SyncColorBySpeed();
             SyncSizeBySpeed();
+            SyncRotationBySpeed();
         }
 
         void SyncMainParameters(bool force = false)
@@ -506,6 +510,7 @@ namespace GPUParticles
             DestroyGeneratedColorBySpeedLUT();
             DestroyGeneratedSizeBySpeedLUT();
             DestroyGeneratedRotationLUT();
+            DestroyGeneratedRotationBySpeedLUT();
         }
 
         void DestroyGeneratedForceLUT()
@@ -569,6 +574,15 @@ namespace GPUParticles
             if (Application.isPlaying) Destroy(generatedRotationLUT);
             else DestroyImmediate(generatedRotationLUT);
             generatedRotationLUT = null;
+        }
+
+        void DestroyGeneratedRotationBySpeedLUT()
+        {
+            if (generatedRotationBySpeedLUT == null) return;
+
+            if (Application.isPlaying) Destroy(generatedRotationBySpeedLUT);
+            else DestroyImmediate(generatedRotationBySpeedLUT);
+            generatedRotationBySpeedLUT = null;
         }
 
         void SyncRendererParameters(bool force = false)
@@ -820,6 +834,34 @@ namespace GPUParticles
             }
 
             lastSizeBySpeedLUTUpdate = Time.realtimeSinceStartup;
+        }
+
+        void SyncRotationBySpeed(bool force = false)
+        {
+            var rotation = sourceParticleSystem.rotationBySpeed;
+            bool timeToUpdate =
+                Time.realtimeSinceStartup - lastRotationBySpeedLUTUpdate >
+                LUT_UPDATE_INTERVAL;
+            if (!force && !timeToUpdate) return;
+
+            targetGPUParticleSystem.rotationBySpeedEnabled = rotation.enabled;
+            targetGPUParticleSystem.SetRotationBySpeedRange(rotation.range);
+            DestroyGeneratedRotationBySpeedLUT();
+            if (rotation.enabled)
+            {
+                generatedRotationBySpeedLUT = CurveLUTBuilder.BuildSigned(
+                    rotation.z,
+                    assetName: "RotationBySpeed_LUT");
+                targetGPUParticleSystem.rotationBySpeedLUT =
+                    generatedRotationBySpeedLUT;
+            }
+            else
+            {
+                targetGPUParticleSystem.rotationBySpeedLUT =
+                    CurveLUTBuilder.GetDefaultZeroLUT();
+            }
+
+            lastRotationBySpeedLUTUpdate = Time.realtimeSinceStartup;
         }
     }
 }

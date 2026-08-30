@@ -24,6 +24,7 @@ Shader "GPUParticles/UnlitBillboardURP"
             TEXTURE2D(_CurPosLife); SAMPLER(sampler_CurPosLife);
             TEXTURE2D(_CurVelSize); SAMPLER(sampler_CurVelSize);
             TEXTURE2D(_CurColor);   SAMPLER(sampler_CurColor);
+            TEXTURE2D(_CurRotationPhase); SAMPLER(sampler_CurRotationPhase);
             TEXTURE2D(_BaseMap);    SAMPLER(sampler_BaseMap);
             TEXTURE2D(_RotationOverLifetimeIntegralLUT);
             SAMPLER(sampler_RotationOverLifetimeIntegralLUT);
@@ -228,6 +229,8 @@ Shader "GPUParticles/UnlitBillboardURP"
                 float4 posLife = SAMPLE_TEXTURE2D_LOD(_CurPosLife, sampler_CurPosLife, tuv, 0);
                 float4 velSize = SAMPLE_TEXTURE2D_LOD(_CurVelSize, sampler_CurVelSize, tuv, 0);
                 float4 pcol    = SAMPLE_TEXTURE2D_LOD(_CurColor,   sampler_CurColor,   tuv, 0);
+                float rotationBySpeedPhase = SAMPLE_TEXTURE2D_LOD(
+                    _CurRotationPhase, sampler_CurRotationPhase, tuv, 0).r;
 
                 float3 posWS, velWS; ToWS(posLife.xyz, velSize.xyz, posWS, velWS);
 
@@ -317,6 +320,7 @@ Shader "GPUParticles/UnlitBillboardURP"
                         angle = particleStartRotation +
                                 particleRotationOverLifetime * age;
                     }
+                    angle += rotationBySpeedPhase;
                     float s = sin(angle);
                     float c = cos(angle);
                     local = float2(local.x * c - local.y * s, local.x * s + local.y * c);

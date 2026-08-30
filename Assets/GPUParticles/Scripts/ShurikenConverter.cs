@@ -38,6 +38,7 @@ namespace GPUParticles
             ApplyEmission(ps, gpu, owner);
             ApplyColorAndSizeOverLifetime(ps, gpu, owner);
             ApplyColorAndSizeBySpeed(ps, gpu, owner);
+            ApplyRotationBySpeed(ps, gpu, owner);
 
             // ---- Shape TRS ----
             gpu.shapeLocalPosition = shape.position;
@@ -272,6 +273,7 @@ namespace GPUParticles
             ApplyEmission(particleSystem, gpu, gpuChild);
             ApplyColorAndSizeOverLifetime(particleSystem, gpu, gpuChild);
             ApplyColorAndSizeBySpeed(particleSystem, gpu, gpuChild);
+            ApplyRotationBySpeed(particleSystem, gpu, gpuChild);
 
             // ---- Shape TRS ----
             gpu.shapeLocalPosition = shape.position;
@@ -656,6 +658,30 @@ namespace GPUParticles
                     saveAsAsset: true,
                     assetName: "SizeBySpeed_LUT")
                 : CurveLUTBuilder.GetDefaultUnitLUT();
+        }
+
+        static void ApplyRotationBySpeed(
+            ParticleSystem particleSystem,
+            GPUParticleSystem gpu,
+            Object context)
+        {
+            var rotation = particleSystem.rotationBySpeed;
+            gpu.rotationBySpeedEnabled = rotation.enabled;
+            gpu.SetRotationBySpeedRange(rotation.range);
+
+            if (rotation.enabled && rotation.separateAxes)
+            {
+                Debug.LogWarning(
+                    "Rotation by Speed X/Y axes are ignored for GPU billboards; mapping Z roll.",
+                    context);
+            }
+
+            gpu.rotationBySpeedLUT = rotation.enabled
+                ? CurveLUTBuilder.BuildSigned(
+                    rotation.z,
+                    saveAsAsset: true,
+                    assetName: "RotationBySpeed_LUT")
+                : CurveLUTBuilder.GetDefaultZeroLUT();
         }
 
         static void ApplyVelocityOverLifetime(

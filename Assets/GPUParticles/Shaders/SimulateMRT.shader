@@ -31,10 +31,12 @@ Shader "Hidden/GPUParticles/SimulateMRT"
             TEXTURE2D(_CurPosLife);      SAMPLER(sampler_CurPosLife);
             TEXTURE2D(_CurVelSize);      SAMPLER(sampler_CurVelSize);
             TEXTURE2D(_CurColor);        SAMPLER(sampler_CurColor);
+            TEXTURE2D(_CurRotationPhase); SAMPLER(sampler_CurRotationPhase);
             TEXTURE2D(_GradLUT);         SAMPLER(sampler_GradLUT);
             TEXTURE2D(_SizeLUT);         SAMPLER(sampler_SizeLUT);
             TEXTURE2D(_ColorBySpeedLUT); SAMPLER(sampler_ColorBySpeedLUT);
             TEXTURE2D(_SizeBySpeedLUT);  SAMPLER(sampler_SizeBySpeedLUT);
+            TEXTURE2D(_RotationBySpeedLUT); SAMPLER(sampler_RotationBySpeedLUT);
             TEXTURE2D(_ForceOverLifetimeLUT); SAMPLER(sampler_ForceOverLifetimeLUT);
             TEXTURE2D(_VelocityOverLifetimeLUT); SAMPLER(sampler_VelocityOverLifetimeLUT);
 
@@ -82,6 +84,9 @@ Shader "Hidden/GPUParticles/SimulateMRT"
                 int     _SizeBySpeedEnabled;
                 float2  _ColorBySpeedRange;
                 float2  _SizeBySpeedRange;
+                int     _RotationBySpeedEnabled;
+                float2  _RotationBySpeedRange;
+                float   _RotationBySpeedLUTInvWidth;
                 float   _GradLUTInvWidth;
                 float   _SizeLUTInvWidth;
                 float   _ForceOverLifetimeLUTInvWidth;
@@ -175,6 +180,7 @@ Shader "Hidden/GPUParticles/SimulateMRT"
                 float4 PosLife : SV_Target0;
                 float4 VelSize : SV_Target1;
                 float4 Color   : SV_Target2;
+                float RotationPhase : SV_Target3;
             };
 
             bool InEmit(uint id, uint start, uint count, uint cap)
@@ -526,6 +532,19 @@ Shader "Hidden/GPUParticles/SimulateMRT"
                 return lerp(minimum, maximum, Hash01(id ^ 0xD192ED03u));
             }
 
+            float RotationBySpeed(uint id, float speedPosition)
+            {
+                float lutPosition = LUTPosition(
+                    speedPosition, _RotationBySpeedLUTInvWidth);
+                float minimum = SAMPLE_TEXTURE2D_LOD(
+                    _RotationBySpeedLUT, sampler_RotationBySpeedLUT,
+                    float2(lutPosition, 0.25), 0).r;
+                float maximum = SAMPLE_TEXTURE2D_LOD(
+                    _RotationBySpeedLUT, sampler_RotationBySpeedLUT,
+                    float2(lutPosition, 0.75), 0).r;
+                return lerp(minimum, maximum, Hash01(id ^ 0xA24BAED4u));
+            }
+
             FragOut Frag(Varyings i)
             {
                 FragOut o;
@@ -542,6 +561,8 @@ Shader "Hidden/GPUParticles/SimulateMRT"
                 float4 curPosLife = SAMPLE_TEXTURE2D_LOD(_CurPosLife, sampler_CurPosLife, uv, 0);
                 float4 curVelSize = SAMPLE_TEXTURE2D_LOD(_CurVelSize, sampler_CurVelSize, uv, 0);
                 float4 curColor   = SAMPLE_TEXTURE2D_LOD(_CurColor,   sampler_CurColor,   uv, 0);
+                float curRotationPhase = SAMPLE_TEXTURE2D_LOD(
+                    _CurRotationPhase, sampler_CurRotationPhase, uv, 0).r;
 
                 // Default: pass through
                 float3 pos = curPosLife.xyz;
@@ -549,6 +570,7 @@ Shader "Hidden/GPUParticles/SimulateMRT"
                 float3 vel = curVelSize.xyz;
                 float  size= curVelSize.w;
                 float4 col = curColor;
+                float rotationPhase = curRotationPhase;
 
                 float particleStartLifetime = RandomRange(
                     id, 0x68E31DA4u, _RandomizeStartLifetime, _StartLifetimeMin, _StartLifetime);
@@ -569,6 +591,7 @@ Shader "Hidden/GPUParticles/SimulateMRT"
                     o.PosLife = float4(0,0,0,0);
                     o.VelSize = float4(0,0,0,0);
                     o.Color   = float4(0,0,0,0);
+                    o.RotationPhase = 0.0;
                     return o;
                 }
 
@@ -877,6 +900,7 @@ Shader "Hidden/GPUParticles/SimulateMRT"
                     pos  = ToSimSpacePos(posL);
                     vel  = ToSimSpaceVec(velL);
                     life = particleStartLifetime;
+                    rotationPhase = 0.0;
                     
                     float tSpawn = 0.0;
                     float4 lutColSpawn = ColorOverLifetime(id, tSpawn);
@@ -926,6 +950,7 @@ Shader "Hidden/GPUParticles/SimulateMRT"
                     life = max(0.0, life - stepDt);
                     float normalizedAgeAfterStep = saturate(
                         1.0 - (life / max(particleStartLifetime, 1e-5)));
+                    float speedBeforeStep = length(vel);
 
                     // Gravity is already in simulation space. Force over Lifetime is
                     // sampled with Shuriken's stable per-particle MinMax random values.
@@ -959,6 +984,19 @@ Shader "Hidden/GPUParticles/SimulateMRT"
                     float4 lutCol = ColorOverLifetime(id, t);
                     float lutSize = SizeOverLifetime(id, t);
                     float currentSpeed = length(vel);
+                    if (_RotationBySpeedEnabled != 0)
+                    {
+                        float rotationSpeedPositionBefore = SpeedRangePosition(
+                            speedBeforeStep, _RotationBySpeedRange);
+                        float rotationSpeedPositionAfter = SpeedRangePosition(
+                            currentSpeed, _RotationBySpeedRange);
+                        float angularVelocityBefore = RotationBySpeed(
+                            id, rotationSpeedPositionBefore);
+                        float angularVelocityAfter = RotationBySpeed(
+                            id, rotationSpeedPositionAfter);
+                        rotationPhase += (angularVelocityBefore + angularVelocityAfter) *
+                                         (0.5 * stepDt);
+                    }
                     float colorSpeedPosition = SpeedRangePosition(
                         currentSpeed, _ColorBySpeedRange);
                     float sizeSpeedPosition = SpeedRangePosition(
@@ -979,11 +1017,13 @@ Shader "Hidden/GPUParticles/SimulateMRT"
                     life = 0.0;
                     size = 0.0;
                     col.a = 0.0;
+                    rotationPhase = 0.0;
                 }
 
                 o.PosLife = float4(pos, life);
                 o.VelSize = float4(vel, size);
                 o.Color   = col;
+                o.RotationPhase = rotationPhase;
                 return o;
             }
             ENDHLSL

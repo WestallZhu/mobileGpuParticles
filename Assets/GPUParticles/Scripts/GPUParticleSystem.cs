@@ -84,6 +84,9 @@ namespace GPUParticles
         public bool sizeBySpeedEnabled;
         public Texture2D sizeBySpeedLUT;
         public Vector2 sizeBySpeedRange = new Vector2(0f, 1f);
+        public bool rotationBySpeedEnabled;
+        public Texture2D rotationBySpeedLUT;
+        public Vector2 rotationBySpeedRange = new Vector2(0f, 1f);
 
         [Header("Force Over Lifetime")]
         public bool forceOverLifetimeEnabled;
@@ -167,6 +170,7 @@ namespace GPUParticles
         RenderTexture[] posLife = new RenderTexture[2];
         RenderTexture[] velSize = new RenderTexture[2];
         RenderTexture[] colorRT = new RenderTexture[2];
+        RenderTexture[] rotationPhaseRT = new RenderTexture[2];
 
         int ping;
         int gridSize;
@@ -195,6 +199,7 @@ namespace GPUParticles
         static readonly int _CurPosLife = Shader.PropertyToID("_CurPosLife");
         static readonly int _CurVelSize = Shader.PropertyToID("_CurVelSize");
         static readonly int _CurColor   = Shader.PropertyToID("_CurColor");
+        static readonly int _CurRotationPhase = Shader.PropertyToID("_CurRotationPhase");
         static readonly int _GridSize   = Shader.PropertyToID("_GridSize");
         static readonly int _MaxParticles = Shader.PropertyToID("_MaxParticles");
         static readonly int _DeltaTime  = Shader.PropertyToID("_DeltaTime");
@@ -265,6 +270,13 @@ namespace GPUParticles
             Shader.PropertyToID("_SizeBySpeedLUTInvWidth");
         static readonly int _SizeBySpeedEnabled = Shader.PropertyToID("_SizeBySpeedEnabled");
         static readonly int _SizeBySpeedRange = Shader.PropertyToID("_SizeBySpeedRange");
+        static readonly int _RotationBySpeedLUT = Shader.PropertyToID("_RotationBySpeedLUT");
+        static readonly int _RotationBySpeedLUTInvWidth =
+            Shader.PropertyToID("_RotationBySpeedLUTInvWidth");
+        static readonly int _RotationBySpeedEnabled =
+            Shader.PropertyToID("_RotationBySpeedEnabled");
+        static readonly int _RotationBySpeedRange =
+            Shader.PropertyToID("_RotationBySpeedRange");
 
         // shape params
         static readonly int _ShapeType = Shader.PropertyToID("_ShapeType");
@@ -314,6 +326,7 @@ namespace GPUParticles
         internal RenderTexture CurrentPositionLifetimeTexture => posLife[ping];
         internal RenderTexture CurrentVelocitySizeTexture => velSize[ping];
         internal RenderTexture CurrentColorTexture => colorRT[ping];
+        internal RenderTexture CurrentRotationPhaseTexture => rotationPhaseRT[ping];
 
         void OnEnable()
         {
@@ -348,6 +361,7 @@ namespace GPUParticles
             emissionStartDelay = Mathf.Max(0f, emissionStartDelay);
             colorBySpeedRange = OrderedRange(colorBySpeedRange);
             sizeBySpeedRange = OrderedRange(sizeBySpeedRange);
+            rotationBySpeedRange = OrderedRange(rotationBySpeedRange);
             if (emissionBursts == null) emissionBursts = System.Array.Empty<GPUEmissionBurst>();
             EnsureMaterials();
             RecreateTargetsIfNeeded(false);
@@ -372,7 +386,13 @@ namespace GPUParticles
         void RecreateTargetsIfNeeded(bool force)
         {
             int newGrid = CeilSqrt(maxParticles);
-            if (!force && newGrid == gridSize && posLife[0] != null) return;
+            if (!force &&
+                newGrid == gridSize &&
+                posLife[0] != null &&
+                rotationPhaseRT[0] != null)
+            {
+                return;
+            }
 
             ReleaseTargets();
             gridSize = newGrid;
@@ -384,10 +404,13 @@ namespace GPUParticles
             CreateRT(ref velSize[1], RenderTextureFormat.ARGBFloat);
             CreateRT(ref colorRT[0], RenderTextureFormat.ARGBHalf);
             CreateRT(ref colorRT[1], RenderTextureFormat.ARGBHalf);
+            CreateRT(ref rotationPhaseRT[0], RenderTextureFormat.RFloat);
+            CreateRT(ref rotationPhaseRT[1], RenderTextureFormat.RFloat);
 
             ClearRT(posLife[0]); ClearRT(posLife[1]);
             ClearRT(velSize[0]); ClearRT(velSize[1]);
             ClearRT(colorRT[0]); ClearRT(colorRT[1]);
+            ClearRT(rotationPhaseRT[0]); ClearRT(rotationPhaseRT[1]);
 
             ping = 0;
             emitCursor = 0;
@@ -429,6 +452,12 @@ namespace GPUParticles
                 if (posLife[i] != null) { posLife[i].Release(); Object.DestroyImmediate(posLife[i]); posLife[i] = null; }
                 if (velSize[i] != null) { velSize[i].Release(); Object.DestroyImmediate(velSize[i]); velSize[i] = null; }
                 if (colorRT[i] != null) { colorRT[i].Release(); Object.DestroyImmediate(colorRT[i]); colorRT[i] = null; }
+                if (rotationPhaseRT[i] != null)
+                {
+                    rotationPhaseRT[i].Release();
+                    Object.DestroyImmediate(rotationPhaseRT[i]);
+                    rotationPhaseRT[i] = null;
+                }
             }
         }
 
@@ -496,6 +525,11 @@ namespace GPUParticles
         public void SetSizeBySpeedRange(Vector2 range)
         {
             sizeBySpeedRange = OrderedRange(range);
+        }
+
+        public void SetRotationBySpeedRange(Vector2 range)
+        {
+            rotationBySpeedRange = OrderedRange(range);
         }
 
         static Vector2 OrderedRange(Vector2 range)
@@ -630,7 +664,10 @@ namespace GPUParticles
                 (uint)particleId, 0x68E31DA4u);
         }
 
-        internal float ResolveParticleRotationRadians(int particleId, float remainingLifetime)
+        internal float ResolveParticleRotationRadians(
+            int particleId,
+            float remainingLifetime,
+            float rotationBySpeedPhase = 0f)
         {
             uint id = (uint)particleId;
             float particleStartLifetime = ResolveStartLifetime(particleId);
@@ -650,7 +687,7 @@ namespace GPUParticles
                     rotationOverLifetime,
                     id,
                     0xD3A2646Cu);
-                return particleStartRotation + angularVelocity * age;
+                return particleStartRotation + angularVelocity * age + rotationBySpeedPhase;
             }
 
             float normalizedAge = particleStartLifetime > 1e-6f
@@ -662,7 +699,8 @@ namespace GPUParticles
                 rotationOverLifetimeIntegralLUT, normalizedAge, 1);
             float blend = Hash01(id ^ 0xD3A2646Cu);
             float integral = Mathf.LerpUnclamped(minimumIntegral, maximumIntegral, blend);
-            return particleStartRotation + integral * particleStartLifetime;
+            return particleStartRotation + integral * particleStartLifetime +
+                   rotationBySpeedPhase;
         }
 
         static float SampleLUTRow(Texture2D texture, float normalizedPosition, int row)
@@ -1165,6 +1203,7 @@ namespace GPUParticles
             simulateMaterial.SetTexture(_CurPosLife, posLife[src]);
             simulateMaterial.SetTexture(_CurVelSize, velSize[src]);
             simulateMaterial.SetTexture(_CurColor,   colorRT[src]);
+            simulateMaterial.SetTexture(_CurRotationPhase, rotationPhaseRT[src]);
             Texture2D selectedColorOverLifetimeLUT = colorOverLifetimeLUT != null
                 ? colorOverLifetimeLUT
                 : GradientLUTBuilder.GetDefaultWhiteLUT();
@@ -1177,6 +1216,9 @@ namespace GPUParticles
             Texture2D selectedSizeBySpeedLUT = sizeBySpeedLUT != null
                 ? sizeBySpeedLUT
                 : CurveLUTBuilder.GetDefaultUnitLUT();
+            Texture2D selectedRotationBySpeedLUT = rotationBySpeedLUT != null
+                ? rotationBySpeedLUT
+                : CurveLUTBuilder.GetDefaultZeroLUT();
             Texture2D selectedForceOverLifetimeLUT = forceOverLifetimeLUT != null
                 ? forceOverLifetimeLUT
                 : MinMaxCurveVector3LUTBuilder.GetDefaultZeroLUT();
@@ -1189,6 +1231,8 @@ namespace GPUParticles
             simulateMaterial.SetTexture(_ColorBySpeedLUT, selectedColorBySpeedLUT);
             simulateMaterial.SetTexture(_SizeBySpeedLUT, selectedSizeBySpeedLUT);
             simulateMaterial.SetTexture(
+                _RotationBySpeedLUT, selectedRotationBySpeedLUT);
+            simulateMaterial.SetTexture(
                 _ForceOverLifetimeLUT, selectedForceOverLifetimeLUT);
             simulateMaterial.SetTexture(
                 _VelocityOverLifetimeLUT, selectedVelocityOverLifetimeLUT);
@@ -1200,6 +1244,9 @@ namespace GPUParticles
                 _ColorBySpeedLUTInvWidth, InverseTextureWidth(selectedColorBySpeedLUT));
             simulateMaterial.SetFloat(
                 _SizeBySpeedLUTInvWidth, InverseTextureWidth(selectedSizeBySpeedLUT));
+            simulateMaterial.SetFloat(
+                _RotationBySpeedLUTInvWidth,
+                InverseTextureWidth(selectedRotationBySpeedLUT));
             simulateMaterial.SetFloat(
                 _ForceOverLifetimeLUTInvWidth,
                 InverseTextureWidth(selectedForceOverLifetimeLUT));
@@ -1268,6 +1315,15 @@ namespace GPUParticles
             simulateMaterial.SetVector(
                 _SizeBySpeedRange,
                 new Vector4(sizeBySpeedRange.x, sizeBySpeedRange.y, 0f, 0f));
+            simulateMaterial.SetInt(
+                _RotationBySpeedEnabled, rotationBySpeedEnabled ? 1 : 0);
+            simulateMaterial.SetVector(
+                _RotationBySpeedRange,
+                new Vector4(
+                    rotationBySpeedRange.x,
+                    rotationBySpeedRange.y,
+                    0f,
+                    0f));
 
             Vector3 dirInitW = initialDirectionWS.sqrMagnitude > 1e-6f ? initialDirectionWS.normalized : transform.forward;
             Vector3 dirInitSim = (simulationSpace == SimulationSpace.World) ? dirInitW : transform.InverseTransformDirection(dirInitW);
@@ -1354,6 +1410,7 @@ namespace GPUParticles
                 new RenderTargetIdentifier(posLife[dst]),
                 new RenderTargetIdentifier(velSize[dst]),
                 new RenderTargetIdentifier(colorRT[dst]),
+                new RenderTargetIdentifier(rotationPhaseRT[dst]),
             };
             cmd.SetRenderTarget(mrt, posLife[dst]);
             cmd.SetViewport(new Rect(0, 0, gridSize, gridSize));
@@ -1370,6 +1427,7 @@ namespace GPUParticles
             renderMaterial.SetTexture(_CurPosLife, posLife[ping]);
             renderMaterial.SetTexture(_CurVelSize, velSize[ping]);
             renderMaterial.SetTexture(_CurColor,   colorRT[ping]);
+            renderMaterial.SetTexture(_CurRotationPhase, rotationPhaseRT[ping]);
             renderMaterial.SetTexture("_BaseMap", baseMap != null ? baseMap : Texture2D.whiteTexture);
 
             renderMaterial.SetInt(_GridSize, gridSize);

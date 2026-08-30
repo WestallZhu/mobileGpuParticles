@@ -131,6 +131,19 @@ namespace GPUParticles.Editor
             StartCapture(false, ParticleABValidationProfile.RotationOverLifetimeCurvePoint);
         }
 
+        [MenuItem("Tools/GPU Particles/Run Rotation by Speed A-B RT Capture")]
+        public static void RunRotationBySpeedCaptureMenu()
+        {
+            if (EditorApplication.isPlaying)
+            {
+                Debug.LogWarning("Stop Play Mode before starting a deterministic A/B capture.");
+                return;
+            }
+
+            if (!EditorSceneManager.SaveCurrentModifiedScenesIfUserWantsTo()) return;
+            StartCapture(false, ParticleABValidationProfile.RotationBySpeedCurvePoint);
+        }
+
         [MenuItem("Tools/GPU Particles/Run Color Size over Lifetime A-B RT Capture")]
         public static void RunColorSizeOverLifetimeCaptureMenu()
         {
@@ -216,6 +229,12 @@ namespace GPUParticles.Editor
         {
             ValidateCommonFeatureMapping();
             StartCapture(true, ParticleABValidationProfile.RotationOverLifetimeCurvePoint);
+        }
+
+        public static void RunBatchRotationBySpeedCapture()
+        {
+            ValidateCommonFeatureMapping();
+            StartCapture(true, ParticleABValidationProfile.RotationBySpeedCurvePoint);
         }
 
         public static void RunBatchColorSizeOverLifetimeCapture()
@@ -337,6 +356,7 @@ namespace GPUParticles.Editor
                 case ParticleABValidationProfile.EmissionRateDistancePoint: return 2.2f;
                 case ParticleABValidationProfile.VelocityOverLifetimePoint: return 3f;
                 case ParticleABValidationProfile.RotationOverLifetimeCurvePoint: return 2.5f;
+                case ParticleABValidationProfile.RotationBySpeedCurvePoint: return 2.5f;
                 case ParticleABValidationProfile.ColorSizeOverLifetimeRandomizedPoint: return 2f;
                 case ParticleABValidationProfile.ColorSizeBySpeedRandomizedPoint: return 2f;
                 default: return 3f;
@@ -372,6 +392,8 @@ namespace GPUParticles.Editor
                     return "TestResults/ParticleVelocityOverLifetime";
                 case ParticleABValidationProfile.RotationOverLifetimeCurvePoint:
                     return "TestResults/ParticleRotationOverLifetime";
+                case ParticleABValidationProfile.RotationBySpeedCurvePoint:
+                    return "TestResults/ParticleRotationBySpeed";
                 case ParticleABValidationProfile.ColorSizeOverLifetimeRandomizedPoint:
                     return "TestResults/ParticleColorSizeOverLifetime";
                 case ParticleABValidationProfile.ColorSizeBySpeedRandomizedPoint:
@@ -388,6 +410,7 @@ namespace GPUParticles.Editor
             Texture2D firstForceLUT = null;
             Texture2D firstVelocityLUT = null;
             Texture2D firstRotationLUT = null;
+            Texture2D firstRotationBySpeedLUT = null;
             Texture2D firstColorLUT = null;
             Texture2D firstSizeLUT = null;
             Texture2D firstColorBySpeedLUT = null;
@@ -398,6 +421,8 @@ namespace GPUParticles.Editor
             string secondVelocityAssetPath = null;
             string firstRotationAssetPath = null;
             string secondRotationAssetPath = null;
+            string firstRotationBySpeedAssetPath = null;
+            string secondRotationBySpeedAssetPath = null;
             string firstColorAssetPath = null;
             string secondColorAssetPath = null;
             string firstSizeAssetPath = null;
@@ -427,6 +452,15 @@ namespace GPUParticles.Editor
                 rotationOverLifetime.z = new ParticleSystem.MinMaxCurve(
                     1f,
                     AnimationCurve.Linear(0f, 0f, 1f, 2f),
+                    AnimationCurve.Linear(0f, 1f, 1f, 3f));
+
+                var rotationBySpeed = shuriken.rotationBySpeed;
+                rotationBySpeed.enabled = true;
+                rotationBySpeed.separateAxes = false;
+                rotationBySpeed.range = new Vector2(2f, 8f);
+                rotationBySpeed.z = new ParticleSystem.MinMaxCurve(
+                    1f,
+                    AnimationCurve.Linear(0f, -2f, 1f, 0f),
                     AnimationCurve.Linear(0f, 1f, 1f, 3f));
 
                 var emission = shuriken.emission;
@@ -528,6 +562,15 @@ namespace GPUParticles.Editor
                 Require(gpu.rotationOverLifetimeIntegralLUT != null &&
                         gpu.rotationOverLifetimeIntegralLUT.height == 2,
                     "Rotation over Lifetime cumulative minimum/maximum LUT rows were not generated.");
+                Require(gpu.rotationBySpeedEnabled,
+                    "Rotation by Speed enabled state was not mapped.");
+                RequireApproximately(gpu.rotationBySpeedRange.x, 2f,
+                    "Rotation by Speed range minimum");
+                RequireApproximately(gpu.rotationBySpeedRange.y, 8f,
+                    "Rotation by Speed range maximum");
+                Require(gpu.rotationBySpeedLUT != null &&
+                        gpu.rotationBySpeedLUT.height == 2,
+                    "Rotation by Speed signed minimum/maximum LUT rows were not generated.");
                 Require(!gpu.emissionEnabled, "Emission.enabled was not mapped.");
                 Require(gpu.emissionRateOverTimeMode == ParticleSystemCurveMode.Curve,
                     "Emission Rate over Time Curve mode was not mapped.");
@@ -600,6 +643,28 @@ namespace GPUParticles.Editor
                     firstRotationLUT.GetPixel(firstRotationLUT.width - 1, 1).r,
                     2f,
                     "Rotation over Lifetime maximum integral end");
+
+                firstRotationBySpeedLUT = gpu.rotationBySpeedLUT;
+                firstRotationBySpeedAssetPath =
+                    AssetDatabase.GetAssetPath(firstRotationBySpeedLUT);
+                RequireApproximately(
+                    firstRotationBySpeedLUT.GetPixel(0, 0).r,
+                    -2f,
+                    "Rotation by Speed minimum start");
+                RequireApproximately(
+                    firstRotationBySpeedLUT.GetPixel(
+                        firstRotationBySpeedLUT.width - 1, 0).r,
+                    0f,
+                    "Rotation by Speed minimum end");
+                RequireApproximately(
+                    firstRotationBySpeedLUT.GetPixel(0, 1).r,
+                    1f,
+                    "Rotation by Speed maximum start");
+                RequireApproximately(
+                    firstRotationBySpeedLUT.GetPixel(
+                        firstRotationBySpeedLUT.width - 1, 1).r,
+                    3f,
+                    "Rotation by Speed maximum end");
 
                 firstColorLUT = gpu.colorOverLifetimeLUT;
                 firstColorAssetPath = AssetDatabase.GetAssetPath(firstColorLUT);
@@ -726,6 +791,13 @@ namespace GPUParticles.Editor
                 firstRotationLUT = null;
                 gpu.rotationOverLifetimeIntegralLUT = null;
 
+                if (string.IsNullOrEmpty(firstRotationBySpeedAssetPath))
+                {
+                    Object.DestroyImmediate(firstRotationBySpeedLUT);
+                }
+                firstRotationBySpeedLUT = null;
+                gpu.rotationBySpeedLUT = null;
+
                 if (string.IsNullOrEmpty(firstColorAssetPath))
                 {
                     Object.DestroyImmediate(firstColorLUT);
@@ -806,6 +878,17 @@ namespace GPUParticles.Editor
                     gpu.rotationOverLifetimeIntegralLUT = null;
                 }
 
+                if (gpu.rotationBySpeedLUT != null)
+                {
+                    secondRotationBySpeedAssetPath =
+                        AssetDatabase.GetAssetPath(gpu.rotationBySpeedLUT);
+                    if (string.IsNullOrEmpty(secondRotationBySpeedAssetPath))
+                    {
+                        Object.DestroyImmediate(gpu.rotationBySpeedLUT);
+                    }
+                    gpu.rotationBySpeedLUT = null;
+                }
+
                 if (gpu.colorOverLifetimeLUT != null)
                 {
                     secondColorAssetPath =
@@ -868,6 +951,11 @@ namespace GPUParticles.Editor
                 {
                     Object.DestroyImmediate(firstRotationLUT);
                 }
+                if (firstRotationBySpeedLUT != null &&
+                    string.IsNullOrEmpty(firstRotationBySpeedAssetPath))
+                {
+                    Object.DestroyImmediate(firstRotationBySpeedLUT);
+                }
                 if (firstColorLUT != null && string.IsNullOrEmpty(firstColorAssetPath))
                 {
                     Object.DestroyImmediate(firstColorLUT);
@@ -913,6 +1001,15 @@ namespace GPUParticles.Editor
                     secondRotationAssetPath != firstRotationAssetPath)
                 {
                     AssetDatabase.DeleteAsset(secondRotationAssetPath);
+                }
+                if (!string.IsNullOrEmpty(firstRotationBySpeedAssetPath))
+                {
+                    AssetDatabase.DeleteAsset(firstRotationBySpeedAssetPath);
+                }
+                if (!string.IsNullOrEmpty(secondRotationBySpeedAssetPath) &&
+                    secondRotationBySpeedAssetPath != firstRotationBySpeedAssetPath)
+                {
+                    AssetDatabase.DeleteAsset(secondRotationBySpeedAssetPath);
                 }
                 if (!string.IsNullOrEmpty(firstColorAssetPath))
                 {

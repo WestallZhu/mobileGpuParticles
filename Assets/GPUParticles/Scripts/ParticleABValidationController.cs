@@ -24,6 +24,7 @@ namespace GPUParticles
         EmissionRateDistancePoint,
         VelocityOverLifetimePoint,
         RotationOverLifetimeCurvePoint,
+        RotationBySpeedCurvePoint,
         ColorSizeOverLifetimeRandomizedPoint,
         ColorSizeBySpeedRandomizedPoint
     }
@@ -83,11 +84,13 @@ namespace GPUParticles
         Texture2D profileColorLUT;
         Texture2D profileSizeLUT;
         Texture2D profileRotationLUT;
+        Texture2D profileRotationBySpeedLUT;
         Gradient profileColorMinimumGradient;
         Gradient profileColorMaximumGradient;
         AnimationCurve profileSizeMinimumCurve;
         AnimationCurve profileSizeMaximumCurve;
         static readonly Vector3 ValidationForce = new Vector3(2f, -1f, 0.5f);
+        static readonly Vector3 RotationBySpeedAcceleration = Vector3.right * 2f;
         const float RotationProfileStartRotation = 0.25f;
         Vector3 shurikenBasePositionWS;
         Vector3 gpuBasePositionWS;
@@ -178,6 +181,7 @@ namespace GPUParticles
             if (profileColorLUT != null) Destroy(profileColorLUT);
             if (profileSizeLUT != null) Destroy(profileSizeLUT);
             if (profileRotationLUT != null) Destroy(profileRotationLUT);
+            if (profileRotationBySpeedLUT != null) Destroy(profileRotationBySpeedLUT);
             ReleaseCameraCaptureTarget();
         }
 
@@ -272,6 +276,12 @@ namespace GPUParticles
             if (validationProfile == ParticleABValidationProfile.RotationOverLifetimeCurvePoint)
             {
                 ConfigureRotationOverLifetimeProfile();
+                return;
+            }
+
+            if (validationProfile == ParticleABValidationProfile.RotationBySpeedCurvePoint)
+            {
+                ConfigureRotationBySpeedProfile();
                 return;
             }
 
@@ -581,6 +591,78 @@ namespace GPUParticles
             gpuParticles.pivot = new Vector2(0.35f, 0.15f);
         }
 
+        void ConfigureRotationBySpeedProfile()
+        {
+            ConfigureEmissionPointBase(5f, true);
+
+            var main = shuriken.main;
+            main.startLifetime = 4f;
+            main.startSize = 1.25f;
+            main.startRotation = RotationProfileStartRotation;
+            gpuParticles.SetStartLifetimeRange(4f, 4f);
+            gpuParticles.SetStartSizeRange(1.25f, 1.25f);
+            gpuParticles.SetStartRotationRange(
+                RotationProfileStartRotation,
+                RotationProfileStartRotation);
+
+            var emission = shuriken.emission;
+            emission.rateOverTime = 18f;
+            emission.rateOverDistance = 0f;
+            emission.SetBursts(Array.Empty<ParticleSystem.Burst>());
+            gpuParticles.SetEmissionRateOverTime(emission.rateOverTime);
+            gpuParticles.SetEmissionRateOverDistance(emission.rateOverDistance);
+            gpuParticles.SetEmissionBursts(Array.Empty<ParticleSystem.Burst>());
+
+            var force = shuriken.forceOverLifetime;
+            force.enabled = true;
+            force.space = ParticleSystemSimulationSpace.Local;
+            force.randomized = false;
+            force.x = RotationBySpeedAcceleration.x;
+            force.y = RotationBySpeedAcceleration.y;
+            force.z = RotationBySpeedAcceleration.z;
+            if (profileForceLUT != null) Destroy(profileForceLUT);
+            profileForceLUT = MinMaxCurveVector3LUTBuilder.Build(
+                force.x, force.y, force.z);
+            gpuParticles.forceOverLifetimeEnabled = true;
+            gpuParticles.forceOverLifetimeSpace = SimulationSpace.Local;
+            gpuParticles.forceOverLifetimeRandomized = false;
+            gpuParticles.forceOverLifetimeLUT = profileForceLUT;
+
+            var rotationOverLifetime = shuriken.rotationOverLifetime;
+            rotationOverLifetime.enabled = true;
+            rotationOverLifetime.separateAxes = false;
+            rotationOverLifetime.z = 0.5f;
+            gpuParticles.SetRotationOverLifetimeRange(0.5f, 0.5f);
+            if (profileRotationLUT != null) Destroy(profileRotationLUT);
+            profileRotationLUT = CurveLUTBuilder.BuildIntegral(
+                rotationOverLifetime.z);
+            gpuParticles.rotationOverLifetimeIntegralLUT = profileRotationLUT;
+
+            var rotationBySpeed = shuriken.rotationBySpeed;
+            rotationBySpeed.enabled = true;
+            rotationBySpeed.separateAxes = false;
+            rotationBySpeed.range = new Vector2(0f, 4f);
+            rotationBySpeed.z = new ParticleSystem.MinMaxCurve(
+                4f,
+                AnimationCurve.Linear(0f, 0f, 1f, 1f));
+            gpuParticles.rotationBySpeedEnabled = true;
+            gpuParticles.SetRotationBySpeedRange(rotationBySpeed.range);
+            if (profileRotationBySpeedLUT != null)
+            {
+                Destroy(profileRotationBySpeedLUT);
+            }
+            profileRotationBySpeedLUT = CurveLUTBuilder.BuildSigned(
+                rotationBySpeed.z,
+                assetName: "RotationBySpeed_Profile_LUT");
+            gpuParticles.rotationBySpeedLUT = profileRotationBySpeedLUT;
+
+            if (shurikenRenderer != null)
+            {
+                shurikenRenderer.pivot = new Vector3(0.35f, 0.15f, 0f);
+            }
+            gpuParticles.pivot = new Vector2(0.35f, 0.15f);
+        }
+
         void ConfigureColorSizeOverLifetimeProfile()
         {
             ConfigureEmissionPointBase(5f, true);
@@ -734,6 +816,11 @@ namespace GPUParticles
             gpuParticles.sizeBySpeedEnabled = false;
             gpuParticles.SetSizeBySpeedRange(new Vector2(0f, 1f));
             gpuParticles.sizeBySpeedLUT = CurveLUTBuilder.GetDefaultUnitLUT();
+            var rotationBySpeed = shuriken.rotationBySpeed;
+            rotationBySpeed.enabled = false;
+            gpuParticles.rotationBySpeedEnabled = false;
+            gpuParticles.SetRotationBySpeedRange(new Vector2(0f, 1f));
+            gpuParticles.rotationBySpeedLUT = CurveLUTBuilder.GetDefaultZeroLUT();
         }
 
         void ConfigureEmissionPointBase(float duration, bool looping)
@@ -940,18 +1027,30 @@ namespace GPUParticles
             Texture2D posLife = ReadRenderTexture(gpuParticles.CurrentPositionLifetimeTexture, TextureFormat.RGBAFloat, true);
             Texture2D velSize = ReadRenderTexture(gpuParticles.CurrentVelocitySizeTexture, TextureFormat.RGBAFloat, true);
             Texture2D colors = ReadRenderTexture(gpuParticles.CurrentColorTexture, TextureFormat.RGBAFloat, true);
+            Texture2D rotationPhases = ReadRenderTexture(
+                gpuParticles.CurrentRotationPhaseTexture,
+                TextureFormat.RGBAFloat,
+                true);
             File.WriteAllBytes(Path.Combine(sessionFolder, prefix + "-gpu-poslife.exr"),
                 posLife.EncodeToEXR(Texture2D.EXRFlags.OutputAsFloat));
             File.WriteAllBytes(Path.Combine(sessionFolder, prefix + "-gpu-velsize.exr"),
                 velSize.EncodeToEXR(Texture2D.EXRFlags.OutputAsFloat));
             File.WriteAllBytes(Path.Combine(sessionFolder, prefix + "-gpu-color.exr"),
                 colors.EncodeToEXR(Texture2D.EXRFlags.OutputAsFloat));
+            File.WriteAllBytes(Path.Combine(sessionFolder, prefix + "-gpu-rotation.exr"),
+                rotationPhases.EncodeToEXR(Texture2D.EXRFlags.OutputAsFloat));
 
-            AppendMetrics(elapsed, posLife.GetPixels(), velSize.GetPixels(), colors.GetPixels());
+            AppendMetrics(
+                elapsed,
+                posLife.GetPixels(),
+                velSize.GetPixels(),
+                colors.GetPixels(),
+                rotationPhases.GetPixels());
             WriteParticleState(prefix, posLife.GetPixels(), velSize.GetPixels());
             Destroy(posLife);
             Destroy(velSize);
             Destroy(colors);
+            Destroy(rotationPhases);
         }
 
         void CaptureCameraImage(string fileName, ParticleABDisplayMode mode)
@@ -1024,7 +1123,8 @@ namespace GPUParticles
             float elapsed,
             Color[] gpuPosLife,
             Color[] gpuVelSize,
-            Color[] gpuColors)
+            Color[] gpuColors,
+            Color[] gpuRotationPhases)
         {
             int shurikenCount = 0;
             Vector3 shurikenPositionSum = Vector3.zero;
@@ -1078,6 +1178,19 @@ namespace GPUParticles
                             particle.rotation)) * Mathf.Deg2Rad;
                         maximumShurikenRotationError = Mathf.Max(
                             maximumShurikenRotationError, rotationError);
+                    }
+                    else if (validationProfile ==
+                             ParticleABValidationProfile.RotationBySpeedCurvePoint)
+                    {
+                        float expectedRotation = RotationBySpeedProfileExpectedRadians(age);
+                        float rotationError = Mathf.Abs(Mathf.DeltaAngle(
+                            expectedRotation * Mathf.Rad2Deg,
+                            particle.rotation)) * Mathf.Deg2Rad;
+                        maximumShurikenRotationError = Mathf.Max(
+                            maximumShurikenRotationError, rotationError);
+                        maximumForceKinematicsError = Mathf.Max(
+                            maximumForceKinematicsError,
+                            (shurikenVelocity - RotationBySpeedAcceleration * age).magnitude);
                     }
                     else if (validationProfile ==
                              ParticleABValidationProfile.EmissionRateDistancePoint)
@@ -1157,8 +1270,10 @@ namespace GPUParticles
             float gpuSpeedSum = 0f;
             float gpuAgeSum = 0f;
             int pixelCount = Mathf.Min(
-                Mathf.Min(gpuPosLife.Length, gpuVelSize.Length),
-                gpuColors.Length);
+                Mathf.Min(
+                    Mathf.Min(gpuPosLife.Length, gpuVelSize.Length),
+                    gpuColors.Length),
+                gpuRotationPhases.Length);
             for (int i = 0; i < pixelCount; i++)
             {
                 Color positionLife = gpuPosLife[i];
@@ -1198,12 +1313,27 @@ namespace GPUParticles
                     float expectedRotation = RotationProfileExpectedRadians(
                         particleStartLifetime, age);
                     float actualRotation = gpuParticles.ResolveParticleRotationRadians(
-                        i, positionLife.a);
+                        i, positionLife.a, gpuRotationPhases[i].r);
                     float rotationError = Mathf.Abs(Mathf.DeltaAngle(
                         expectedRotation * Mathf.Rad2Deg,
                         actualRotation * Mathf.Rad2Deg)) * Mathf.Deg2Rad;
                     maximumGPURotationError = Mathf.Max(
                         maximumGPURotationError, rotationError);
+                }
+                else if (validationProfile ==
+                         ParticleABValidationProfile.RotationBySpeedCurvePoint)
+                {
+                    float expectedRotation = RotationBySpeedProfileExpectedRadians(age);
+                    float actualRotation = gpuParticles.ResolveParticleRotationRadians(
+                        i, positionLife.a, gpuRotationPhases[i].r);
+                    float rotationError = Mathf.Abs(Mathf.DeltaAngle(
+                        expectedRotation * Mathf.Rad2Deg,
+                        actualRotation * Mathf.Rad2Deg)) * Mathf.Deg2Rad;
+                    maximumGPURotationError = Mathf.Max(
+                        maximumGPURotationError, rotationError);
+                    maximumForceKinematicsError = Mathf.Max(
+                        maximumForceKinematicsError,
+                        (gpuVelocity - RotationBySpeedAcceleration * age).magnitude);
                 }
                 else if (validationProfile ==
                          ParticleABValidationProfile.EmissionRateDistancePoint)
@@ -1364,6 +1494,16 @@ namespace GPUParticles
                    startLifetime * normalizedAge * normalizedAge;
         }
 
+        static float RotationBySpeedProfileExpectedRadians(float age)
+        {
+            age = Mathf.Max(0f, age);
+            float rotationBySpeedPhase = age <= 2f
+                ? age * age
+                : 4f * age - 4f;
+            return RotationProfileStartRotation + 0.5f * age +
+                   rotationBySpeedPhase;
+        }
+
         static void ObserveBlendFactor(
             float value,
             float minimum,
@@ -1510,6 +1650,16 @@ namespace GPUParticles
                                             maximumGPUParticleCount > 0 &&
                                             maximumShurikenRotationError <= 0.05f &&
                                             maximumGPURotationError <= 0.01f;
+                    break;
+
+                case ParticleABValidationProfile.RotationBySpeedCurvePoint:
+                    profileSpecificPassed = maximumMeanSpeedError <= 0.001f &&
+                                            maximumMeanVelocityError <= 0.001f &&
+                                            maximumForceKinematicsError <= 0.005f &&
+                                            maximumShurikenParticleCount > 0 &&
+                                            maximumGPUParticleCount > 0 &&
+                                            maximumShurikenRotationError <= 0.08f &&
+                                            maximumGPURotationError <= 0.02f;
                     break;
 
                 case ParticleABValidationProfile.ColorSizeOverLifetimeRandomizedPoint:
