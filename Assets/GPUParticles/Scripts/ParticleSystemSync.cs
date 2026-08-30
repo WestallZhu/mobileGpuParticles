@@ -47,6 +47,7 @@ namespace GPUParticles
         // LUT缓存（避免每帧重建）
         private float lastColorLUTUpdate = 0f;
         private float lastStartColorLUTUpdate = 0f;
+        private float lastStartSpeedLUTUpdate = 0f;
         private float lastSizeLUTUpdate = 0f;
         private float lastForceLUTUpdate = 0f;
         private float lastVelocityLUTUpdate = 0f;
@@ -68,6 +69,7 @@ namespace GPUParticles
         private Texture2D generatedTextureSheetStartLUT;
         private Texture2D generatedColorLUT;
         private Texture2D generatedStartColorLUT;
+        private Texture2D generatedStartSpeedLUT;
         private Texture2D generatedSizeLUT;
         private Texture2D generatedColorBySpeedLUT;
         private Texture2D generatedSizeBySpeedLUT;
@@ -225,6 +227,28 @@ namespace GPUParticles
             ShurikenMinMaxUtility.TryGetConstantRange(
                 main.startSpeed, out minimum, out maximum);
             targetGPUParticleSystem.SetStartSpeedRange(minimum, maximum);
+            targetGPUParticleSystem.startSpeedMode = main.startSpeed.mode;
+            bool updateStartSpeedLUT = force ||
+                Time.realtimeSinceStartup - lastStartSpeedLUTUpdate >
+                LUT_UPDATE_INTERVAL;
+            if (updateStartSpeedLUT)
+            {
+                DestroyGeneratedTexture(ref generatedStartSpeedLUT);
+                if (IsCurveMode(main.startSpeed.mode))
+                {
+                    generatedStartSpeedLUT = CurveLUTBuilder.BuildSigned(
+                        main.startSpeed,
+                        assetName: "StartSpeed_LUT");
+                    targetGPUParticleSystem.startSpeedLUT =
+                        generatedStartSpeedLUT;
+                }
+                else
+                {
+                    targetGPUParticleSystem.startSpeedLUT =
+                        CurveLUTBuilder.GetDefaultZeroLUT();
+                }
+                lastStartSpeedLUTUpdate = Time.realtimeSinceStartup;
+            }
 
             ParticleSystem.MinMaxCurve startSize = main.startSize3D ? main.startSizeX : main.startSize;
             ShurikenMinMaxUtility.TryGetConstantRange(startSize, out minimum, out maximum);
@@ -770,6 +794,7 @@ namespace GPUParticles
             DestroyGeneratedLifetimeByEmitterSpeedLUT();
             DestroyGeneratedTextureSheetLUTs();
             DestroyGeneratedTexture(ref generatedStartColorLUT);
+            DestroyGeneratedTexture(ref generatedStartSpeedLUT);
             DestroyGeneratedColorLUT();
             DestroyGeneratedSizeLUT();
             DestroyGeneratedColorBySpeedLUT();
@@ -852,6 +877,12 @@ namespace GPUParticles
             return mode == ParticleSystemGradientMode.Gradient ||
                    mode == ParticleSystemGradientMode.TwoGradients ||
                    mode == ParticleSystemGradientMode.RandomColor;
+        }
+
+        static bool IsCurveMode(ParticleSystemCurveMode mode)
+        {
+            return mode == ParticleSystemCurveMode.Curve ||
+                   mode == ParticleSystemCurveMode.TwoCurves;
         }
 
         void DestroyGeneratedColorLUT()

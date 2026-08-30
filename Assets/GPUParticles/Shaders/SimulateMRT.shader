@@ -32,6 +32,7 @@ Shader "Hidden/GPUParticles/SimulateMRT"
             TEXTURE2D(_CurVelSize);      SAMPLER(sampler_CurVelSize);
             TEXTURE2D(_CurColor);        SAMPLER(sampler_CurColor);
             TEXTURE2D(_CurRotationPhase); SAMPLER(sampler_CurRotationPhase);
+            TEXTURE2D(_StartSpeedLUT);
             TEXTURE2D(_StartColorLUT);
             TEXTURE2D(_GradLUT);         SAMPLER(sampler_GradLUT);
             TEXTURE2D(_SizeLUT);         SAMPLER(sampler_SizeLUT);
@@ -56,6 +57,8 @@ Shader "Hidden/GPUParticles/SimulateMRT"
                 float   _StartSpeed;
                 float   _StartSpeedMin;
                 int     _RandomizeStartSpeed;
+                int     _StartSpeedMode;
+                float   _StartSpeedLUTInvWidth;
                 float   _StartSize;
                 float   _StartSizeMin;
                 int     _RandomizeStartSize;
@@ -277,7 +280,7 @@ Shader "Hidden/GPUParticles/SimulateMRT"
                 return 0.0;
             }
 
-            float StartColorSystemTime(float particleAge)
+            float BirthSystemTime(float particleAge)
             {
                 float activeTime = max(
                     0.0,
@@ -288,7 +291,12 @@ Shader "Hidden/GPUParticles/SimulateMRT"
                     return saturate(activeTime / duration);
                 }
 
-                float systemTime = frac(activeTime / duration);
+                return frac(activeTime / duration);
+            }
+
+            float StartColorSystemTime(float particleAge)
+            {
+                float systemTime = BirthSystemTime(particleAge);
                 // Shuriken assigns the final LUT bin to the next loop. A fixed
                 // bin also keeps the birth color stable when frame time changes.
                 const float loopBoundaryWindow = 1.0 / 256.0;
@@ -757,6 +765,39 @@ Shader "Hidden/GPUParticles/SimulateMRT"
                 return lerp(minimum, maximum, randomValue);
             }
 
+            float StartSpeedAtBirth(uint id, float particleAge)
+            {
+                if (_StartSpeedMode == 0) // Constant
+                {
+                    return _StartSpeed;
+                }
+
+                float randomValue = Hash01(id ^ 0xB5297A4Du);
+                if (_StartSpeedMode == 3) // TwoConstants
+                {
+                    return lerp(
+                        _StartSpeedMin,
+                        _StartSpeed,
+                        randomValue);
+                }
+
+                float lutPosition = LUTPosition(
+                    BirthSystemTime(particleAge),
+                    _StartSpeedLUTInvWidth);
+                float maximum = SAMPLE_TEXTURE2D_LOD(
+                    _StartSpeedLUT, sampler_SizeLUT,
+                    float2(lutPosition, 0.75), 0).r;
+                if (_StartSpeedMode != 2) // Curve
+                {
+                    return maximum;
+                }
+
+                float minimum = SAMPLE_TEXTURE2D_LOD(
+                    _StartSpeedLUT, sampler_SizeLUT,
+                    float2(lutPosition, 0.25), 0).r;
+                return lerp(minimum, maximum, randomValue);
+            }
+
             float SizeOverLifetime(uint id, float normalizedAge)
             {
                 float lutPosition = LUTPosition(normalizedAge, _SizeLUTInvWidth);
@@ -917,6 +958,7 @@ Shader "Hidden/GPUParticles/SimulateMRT"
                     uint emitOrdinal = EmitOrdinal(
                         id, _EmitStart, (uint)_MaxParticles);
                     stepDt = SpawnAgeThisFrame(emitOrdinal);
+                    particleStartSpeed = StartSpeedAtBirth(id, stepDt);
                     float3 urnd = Hash03(id * 9781u + 0x9E3779B9u);
                     float2 u2a = urnd.xy;
                     float2 u2b = float2(urnd.y, urnd.z);

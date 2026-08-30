@@ -52,6 +52,9 @@ namespace GPUParticles
         [Header("Main (Shuriken Mapping)")]
         [Min(0.001f)] public float startLifetime = 2.0f;
         public float startSpeed = 5.0f;
+        public ParticleSystemCurveMode startSpeedMode =
+            ParticleSystemCurveMode.Constant;
+        public Texture2D startSpeedLUT;
         [Min(0.0f)] public float startSize = 0.1f;
         public Color startColor = Color.white;
         public ParticleSystemGradientMode startColorMode =
@@ -260,6 +263,10 @@ namespace GPUParticles
         static readonly int _StartSpeed = Shader.PropertyToID("_StartSpeed");
         static readonly int _StartSpeedMin = Shader.PropertyToID("_StartSpeedMin");
         static readonly int _RandomizeStartSpeed = Shader.PropertyToID("_RandomizeStartSpeed");
+        static readonly int _StartSpeedMode = Shader.PropertyToID("_StartSpeedMode");
+        static readonly int _StartSpeedLUT = Shader.PropertyToID("_StartSpeedLUT");
+        static readonly int _StartSpeedLUTInvWidth =
+            Shader.PropertyToID("_StartSpeedLUTInvWidth");
         static readonly int _StartSize  = Shader.PropertyToID("_StartSize");
         static readonly int _StartSizeMin = Shader.PropertyToID("_StartSizeMin");
         static readonly int _RandomizeStartSize = Shader.PropertyToID("_RandomizeStartSize");
@@ -619,6 +626,9 @@ namespace GPUParticles
             startSpeedMin = Mathf.Min(minimum, maximum);
             startSpeed = Mathf.Max(minimum, maximum);
             randomizeStartSpeed = !Mathf.Approximately(startSpeedMin, startSpeed);
+            startSpeedMode = randomizeStartSpeed
+                ? ParticleSystemCurveMode.TwoConstants
+                : ParticleSystemCurveMode.Constant;
         }
 
         public void SetStartSizeRange(float minimum, float maximum)
@@ -1401,6 +1411,9 @@ namespace GPUParticles
             simulateMaterial.SetTexture(_CurVelSize, velSize[src]);
             simulateMaterial.SetTexture(_CurColor,   colorRT[src]);
             simulateMaterial.SetTexture(_CurRotationPhase, rotationPhaseRT[src]);
+            Texture2D selectedStartSpeedLUT = startSpeedLUT != null
+                ? startSpeedLUT
+                : CurveLUTBuilder.GetDefaultZeroLUT();
             Texture2D selectedStartColorLUT = startColorLUT != null
                 ? startColorLUT
                 : GradientLUTBuilder.GetDefaultWhiteLUT();
@@ -1437,6 +1450,7 @@ namespace GPUParticles
                     : CurveLUTBuilder.GetDefaultUnitLUT();
 
             simulateMaterial.SetTexture("_GradLUT", selectedColorOverLifetimeLUT);
+            simulateMaterial.SetTexture(_StartSpeedLUT, selectedStartSpeedLUT);
             simulateMaterial.SetTexture(_StartColorLUT, selectedStartColorLUT);
             simulateMaterial.SetTexture("_SizeLUT", selectedSizeOverLifetimeLUT);
             simulateMaterial.SetTexture(_ColorBySpeedLUT, selectedColorBySpeedLUT);
@@ -1456,6 +1470,9 @@ namespace GPUParticles
                 selectedLifetimeByEmitterSpeedLUT);
             simulateMaterial.SetFloat(
                 _GradLUTInvWidth, InverseTextureWidth(selectedColorOverLifetimeLUT));
+            simulateMaterial.SetFloat(
+                _StartSpeedLUTInvWidth,
+                InverseTextureWidth(selectedStartSpeedLUT));
             simulateMaterial.SetFloat(
                 _StartColorLUTInvWidth,
                 InverseTextureWidth(selectedStartColorLUT));
@@ -1493,6 +1510,13 @@ namespace GPUParticles
             simulateMaterial.SetFloat(_StartSpeed, startSpeed);
             simulateMaterial.SetFloat(_StartSpeedMin, startSpeedMin);
             simulateMaterial.SetInt(_RandomizeStartSpeed, randomizeStartSpeed ? 1 : 0);
+            ParticleSystemCurveMode selectedStartSpeedMode =
+                startSpeedMode == ParticleSystemCurveMode.Constant &&
+                randomizeStartSpeed
+                    ? ParticleSystemCurveMode.TwoConstants
+                    : startSpeedMode;
+            simulateMaterial.SetInt(
+                _StartSpeedMode, (int)selectedStartSpeedMode);
             simulateMaterial.SetFloat(_StartSize, startSize);
             simulateMaterial.SetFloat(_StartSizeMin, startSizeMin);
             simulateMaterial.SetInt(_RandomizeStartSize, randomizeStartSize ? 1 : 0);

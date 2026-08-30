@@ -506,8 +506,17 @@ namespace GPUParticles
             GetCurveRange(main.startLifetime, "Start Lifetime", context, out float minimum, out float maximum);
             gpu.SetStartLifetimeRange(minimum, maximum);
 
-            GetCurveRange(main.startSpeed, "Start Speed", context, out minimum, out maximum);
+            ParticleSystem.MinMaxCurve startSpeed = main.startSpeed;
+            ShurikenMinMaxUtility.TryGetConstantRange(
+                startSpeed, out minimum, out maximum);
             gpu.SetStartSpeedRange(minimum, maximum);
+            gpu.startSpeedMode = startSpeed.mode;
+            gpu.startSpeedLUT = IsCurveMode(startSpeed.mode)
+                ? CurveLUTBuilder.BuildSigned(
+                    startSpeed,
+                    saveAsAsset: true,
+                    assetName: "StartSpeed_LUT")
+                : CurveLUTBuilder.GetDefaultZeroLUT();
 
             ParticleSystem.MinMaxCurve startSize = main.startSize3D ? main.startSizeX : main.startSize;
             if (main.startSize3D)
@@ -593,6 +602,12 @@ namespace GPUParticles
             return mode == ParticleSystemGradientMode.Gradient ||
                    mode == ParticleSystemGradientMode.TwoGradients ||
                    mode == ParticleSystemGradientMode.RandomColor;
+        }
+
+        static bool IsCurveMode(ParticleSystemCurveMode mode)
+        {
+            return mode == ParticleSystemCurveMode.Curve ||
+                   mode == ParticleSystemCurveMode.TwoCurves;
         }
 
         static void ApplyForceOverLifetime(
