@@ -40,6 +40,7 @@ Shader "Hidden/GPUParticles/SimulateMRT"
             TEXTURE2D(_ForceOverLifetimeLUT); SAMPLER(sampler_ForceOverLifetimeLUT);
             TEXTURE2D(_VelocityOverLifetimeLUT); SAMPLER(sampler_VelocityOverLifetimeLUT);
             TEXTURE2D(_LimitVelocityLUT); SAMPLER(sampler_LimitVelocityLUT);
+            TEXTURE2D(_InheritVelocityLUT); SAMPLER(sampler_InheritVelocityLUT);
 
             // --- Params ---
             CBUFFER_START(UnityPerMaterial)
@@ -86,6 +87,9 @@ Shader "Hidden/GPUParticles/SimulateMRT"
                 int     _LimitVelocityMultiplyDragBySize;
                 int     _LimitVelocityMultiplyDragByVelocity;
                 float   _LimitVelocityLUTInvWidth;
+                int     _InheritVelocityEnabled;
+                int     _InheritVelocityMode;           // 0 Initial, 1 Current
+                float   _InheritVelocityLUTInvWidth;
                 int     _ColorOverLifetimeMode;
                 int     _ColorBySpeedEnabled;
                 int     _ColorBySpeedMode;
@@ -160,6 +164,10 @@ Shader "Hidden/GPUParticles/SimulateMRT"
                 float _Pad19;
                 float3 _EmitterCurrentPositionWS;
                 float _Pad20;
+                float3 _EmitterPreviousVelocityWS;
+                float _Pad21;
+                float3 _EmitterVelocityWS;
+                float _Pad22;
             CBUFFER_END
 
             // local hash helpers (rename to avoid conflict with URP Random.hlsl Hash)
@@ -188,7 +196,8 @@ Shader "Hidden/GPUParticles/SimulateMRT"
                 float4 PosLife : SV_Target0;
                 float4 VelSize : SV_Target1;
                 float4 Color   : SV_Target2;
-                float RotationPhase : SV_Target3;
+                // X is rotation phase; YZW is Initial-mode birth emitter velocity.
+                float4 ModuleState : SV_Target3;
             };
 
             bool InEmit(uint id, uint start, uint count, uint cap)
@@ -488,6 +497,37 @@ Shader "Hidden/GPUParticles/SimulateMRT"
                     _VelocityOverLifetimeSpace);
             }
 
+            float InheritVelocityMultiplier(uint id, float normalizedAge)
+            {
+                float lutPosition = LUTPosition(
+                    normalizedAge, _InheritVelocityLUTInvWidth);
+                float minimum = SAMPLE_TEXTURE2D_LOD(
+                    _InheritVelocityLUT, sampler_InheritVelocityLUT,
+                    float2(lutPosition, 0.25), 0).r;
+                float maximum = SAMPLE_TEXTURE2D_LOD(
+                    _InheritVelocityLUT, sampler_InheritVelocityLUT,
+                    float2(lutPosition, 0.75), 0).r;
+                return lerp(minimum, maximum, Hash01(id ^ 0x7F4A7C15u));
+            }
+
+            float3 InheritVelocityContribution(
+                uint id,
+                float normalizedAge,
+                float3 birthEmitterVelocityWS,
+                float3 currentEmitterVelocityWS)
+            {
+                if (_InheritVelocityEnabled == 0 || _SimulationSpace != 1)
+                {
+                    return 0.0;
+                }
+
+                float3 sourceVelocity = _InheritVelocityMode == 0
+                    ? birthEmitterVelocityWS
+                    : currentEmitterVelocityWS;
+                return sourceVelocity *
+                    InheritVelocityMultiplier(id, normalizedAge);
+            }
+
             float4 LimitVelocityParameters(uint id, float normalizedAge)
             {
                 float lutPosition = LUTPosition(
@@ -691,8 +731,8 @@ Shader "Hidden/GPUParticles/SimulateMRT"
                 float4 curPosLife = SAMPLE_TEXTURE2D_LOD(_CurPosLife, sampler_CurPosLife, uv, 0);
                 float4 curVelSize = SAMPLE_TEXTURE2D_LOD(_CurVelSize, sampler_CurVelSize, uv, 0);
                 float4 curColor   = SAMPLE_TEXTURE2D_LOD(_CurColor,   sampler_CurColor,   uv, 0);
-                float curRotationPhase = SAMPLE_TEXTURE2D_LOD(
-                    _CurRotationPhase, sampler_CurRotationPhase, uv, 0).r;
+                float4 curModuleState = SAMPLE_TEXTURE2D_LOD(
+                    _CurRotationPhase, sampler_CurRotationPhase, uv, 0);
 
                 // Default: pass through
                 float3 pos = curPosLife.xyz;
@@ -700,7 +740,8 @@ Shader "Hidden/GPUParticles/SimulateMRT"
                 float3 vel = curVelSize.xyz;
                 float  size= curVelSize.w;
                 float4 col = curColor;
-                float rotationPhase = curRotationPhase;
+                float rotationPhase = curModuleState.x;
+                float3 birthEmitterVelocityWS = curModuleState.yzw;
 
                 float particleStartLifetime = RandomRange(
                     id, 0x68E31DA4u, _RandomizeStartLifetime, _StartLifetimeMin, _StartLifetime);
@@ -721,7 +762,7 @@ Shader "Hidden/GPUParticles/SimulateMRT"
                     o.PosLife = float4(0,0,0,0);
                     o.VelSize = float4(0,0,0,0);
                     o.Color   = float4(0,0,0,0);
-                    o.RotationPhase = 0.0;
+                    o.ModuleState = 0.0;
                     return o;
                 }
 
@@ -1031,6 +1072,12 @@ Shader "Hidden/GPUParticles/SimulateMRT"
                     vel  = ToSimSpaceVec(velL);
                     life = particleStartLifetime;
                     rotationPhase = 0.0;
+                    birthEmitterVelocityWS =
+                        _InheritVelocityEnabled != 0 &&
+                        _InheritVelocityMode == 0 &&
+                        _SimulationSpace == 1
+                            ? _EmitterVelocityWS
+                            : 0.0;
                     
                     float tSpawn = 0.0;
                     float4 lutColSpawn = ColorOverLifetime(id, tSpawn);
@@ -1082,6 +1129,19 @@ Shader "Hidden/GPUParticles/SimulateMRT"
                         1.0 - (life / max(particleStartLifetime, 1e-5)));
                     float speedBeforeStep = length(vel);
 
+                    // Stored velocity includes the prior frame's inherited component
+                    // so rendering and by-speed modules see effective motion. Remove it
+                    // before updating the underlying particle velocity.
+                    if (!spawn && _InheritVelocityEnabled != 0 &&
+                        _SimulationSpace == 1)
+                    {
+                        vel -= InheritVelocityContribution(
+                            id,
+                            normalizedAgeBeforeStep,
+                            birthEmitterVelocityWS,
+                            _EmitterPreviousVelocityWS);
+                    }
+
                     // Gravity is already in simulation space. Force over Lifetime is
                     // sampled with Shuriken's stable per-particle MinMax random values.
                     float3 acceleration = particleGravity;
@@ -1114,6 +1174,11 @@ Shader "Hidden/GPUParticles/SimulateMRT"
                             normalizedAgeAfterStep,
                             stepDt);
                     }
+                    vel += InheritVelocityContribution(
+                        id,
+                        normalizedAgeAfterStep,
+                        birthEmitterVelocityWS,
+                        _EmitterVelocityWS);
                     pos += vel * stepDt;
 
                     // lifetime normalized 0..1 (0 birth, 1 death)
@@ -1157,12 +1222,13 @@ Shader "Hidden/GPUParticles/SimulateMRT"
                     size = 0.0;
                     col.a = 0.0;
                     rotationPhase = 0.0;
+                    birthEmitterVelocityWS = 0.0;
                 }
 
                 o.PosLife = float4(pos, life);
                 o.VelSize = float4(vel, size);
                 o.Color   = col;
-                o.RotationPhase = rotationPhase;
+                o.ModuleState = float4(rotationPhase, birthEmitterVelocityWS);
                 return o;
             }
             ENDHLSL

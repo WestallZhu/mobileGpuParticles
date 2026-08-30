@@ -48,6 +48,7 @@ namespace GPUParticles
         private float lastForceLUTUpdate = 0f;
         private float lastVelocityLUTUpdate = 0f;
         private float lastLimitVelocityLUTUpdate = 0f;
+        private float lastInheritVelocityLUTUpdate = 0f;
         private float lastColorBySpeedLUTUpdate = 0f;
         private float lastSizeBySpeedLUTUpdate = 0f;
         private float lastRotationLUTUpdate = 0f;
@@ -56,6 +57,7 @@ namespace GPUParticles
         private Texture2D generatedForceLUT;
         private Texture2D generatedVelocityLUT;
         private Texture2D generatedLimitVelocityLUT;
+        private Texture2D generatedInheritVelocityLUT;
         private Texture2D generatedColorLUT;
         private Texture2D generatedSizeLUT;
         private Texture2D generatedColorBySpeedLUT;
@@ -103,6 +105,7 @@ namespace GPUParticles
             SyncForceOverLifetime(true);
             SyncVelocityOverLifetime(true);
             SyncLimitVelocityOverLifetime(true);
+            SyncInheritVelocity(true);
             SyncRendererParameters(true);
             SyncRotationParameters(true);
             SyncMaterialParameters(true);
@@ -170,6 +173,7 @@ namespace GPUParticles
             SyncForceOverLifetime();
             SyncVelocityOverLifetime();
             SyncLimitVelocityOverLifetime();
+            SyncInheritVelocity();
             SyncRendererParameters();
             SyncRotationParameters();
             SyncMaterialParameters();
@@ -545,11 +549,40 @@ namespace GPUParticles
             lastLimitVelocityLUTUpdate = Time.realtimeSinceStartup;
         }
 
+        void SyncInheritVelocity(bool forceUpdate = false)
+        {
+            var inherit = sourceParticleSystem.inheritVelocity;
+            bool timeToUpdate =
+                Time.realtimeSinceStartup - lastInheritVelocityLUTUpdate >
+                LUT_UPDATE_INTERVAL;
+            if (!forceUpdate && !timeToUpdate) return;
+
+            targetGPUParticleSystem.inheritVelocityEnabled = inherit.enabled;
+            targetGPUParticleSystem.inheritVelocityMode = inherit.mode;
+
+            DestroyGeneratedInheritVelocityLUT();
+            if (inherit.enabled)
+            {
+                generatedInheritVelocityLUT =
+                    CurveLUTBuilder.BuildSigned(inherit.curve);
+                targetGPUParticleSystem.inheritVelocityLUT =
+                    generatedInheritVelocityLUT;
+            }
+            else
+            {
+                targetGPUParticleSystem.inheritVelocityLUT =
+                    CurveLUTBuilder.GetDefaultZeroLUT();
+            }
+
+            lastInheritVelocityLUTUpdate = Time.realtimeSinceStartup;
+        }
+
         void OnDestroy()
         {
             DestroyGeneratedForceLUT();
             DestroyGeneratedVelocityLUT();
             DestroyGeneratedLimitVelocityLUT();
+            DestroyGeneratedInheritVelocityLUT();
             DestroyGeneratedColorLUT();
             DestroyGeneratedSizeLUT();
             DestroyGeneratedColorBySpeedLUT();
@@ -583,6 +616,15 @@ namespace GPUParticles
             if (Application.isPlaying) Destroy(generatedLimitVelocityLUT);
             else DestroyImmediate(generatedLimitVelocityLUT);
             generatedLimitVelocityLUT = null;
+        }
+
+        void DestroyGeneratedInheritVelocityLUT()
+        {
+            if (generatedInheritVelocityLUT == null) return;
+
+            if (Application.isPlaying) Destroy(generatedInheritVelocityLUT);
+            else DestroyImmediate(generatedInheritVelocityLUT);
+            generatedInheritVelocityLUT = null;
         }
 
         void DestroyGeneratedColorLUT()

@@ -35,6 +35,7 @@ namespace GPUParticles
             ApplyForceOverLifetime(ps, gpu, owner);
             ApplyVelocityOverLifetime(ps, gpu, owner);
             ApplyLimitVelocityOverLifetime(ps, gpu);
+            ApplyInheritVelocity(ps, gpu, owner);
 
             ApplyEmission(ps, gpu, owner);
             ApplyColorAndSizeOverLifetime(ps, gpu, owner);
@@ -271,6 +272,7 @@ namespace GPUParticles
             ApplyForceOverLifetime(particleSystem, gpu, gpuChild);
             ApplyVelocityOverLifetime(particleSystem, gpu, gpuChild);
             ApplyLimitVelocityOverLifetime(particleSystem, gpu);
+            ApplyInheritVelocity(particleSystem, gpu, gpuChild);
 
             ApplyEmission(particleSystem, gpu, gpuChild);
             ApplyColorAndSizeOverLifetime(particleSystem, gpu, gpuChild);
@@ -760,6 +762,34 @@ namespace GPUParticles
                     saveAsAsset: true,
                     assetName: "LimitVelocityOverLifetime_LUT")
                 : LimitVelocityLUTBuilder.GetDefaultZeroLUT();
+        }
+
+        static void ApplyInheritVelocity(
+            ParticleSystem particleSystem,
+            GPUParticleSystem gpu,
+            Object context)
+        {
+            var inherit = particleSystem.inheritVelocity;
+            gpu.inheritVelocityEnabled = inherit.enabled;
+            gpu.inheritVelocityMode = inherit.mode;
+            gpu.inheritVelocityLUT = inherit.enabled
+                ? CurveLUTBuilder.BuildSigned(
+                    inherit.curve,
+                    saveAsAsset: true,
+                    assetName: "InheritVelocity_LUT")
+                : CurveLUTBuilder.GetDefaultZeroLUT();
+
+            if (!inherit.enabled) return;
+
+            var main = particleSystem.main;
+            if (main.emitterVelocityMode !=
+                ParticleSystemEmitterVelocityMode.Transform)
+            {
+                Debug.LogWarning(
+                    "Inherit Velocity currently derives emitter velocity from Transform movement; " +
+                    "Rigidbody and Custom modes are not supported.",
+                    context);
+            }
         }
 
         static void ApplyEmission(

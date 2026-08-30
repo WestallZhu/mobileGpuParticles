@@ -108,6 +108,12 @@ namespace GPUParticles
         public bool limitVelocityMultiplyDragBySize;
         public bool limitVelocityMultiplyDragByVelocity;
 
+        [Header("Inherit Velocity")]
+        public bool inheritVelocityEnabled;
+        public Texture2D inheritVelocityLUT;
+        public ParticleSystemInheritVelocityMode inheritVelocityMode =
+            ParticleSystemInheritVelocityMode.Initial;
+
         [Header("Rendering")]
         public Texture2D baseMap;
         [Range(0,1)] public float minAlphaCull = 0.001f;
@@ -192,6 +198,7 @@ namespace GPUParticles
         float emissionTime;
         Vector3 previousEmitterPositionWS;
         bool previousEmitterPositionValid;
+        Vector3 previousEmitterVelocityWS;
         uint simulationTick;
         int lastSimulatedFrame = -1;
         const int MaxBurstGroupsPerStep = 8;
@@ -277,6 +284,18 @@ namespace GPUParticles
             Shader.PropertyToID("_LimitVelocityMultiplyDragBySize");
         static readonly int _LimitVelocityMultiplyDragByVelocity =
             Shader.PropertyToID("_LimitVelocityMultiplyDragByVelocity");
+        static readonly int _InheritVelocityLUT =
+            Shader.PropertyToID("_InheritVelocityLUT");
+        static readonly int _InheritVelocityLUTInvWidth =
+            Shader.PropertyToID("_InheritVelocityLUTInvWidth");
+        static readonly int _InheritVelocityEnabled =
+            Shader.PropertyToID("_InheritVelocityEnabled");
+        static readonly int _InheritVelocityMode =
+            Shader.PropertyToID("_InheritVelocityMode");
+        static readonly int _EmitterPreviousVelocityWS =
+            Shader.PropertyToID("_EmitterPreviousVelocityWS");
+        static readonly int _EmitterVelocityWS =
+            Shader.PropertyToID("_EmitterVelocityWS");
         static readonly int _ColorOverLifetimeMode = Shader.PropertyToID("_ColorOverLifetimeMode");
         static readonly int _GradLUTInvWidth = Shader.PropertyToID("_GradLUTInvWidth");
         static readonly int _SizeLUTInvWidth = Shader.PropertyToID("_SizeLUTInvWidth");
@@ -429,8 +448,10 @@ namespace GPUParticles
             CreateRT(ref velSize[1], RenderTextureFormat.ARGBFloat);
             CreateRT(ref colorRT[0], RenderTextureFormat.ARGBHalf);
             CreateRT(ref colorRT[1], RenderTextureFormat.ARGBHalf);
-            CreateRT(ref rotationPhaseRT[0], RenderTextureFormat.RFloat);
-            CreateRT(ref rotationPhaseRT[1], RenderTextureFormat.RFloat);
+            // X stores rotation phase. YZW stores the emitter velocity captured
+            // at birth for Inherit Velocity Initial mode, keeping the MRT count at 4.
+            CreateRT(ref rotationPhaseRT[0], RenderTextureFormat.ARGBFloat);
+            CreateRT(ref rotationPhaseRT[1], RenderTextureFormat.ARGBFloat);
 
             ClearRT(posLife[0]); ClearRT(posLife[1]);
             ClearRT(velSize[0]); ClearRT(velSize[1]);
@@ -444,6 +465,7 @@ namespace GPUParticles
             emissionTime = 0f;
             previousEmitterPositionWS = transform.position;
             previousEmitterPositionValid = true;
+            previousEmitterVelocityWS = Vector3.zero;
             stepBurstGroupCount = 0;
             System.Array.Clear(stepBurstCounts, 0, stepBurstCounts.Length);
             System.Array.Clear(stepBurstAges, 0, stepBurstAges.Length);
@@ -1150,6 +1172,10 @@ namespace GPUParticles
                 : emitterCurrentPositionWS;
             float emitterDistance = Vector3.Distance(
                 emitterPreviousPositionWS, emitterCurrentPositionWS);
+            Vector3 emitterVelocityWS = dt > 1e-6f
+                ? (emitterCurrentPositionWS - emitterPreviousPositionWS) / dt
+                : Vector3.zero;
+            Vector3 emitterVelocityBeforeStepWS = previousEmitterVelocityWS;
             float stepStart = emissionTime;
             float stepEnd = stepStart + dt;
             float startDelay = ResolveEmissionStartDelay();
@@ -1222,6 +1248,7 @@ namespace GPUParticles
             emissionTime = stepEnd;
             previousEmitterPositionWS = emitterCurrentPositionWS;
             previousEmitterPositionValid = true;
+            previousEmitterVelocityWS = emitterVelocityWS;
 
             int src = ping, dst = 1 - ping;
 
@@ -1253,6 +1280,9 @@ namespace GPUParticles
             Texture2D selectedLimitVelocityLUT = limitVelocityOverLifetimeLUT != null
                 ? limitVelocityOverLifetimeLUT
                 : LimitVelocityLUTBuilder.GetDefaultZeroLUT();
+            Texture2D selectedInheritVelocityLUT = inheritVelocityLUT != null
+                ? inheritVelocityLUT
+                : CurveLUTBuilder.GetDefaultZeroLUT();
 
             simulateMaterial.SetTexture("_GradLUT", selectedColorOverLifetimeLUT);
             simulateMaterial.SetTexture("_SizeLUT", selectedSizeOverLifetimeLUT);
@@ -1266,6 +1296,8 @@ namespace GPUParticles
                 _VelocityOverLifetimeLUT, selectedVelocityOverLifetimeLUT);
             simulateMaterial.SetTexture(
                 _LimitVelocityLUT, selectedLimitVelocityLUT);
+            simulateMaterial.SetTexture(
+                _InheritVelocityLUT, selectedInheritVelocityLUT);
             simulateMaterial.SetFloat(
                 _GradLUTInvWidth, InverseTextureWidth(selectedColorOverLifetimeLUT));
             simulateMaterial.SetFloat(
@@ -1286,6 +1318,9 @@ namespace GPUParticles
             simulateMaterial.SetFloat(
                 _LimitVelocityLUTInvWidth,
                 InverseTextureWidth(selectedLimitVelocityLUT));
+            simulateMaterial.SetFloat(
+                _InheritVelocityLUTInvWidth,
+                InverseTextureWidth(selectedInheritVelocityLUT));
 
             simulateMaterial.SetInt(_GridSize, gridSize);
             simulateMaterial.SetInt(_MaxParticles, maxParticles);
@@ -1356,6 +1391,12 @@ namespace GPUParticles
             simulateMaterial.SetInt(
                 _LimitVelocityMultiplyDragByVelocity,
                 limitVelocityMultiplyDragByVelocity ? 1 : 0);
+            simulateMaterial.SetInt(
+                _InheritVelocityEnabled,
+                inheritVelocityEnabled ? 1 : 0);
+            simulateMaterial.SetInt(
+                _InheritVelocityMode,
+                (int)inheritVelocityMode);
             simulateMaterial.SetInt(_ColorOverLifetimeMode, (int)colorOverLifetimeMode);
             simulateMaterial.SetInt(_ColorBySpeedEnabled, colorBySpeedEnabled ? 1 : 0);
             simulateMaterial.SetInt(_ColorBySpeedMode, (int)colorBySpeedMode);
@@ -1455,6 +1496,18 @@ namespace GPUParticles
                     emitterCurrentPositionWS.x,
                     emitterCurrentPositionWS.y,
                     emitterCurrentPositionWS.z,
+                    0f));
+            simulateMaterial.SetVector(_EmitterPreviousVelocityWS,
+                new Vector4(
+                    emitterVelocityBeforeStepWS.x,
+                    emitterVelocityBeforeStepWS.y,
+                    emitterVelocityBeforeStepWS.z,
+                    0f));
+            simulateMaterial.SetVector(_EmitterVelocityWS,
+                new Vector4(
+                    emitterVelocityWS.x,
+                    emitterVelocityWS.y,
+                    emitterVelocityWS.z,
                     0f));
 
             var mrt = new RenderTargetIdentifier[] {

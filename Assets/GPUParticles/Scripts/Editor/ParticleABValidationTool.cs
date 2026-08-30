@@ -148,6 +148,36 @@ namespace GPUParticles.Editor
                 ParticleABValidationProfile.LimitVelocityOverLifetimeAxesPoint);
         }
 
+        [MenuItem("Tools/GPU Particles/Run Inherit Velocity Initial A-B RT Capture")]
+        public static void RunInheritVelocityInitialCaptureMenu()
+        {
+            if (EditorApplication.isPlaying)
+            {
+                Debug.LogWarning("Stop Play Mode before starting a deterministic A/B capture.");
+                return;
+            }
+
+            if (!EditorSceneManager.SaveCurrentModifiedScenesIfUserWantsTo()) return;
+            StartCapture(
+                false,
+                ParticleABValidationProfile.InheritVelocityInitialPoint);
+        }
+
+        [MenuItem("Tools/GPU Particles/Run Inherit Velocity Current A-B RT Capture")]
+        public static void RunInheritVelocityCurrentCaptureMenu()
+        {
+            if (EditorApplication.isPlaying)
+            {
+                Debug.LogWarning("Stop Play Mode before starting a deterministic A/B capture.");
+                return;
+            }
+
+            if (!EditorSceneManager.SaveCurrentModifiedScenesIfUserWantsTo()) return;
+            StartCapture(
+                false,
+                ParticleABValidationProfile.InheritVelocityCurrentPoint);
+        }
+
         [MenuItem("Tools/GPU Particles/Run Rotation over Lifetime A-B RT Capture")]
         public static void RunRotationOverLifetimeCaptureMenu()
         {
@@ -269,6 +299,22 @@ namespace GPUParticles.Editor
             StartCapture(
                 true,
                 ParticleABValidationProfile.LimitVelocityOverLifetimeAxesPoint);
+        }
+
+        public static void RunBatchInheritVelocityInitialCapture()
+        {
+            ValidateCommonFeatureMapping();
+            StartCapture(
+                true,
+                ParticleABValidationProfile.InheritVelocityInitialPoint);
+        }
+
+        public static void RunBatchInheritVelocityCurrentCapture()
+        {
+            ValidateCommonFeatureMapping();
+            StartCapture(
+                true,
+                ParticleABValidationProfile.InheritVelocityCurrentPoint);
         }
 
         public static void RunBatchRotationOverLifetimeCapture()
@@ -403,6 +449,8 @@ namespace GPUParticles.Editor
                 case ParticleABValidationProfile.VelocityOverLifetimePoint: return 3f;
                 case ParticleABValidationProfile.LimitVelocityOverLifetimePoint: return 3.5f;
                 case ParticleABValidationProfile.LimitVelocityOverLifetimeAxesPoint: return 2.5f;
+                case ParticleABValidationProfile.InheritVelocityInitialPoint: return 3.2f;
+                case ParticleABValidationProfile.InheritVelocityCurrentPoint: return 3.2f;
                 case ParticleABValidationProfile.RotationOverLifetimeCurvePoint: return 2.5f;
                 case ParticleABValidationProfile.RotationBySpeedCurvePoint: return 2.5f;
                 case ParticleABValidationProfile.ColorSizeOverLifetimeRandomizedPoint: return 2f;
@@ -415,7 +463,9 @@ namespace GPUParticles.Editor
         {
             return profile == ParticleABValidationProfile.EmissionBurstPoint ||
                    profile == ParticleABValidationProfile.EmissionRateCurvePoint ||
-                   profile == ParticleABValidationProfile.EmissionRateDistancePoint
+                   profile == ParticleABValidationProfile.EmissionRateDistancePoint ||
+                   profile == ParticleABValidationProfile.InheritVelocityInitialPoint ||
+                   profile == ParticleABValidationProfile.InheritVelocityCurrentPoint
                 ? 20f
                 : 5f;
         }
@@ -442,6 +492,10 @@ namespace GPUParticles.Editor
                     return "TestResults/ParticleLimitVelocityOverLifetime";
                 case ParticleABValidationProfile.LimitVelocityOverLifetimeAxesPoint:
                     return "TestResults/ParticleLimitVelocityAxes";
+                case ParticleABValidationProfile.InheritVelocityInitialPoint:
+                    return "TestResults/ParticleInheritVelocityInitial";
+                case ParticleABValidationProfile.InheritVelocityCurrentPoint:
+                    return "TestResults/ParticleInheritVelocityCurrent";
                 case ParticleABValidationProfile.RotationOverLifetimeCurvePoint:
                     return "TestResults/ParticleRotationOverLifetime";
                 case ParticleABValidationProfile.RotationBySpeedCurvePoint:
@@ -462,6 +516,7 @@ namespace GPUParticles.Editor
             Texture2D firstForceLUT = null;
             Texture2D firstVelocityLUT = null;
             Texture2D firstLimitVelocityLUT = null;
+            Texture2D firstInheritVelocityLUT = null;
             Texture2D firstRotationLUT = null;
             Texture2D firstRotationBySpeedLUT = null;
             Texture2D firstColorLUT = null;
@@ -474,6 +529,8 @@ namespace GPUParticles.Editor
             string secondVelocityAssetPath = null;
             string firstLimitVelocityAssetPath = null;
             string secondLimitVelocityAssetPath = null;
+            string firstInheritVelocityAssetPath = null;
+            string secondInheritVelocityAssetPath = null;
             string firstRotationAssetPath = null;
             string secondRotationAssetPath = null;
             string firstRotationBySpeedAssetPath = null;
@@ -500,6 +557,9 @@ namespace GPUParticles.Editor
                 main.duration = 2f;
                 main.loop = true;
                 main.startDelay = new ParticleSystem.MinMaxCurve(0.1f, 0.2f);
+                main.simulationSpace = ParticleSystemSimulationSpace.World;
+                main.emitterVelocityMode =
+                    ParticleSystemEmitterVelocityMode.Transform;
 
                 var rotationOverLifetime = shuriken.rotationOverLifetime;
                 rotationOverLifetime.enabled = true;
@@ -566,6 +626,14 @@ namespace GPUParticles.Editor
                     AnimationCurve.Linear(0f, 0.5f, 1f, 0.7f));
                 limitVelocity.multiplyDragByParticleSize = true;
                 limitVelocity.multiplyDragByParticleVelocity = true;
+
+                var inheritVelocity = shuriken.inheritVelocity;
+                inheritVelocity.enabled = true;
+                inheritVelocity.mode = ParticleSystemInheritVelocityMode.Current;
+                inheritVelocity.curve = new ParticleSystem.MinMaxCurve(
+                    1f,
+                    AnimationCurve.Linear(0f, -0.5f, 1f, 0.25f),
+                    AnimationCurve.Linear(0f, 1.5f, 1f, 0.75f));
 
                 Gradient minimumGradient = CreateGradient(
                     new Color(0.2f, 0.1f, 0.3f, 0.8f),
@@ -705,6 +773,14 @@ namespace GPUParticles.Editor
                 Require(gpu.limitVelocityOverLifetimeLUT != null &&
                         gpu.limitVelocityOverLifetimeLUT.height == 2,
                     "Limit Velocity and Drag minimum/maximum LUT rows were not generated.");
+                Require(gpu.inheritVelocityEnabled,
+                    "Inherit Velocity enabled state was not mapped.");
+                Require(gpu.inheritVelocityMode ==
+                        ParticleSystemInheritVelocityMode.Current,
+                    "Inherit Velocity mode was not mapped.");
+                Require(gpu.inheritVelocityLUT != null &&
+                        gpu.inheritVelocityLUT.height == 2,
+                    "Inherit Velocity signed minimum/maximum LUT rows were not generated.");
                 Require(gpu.colorOverLifetimeMode == ParticleSystemGradientMode.TwoGradients,
                     "Color over Lifetime Two Gradients mode was not mapped.");
                 Require(gpu.colorOverLifetimeLUT != null &&
@@ -886,6 +962,28 @@ namespace GPUParticles.Editor
                     new Color(8f, 3f, 5f, 0.7f),
                     "Limit Velocity maximum end");
 
+                firstInheritVelocityLUT = gpu.inheritVelocityLUT;
+                firstInheritVelocityAssetPath =
+                    AssetDatabase.GetAssetPath(firstInheritVelocityLUT);
+                RequireApproximately(
+                    firstInheritVelocityLUT.GetPixel(0, 0).r,
+                    -0.5f,
+                    "Inherit Velocity minimum start");
+                RequireApproximately(
+                    firstInheritVelocityLUT.GetPixel(
+                        firstInheritVelocityLUT.width - 1, 0).r,
+                    0.25f,
+                    "Inherit Velocity minimum end");
+                RequireApproximately(
+                    firstInheritVelocityLUT.GetPixel(0, 1).r,
+                    1.5f,
+                    "Inherit Velocity maximum start");
+                RequireApproximately(
+                    firstInheritVelocityLUT.GetPixel(
+                        firstInheritVelocityLUT.width - 1, 1).r,
+                    0.75f,
+                    "Inherit Velocity maximum end");
+
                 if (string.IsNullOrEmpty(firstForceAssetPath))
                 {
                     Object.DestroyImmediate(firstForceLUT);
@@ -906,6 +1004,13 @@ namespace GPUParticles.Editor
                 }
                 firstLimitVelocityLUT = null;
                 gpu.limitVelocityOverLifetimeLUT = null;
+
+                if (string.IsNullOrEmpty(firstInheritVelocityAssetPath))
+                {
+                    Object.DestroyImmediate(firstInheritVelocityLUT);
+                }
+                firstInheritVelocityLUT = null;
+                gpu.inheritVelocityLUT = null;
 
                 if (string.IsNullOrEmpty(firstRotationAssetPath))
                 {
@@ -1003,6 +1108,17 @@ namespace GPUParticles.Editor
                     gpu.limitVelocityOverLifetimeLUT = null;
                 }
 
+                if (gpu.inheritVelocityLUT != null)
+                {
+                    secondInheritVelocityAssetPath =
+                        AssetDatabase.GetAssetPath(gpu.inheritVelocityLUT);
+                    if (string.IsNullOrEmpty(secondInheritVelocityAssetPath))
+                    {
+                        Object.DestroyImmediate(gpu.inheritVelocityLUT);
+                    }
+                    gpu.inheritVelocityLUT = null;
+                }
+
                 if (gpu.rotationOverLifetimeIntegralLUT != null)
                 {
                     secondRotationAssetPath =
@@ -1087,6 +1203,11 @@ namespace GPUParticles.Editor
                 {
                     Object.DestroyImmediate(firstLimitVelocityLUT);
                 }
+                if (firstInheritVelocityLUT != null &&
+                    string.IsNullOrEmpty(firstInheritVelocityAssetPath))
+                {
+                    Object.DestroyImmediate(firstInheritVelocityLUT);
+                }
                 if (firstRotationLUT != null &&
                     string.IsNullOrEmpty(firstRotationAssetPath))
                 {
@@ -1142,6 +1263,15 @@ namespace GPUParticles.Editor
                     secondLimitVelocityAssetPath != firstLimitVelocityAssetPath)
                 {
                     AssetDatabase.DeleteAsset(secondLimitVelocityAssetPath);
+                }
+                if (!string.IsNullOrEmpty(firstInheritVelocityAssetPath))
+                {
+                    AssetDatabase.DeleteAsset(firstInheritVelocityAssetPath);
+                }
+                if (!string.IsNullOrEmpty(secondInheritVelocityAssetPath) &&
+                    secondInheritVelocityAssetPath != firstInheritVelocityAssetPath)
+                {
+                    AssetDatabase.DeleteAsset(secondInheritVelocityAssetPath);
                 }
                 if (!string.IsNullOrEmpty(firstRotationAssetPath))
                 {

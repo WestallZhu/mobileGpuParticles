@@ -25,6 +25,8 @@ namespace GPUParticles
         VelocityOverLifetimePoint,
         LimitVelocityOverLifetimePoint,
         LimitVelocityOverLifetimeAxesPoint,
+        InheritVelocityInitialPoint,
+        InheritVelocityCurrentPoint,
         RotationOverLifetimeCurvePoint,
         RotationBySpeedCurvePoint,
         ColorSizeOverLifetimeRandomizedPoint,
@@ -86,6 +88,7 @@ namespace GPUParticles
         Texture2D profileForceLUT;
         Texture2D profileVelocityLUT;
         Texture2D profileLimitVelocityLUT;
+        Texture2D profileInheritVelocityLUT;
         Texture2D profileColorLUT;
         Texture2D profileSizeLUT;
         Texture2D profileRotationLUT;
@@ -186,6 +189,7 @@ namespace GPUParticles
             if (profileForceLUT != null) Destroy(profileForceLUT);
             if (profileVelocityLUT != null) Destroy(profileVelocityLUT);
             if (profileLimitVelocityLUT != null) Destroy(profileLimitVelocityLUT);
+            if (profileInheritVelocityLUT != null) Destroy(profileInheritVelocityLUT);
             if (profileColorLUT != null) Destroy(profileColorLUT);
             if (profileSizeLUT != null) Destroy(profileSizeLUT);
             if (profileRotationLUT != null) Destroy(profileRotationLUT);
@@ -195,8 +199,7 @@ namespace GPUParticles
 
         void Update()
         {
-            if (captureActive &&
-                validationProfile == ParticleABValidationProfile.EmissionRateDistancePoint)
+            if (captureActive && UsesMovingEmitterProfile())
             {
                 float nextSimulationTime = (playbackFrame + 1f) / fixedFrameRate;
                 MoveValidationEmitters(nextSimulationTime);
@@ -295,6 +298,22 @@ namespace GPUParticles
                 return;
             }
 
+            if (validationProfile ==
+                ParticleABValidationProfile.InheritVelocityInitialPoint)
+            {
+                ConfigureInheritVelocityProfile(
+                    ParticleSystemInheritVelocityMode.Initial);
+                return;
+            }
+
+            if (validationProfile ==
+                ParticleABValidationProfile.InheritVelocityCurrentPoint)
+            {
+                ConfigureInheritVelocityProfile(
+                    ParticleSystemInheritVelocityMode.Current);
+                return;
+            }
+
             if (validationProfile == ParticleABValidationProfile.RotationOverLifetimeCurvePoint)
             {
                 ConfigureRotationOverLifetimeProfile();
@@ -361,6 +380,8 @@ namespace GPUParticles
             velocityOverLifetime.enabled = false;
             var limitVelocity = shuriken.limitVelocityOverLifetime;
             limitVelocity.enabled = false;
+            var inheritVelocity = shuriken.inheritVelocity;
+            inheritVelocity.enabled = false;
 
             gpuParticles.maxParticles = main.maxParticles;
             gpuParticles.emissionEnabled = true;
@@ -408,6 +429,10 @@ namespace GPUParticles
             gpuParticles.limitVelocityMultiplyDragByVelocity = false;
             gpuParticles.limitVelocityOverLifetimeLUT =
                 LimitVelocityLUTBuilder.GetDefaultZeroLUT();
+            gpuParticles.inheritVelocityEnabled = false;
+            gpuParticles.inheritVelocityMode =
+                ParticleSystemInheritVelocityMode.Initial;
+            gpuParticles.inheritVelocityLUT = CurveLUTBuilder.GetDefaultZeroLUT();
         }
 
         void ConfigureRandomizedMainProfile()
@@ -448,6 +473,8 @@ namespace GPUParticles
             force.enabled = false;
             var velocityOverLifetime = shuriken.velocityOverLifetime;
             velocityOverLifetime.enabled = false;
+            var inheritVelocity = shuriken.inheritVelocity;
+            inheritVelocity.enabled = false;
 
             gpuParticles.maxParticles = main.maxParticles;
             gpuParticles.emissionEnabled = true;
@@ -483,6 +510,8 @@ namespace GPUParticles
             gpuParticles.velocityOverLifetimeEnabled = false;
             gpuParticles.velocityOverLifetimeLUT =
                 MinMaxCurveVector3LUTBuilder.GetDefaultZeroLUT();
+            gpuParticles.inheritVelocityEnabled = false;
+            gpuParticles.inheritVelocityLUT = CurveLUTBuilder.GetDefaultZeroLUT();
         }
 
         void ConfigureEmissionBurstProfile()
@@ -699,6 +728,48 @@ namespace GPUParticles
                 assetName: "LimitVelocityOverLifetimeAxes_Profile_LUT");
             gpuParticles.limitVelocityOverLifetimeLUT =
                 profileLimitVelocityLUT;
+        }
+
+        void ConfigureInheritVelocityProfile(
+            ParticleSystemInheritVelocityMode mode)
+        {
+            ConfigureEmissionPointBase(5f, true);
+
+            var main = shuriken.main;
+            main.startLifetime = 4f;
+            main.startSpeed = 0f;
+            main.simulationSpace = ParticleSystemSimulationSpace.World;
+            main.emitterVelocityMode =
+                ParticleSystemEmitterVelocityMode.Transform;
+            gpuParticles.SetStartLifetimeRange(4f, 4f);
+            gpuParticles.SetStartSpeedRange(0f, 0f);
+            gpuParticles.simulationSpace = SimulationSpace.World;
+
+            var emission = shuriken.emission;
+            emission.rateOverTime = 12f;
+            emission.rateOverDistance = 0f;
+            emission.SetBursts(Array.Empty<ParticleSystem.Burst>());
+            gpuParticles.SetEmissionRateOverTime(emission.rateOverTime);
+            gpuParticles.SetEmissionRateOverDistance(emission.rateOverDistance);
+            gpuParticles.SetEmissionBursts(Array.Empty<ParticleSystem.Burst>());
+
+            var inherit = shuriken.inheritVelocity;
+            inherit.enabled = true;
+            inherit.mode = mode;
+            inherit.curve = new ParticleSystem.MinMaxCurve(
+                1f,
+                AnimationCurve.Linear(0f, 1f, 1f, 0.25f));
+
+            if (profileInheritVelocityLUT != null)
+            {
+                Destroy(profileInheritVelocityLUT);
+            }
+            profileInheritVelocityLUT = CurveLUTBuilder.BuildSigned(
+                inherit.curve,
+                assetName: "InheritVelocity_Profile_LUT");
+            gpuParticles.inheritVelocityEnabled = true;
+            gpuParticles.inheritVelocityMode = mode;
+            gpuParticles.inheritVelocityLUT = profileInheritVelocityLUT;
         }
 
         void ConfigureRotationOverLifetimeProfile()
@@ -993,6 +1064,8 @@ namespace GPUParticles
             main.gravityModifier = 0f;
             main.simulationSpeed = 1f;
             main.simulationSpace = ParticleSystemSimulationSpace.Local;
+            main.emitterVelocityMode =
+                ParticleSystemEmitterVelocityMode.Transform;
 
             var emission = shuriken.emission;
             emission.enabled = true;
@@ -1013,6 +1086,8 @@ namespace GPUParticles
             velocityOverLifetime.enabled = false;
             var limitVelocity = shuriken.limitVelocityOverLifetime;
             limitVelocity.enabled = false;
+            var inheritVelocity = shuriken.inheritVelocity;
+            inheritVelocity.enabled = false;
 
             gpuParticles.maxParticles = main.maxParticles;
             gpuParticles.emissionEnabled = true;
@@ -1053,6 +1128,10 @@ namespace GPUParticles
             gpuParticles.limitVelocityMultiplyDragByVelocity = false;
             gpuParticles.limitVelocityOverLifetimeLUT =
                 LimitVelocityLUTBuilder.GetDefaultZeroLUT();
+            gpuParticles.inheritVelocityEnabled = false;
+            gpuParticles.inheritVelocityMode =
+                ParticleSystemInheritVelocityMode.Initial;
+            gpuParticles.inheritVelocityLUT = CurveLUTBuilder.GetDefaultZeroLUT();
         }
 
         public void RestartPlayback()
@@ -1086,7 +1165,28 @@ namespace GPUParticles
 
         void MoveValidationEmitters(float elapsed)
         {
-            Vector3 offset = Vector3.right * Mathf.Max(0f, elapsed);
+            elapsed = Mathf.Max(0f, elapsed);
+            float position;
+            if (validationProfile ==
+                    ParticleABValidationProfile.InheritVelocityInitialPoint ||
+                validationProfile ==
+                    ParticleABValidationProfile.InheritVelocityCurrentPoint)
+            {
+                // Move at +2 units/s, reverse at -1 unit/s, then stop. Initial
+                // particles retain their birth velocity; Current particles follow
+                // both changes, making the two modes independently observable.
+                position = elapsed <= 1f
+                    ? 2f * elapsed
+                    : elapsed <= 2f
+                        ? 3f - elapsed
+                        : 1f;
+            }
+            else
+            {
+                position = elapsed;
+            }
+
+            Vector3 offset = Vector3.right * position;
             if (shuriken != null)
             {
                 shuriken.transform.position = shurikenBasePositionWS + offset;
@@ -1095,6 +1195,24 @@ namespace GPUParticles
             {
                 gpuParticles.transform.position = gpuBasePositionWS + offset;
             }
+        }
+
+        bool UsesMovingEmitterProfile()
+        {
+            return validationProfile ==
+                       ParticleABValidationProfile.EmissionRateDistancePoint ||
+                   validationProfile ==
+                       ParticleABValidationProfile.InheritVelocityInitialPoint ||
+                   validationProfile ==
+                       ParticleABValidationProfile.InheritVelocityCurrentPoint;
+        }
+
+        bool IsInheritVelocityProfile()
+        {
+            return validationProfile ==
+                       ParticleABValidationProfile.InheritVelocityInitialPoint ||
+                   validationProfile ==
+                       ParticleABValidationProfile.InheritVelocityCurrentPoint;
         }
 
         public void SetDisplayMode(ParticleABDisplayMode mode)
@@ -1313,6 +1431,10 @@ namespace GPUParticles
                     shurikenSpeedSum += shurikenVelocity.magnitude;
                     float age = particle.startLifetime - particle.remainingLifetime;
                     shurikenAgeSum += age;
+                    if (IsInheritVelocityProfile())
+                    {
+                        shurikenSpeedRange.Observe(shurikenVelocity.magnitude);
+                    }
                     if (validationProfile == ParticleABValidationProfile.RandomizedMainPoint)
                     {
                         Color startColor = particle.startColor;
@@ -1470,6 +1592,10 @@ namespace GPUParticles
                 float particleStartLifetime = gpuParticles.ResolveStartLifetime(i);
                 float age = Mathf.Max(0f, particleStartLifetime - positionLife.a);
                 gpuAgeSum += age;
+                if (IsInheritVelocityProfile())
+                {
+                    gpuSpeedRange.Observe(gpuVelocity.magnitude);
+                }
                 if (validationProfile == ParticleABValidationProfile.RandomizedMainPoint)
                 {
                     gpuLifetimeRange.Observe(particleStartLifetime);
@@ -1631,7 +1757,11 @@ namespace GPUParticles
                  validationProfile ==
                      ParticleABValidationProfile.LimitVelocityOverLifetimePoint ||
                  validationProfile ==
-                     ParticleABValidationProfile.LimitVelocityOverLifetimeAxesPoint) &&
+                     ParticleABValidationProfile.LimitVelocityOverLifetimeAxesPoint ||
+                 validationProfile ==
+                     ParticleABValidationProfile.InheritVelocityInitialPoint ||
+                 validationProfile ==
+                     ParticleABValidationProfile.InheritVelocityCurrentPoint) &&
                 shurikenCount > 0 && gpuCount > 0)
             {
                 Vector3 shurikenMeanDisplacement =
@@ -1988,6 +2118,17 @@ namespace GPUParticles
                                             maximumGPULimitVelocityError <= 0.02f &&
                                             maximumShurikenParticleCount > 0 &&
                                             maximumGPUParticleCount > 0;
+                    break;
+
+                case ParticleABValidationProfile.InheritVelocityInitialPoint:
+                case ParticleABValidationProfile.InheritVelocityCurrentPoint:
+                    profileSpecificPassed = maximumMeanSpeedError <= 0.04f &&
+                                            maximumMeanVelocityError <= 0.05f &&
+                                            maximumMeanPositionError <= 0.06f &&
+                                            maximumShurikenParticleCount > 0 &&
+                                            maximumGPUParticleCount > 0 &&
+                                            shurikenSpeedRange.Covers(0f, 2f) &&
+                                            gpuSpeedRange.Covers(0f, 2f);
                     break;
 
                 case ParticleABValidationProfile.RotationOverLifetimeCurvePoint:
