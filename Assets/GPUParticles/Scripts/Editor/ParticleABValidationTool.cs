@@ -136,6 +136,37 @@ namespace GPUParticles.Editor
             StartCapture(false, profile);
         }
 
+        [MenuItem("Tools/GPU Particles/Run Start Rotation Curve A-B RT Capture")]
+        public static void RunStartRotationCurveCaptureMenu()
+        {
+            StartStartRotationCapture(
+                ParticleABValidationProfile.StartRotationCurvePoint);
+        }
+
+        [MenuItem("Tools/GPU Particles/Run Start Rotation Two Curves A-B RT Capture")]
+        public static void RunStartRotationTwoCurvesCaptureMenu()
+        {
+            StartStartRotationCapture(
+                ParticleABValidationProfile.StartRotationTwoCurvesPoint);
+        }
+
+        static void StartStartRotationCapture(
+            ParticleABValidationProfile profile)
+        {
+            if (EditorApplication.isPlaying)
+            {
+                Debug.LogWarning(
+                    "Stop Play Mode before starting a deterministic A/B capture.");
+                return;
+            }
+
+            if (!EditorSceneManager.SaveCurrentModifiedScenesIfUserWantsTo())
+            {
+                return;
+            }
+            StartCapture(false, profile);
+        }
+
         [MenuItem("Tools/GPU Particles/Run Start Speed Curve A-B RT Capture")]
         public static void RunStartSpeedCurveCaptureMenu()
         {
@@ -596,6 +627,22 @@ namespace GPUParticles.Editor
                 ParticleABValidationProfile.StartLifetimeTwoCurvesPoint);
         }
 
+        public static void RunBatchStartRotationCurveCapture()
+        {
+            ValidateCommonFeatureMapping();
+            StartCapture(
+                true,
+                ParticleABValidationProfile.StartRotationCurvePoint);
+        }
+
+        public static void RunBatchStartRotationTwoCurvesCapture()
+        {
+            ValidateCommonFeatureMapping();
+            StartCapture(
+                true,
+                ParticleABValidationProfile.StartRotationTwoCurvesPoint);
+        }
+
         public static void RunBatchStartSpeedCurveCapture()
         {
             ValidateCommonFeatureMapping();
@@ -919,6 +966,8 @@ namespace GPUParticles.Editor
                 case ParticleABValidationProfile.StartSizeTwoCurvesPoint:
                 case ParticleABValidationProfile.GravityModifierCurvePoint:
                 case ParticleABValidationProfile.GravityModifierTwoCurvesPoint:
+                case ParticleABValidationProfile.StartRotationCurvePoint:
+                case ParticleABValidationProfile.StartRotationTwoCurvesPoint:
                     return 2.5f;
                 case ParticleABValidationProfile.StartLifetimeCurvePoint:
                 case ParticleABValidationProfile.StartLifetimeTwoCurvesPoint:
@@ -961,6 +1010,8 @@ namespace GPUParticles.Editor
                    profile == ParticleABValidationProfile.StartColorRandomColorPoint ||
                    profile == ParticleABValidationProfile.StartLifetimeCurvePoint ||
                    profile == ParticleABValidationProfile.StartLifetimeTwoCurvesPoint ||
+                   profile == ParticleABValidationProfile.StartRotationCurvePoint ||
+                   profile == ParticleABValidationProfile.StartRotationTwoCurvesPoint ||
                    profile == ParticleABValidationProfile.StartSpeedCurvePoint ||
                    profile == ParticleABValidationProfile.StartSpeedTwoCurvesPoint ||
                    profile == ParticleABValidationProfile.StartSizeCurvePoint ||
@@ -1001,6 +1052,10 @@ namespace GPUParticles.Editor
                     return "TestResults/ParticleStartLifetimeCurve";
                 case ParticleABValidationProfile.StartLifetimeTwoCurvesPoint:
                     return "TestResults/ParticleStartLifetimeTwoCurves";
+                case ParticleABValidationProfile.StartRotationCurvePoint:
+                    return "TestResults/ParticleStartRotationCurve";
+                case ParticleABValidationProfile.StartRotationTwoCurvesPoint:
+                    return "TestResults/ParticleStartRotationTwoCurves";
                 case ParticleABValidationProfile.StartSpeedCurvePoint:
                     return "TestResults/ParticleStartSpeedCurve";
                 case ParticleABValidationProfile.StartSpeedTwoCurvesPoint:
@@ -1080,6 +1135,7 @@ namespace GPUParticles.Editor
             Texture2D firstRotationLUT = null;
             Texture2D firstRotationBySpeedLUT = null;
             Texture2D firstStartLifetimeLUT = null;
+            Texture2D firstStartRotationLUT = null;
             Texture2D firstStartSpeedLUT = null;
             Texture2D firstStartSizeLUT = null;
             Texture2D firstGravityModifierLUT = null;
@@ -1107,6 +1163,7 @@ namespace GPUParticles.Editor
             string firstRotationBySpeedAssetPath = null;
             string secondRotationBySpeedAssetPath = null;
             string firstStartLifetimeAssetPath = null;
+            string firstStartRotationAssetPath = null;
             string firstStartSpeedAssetPath = null;
             string firstStartSizeAssetPath = null;
             string firstGravityModifierAssetPath = null;
@@ -1166,7 +1223,14 @@ namespace GPUParticles.Editor
                     1f,
                     gravityMinimumCurve,
                     gravityMaximumCurve);
-                main.startRotation = new ParticleSystem.MinMaxCurve(-0.5f, 0.5f);
+                AnimationCurve startRotationMinimumCurve =
+                    AnimationCurve.Linear(0f, -0.75f, 1f, 0.25f);
+                AnimationCurve startRotationMaximumCurve =
+                    AnimationCurve.Linear(0f, 0.5f, 1f, 1.5f);
+                main.startRotation = new ParticleSystem.MinMaxCurve(
+                    1f,
+                    startRotationMinimumCurve,
+                    startRotationMaximumCurve);
                 main.duration = 2f;
                 main.loop = true;
                 main.startDelay = new ParticleSystem.MinMaxCurve(0.1f, 0.2f);
@@ -1460,8 +1524,33 @@ namespace GPUParticles.Editor
                         firstGravityModifierLUT.width - 1, 1).r,
                     1.5f,
                     "Gravity Modifier maximum Curve end");
-                Require(gpu.randomizeStartRotation,
-                    "Start Rotation Two Constants was not mapped.");
+                Require(gpu.startRotationMode ==
+                        ParticleSystemCurveMode.TwoCurves,
+                    "Start Rotation Two Curves mode was not mapped.");
+                Require(gpu.startRotationLUT != null &&
+                        gpu.startRotationLUT.height == 2,
+                    "Start Rotation minimum/maximum Curve LUT rows were not generated.");
+                firstStartRotationLUT = gpu.startRotationLUT;
+                firstStartRotationAssetPath =
+                    AssetDatabase.GetAssetPath(firstStartRotationLUT);
+                RequireApproximately(
+                    firstStartRotationLUT.GetPixel(0, 0).r,
+                    -0.75f,
+                    "Start Rotation minimum Curve start");
+                RequireApproximately(
+                    firstStartRotationLUT.GetPixel(
+                        firstStartRotationLUT.width - 1, 0).r,
+                    0.25f,
+                    "Start Rotation minimum Curve end");
+                RequireApproximately(
+                    firstStartRotationLUT.GetPixel(0, 1).r,
+                    0.5f,
+                    "Start Rotation maximum Curve start");
+                RequireApproximately(
+                    firstStartRotationLUT.GetPixel(
+                        firstStartRotationLUT.width - 1, 1).r,
+                    1.5f,
+                    "Start Rotation maximum Curve end");
                 Require(gpu.randomizeRotationOverLifetime,
                     "Rotation over Lifetime Two Curves endpoints were not mapped.");
                 Require(gpu.rotationOverLifetimeIntegralLUT != null &&
@@ -1877,6 +1966,13 @@ namespace GPUParticles.Editor
                 firstStartLifetimeLUT = null;
                 gpu.startLifetimeLUT = null;
 
+                if (string.IsNullOrEmpty(firstStartRotationAssetPath))
+                {
+                    Object.DestroyImmediate(firstStartRotationLUT);
+                }
+                firstStartRotationLUT = null;
+                gpu.startRotationLUT = null;
+
                 if (string.IsNullOrEmpty(firstStartSpeedAssetPath))
                 {
                     Object.DestroyImmediate(firstStartSpeedLUT);
@@ -2003,6 +2099,7 @@ namespace GPUParticles.Editor
                 main.startSize = new ParticleSystem.MinMaxCurve(0.5f, 1.5f);
                 main.gravityModifier =
                     new ParticleSystem.MinMaxCurve(0.25f, 0.75f);
+                main.startRotation = new ParticleSystem.MinMaxCurve(-0.5f, 0.5f);
                 emission.rateOverTime = new ParticleSystem.MinMaxCurve(4f, 8f);
                 textureSheet.rowMode = ParticleSystemAnimationRowMode.Random;
                 shape.enabled = true;
@@ -2055,6 +2152,14 @@ namespace GPUParticles.Editor
                     "Gravity Modifier Two Constants minimum");
                 RequireApproximately(gpu.gravityModifier, 0.75f,
                     "Gravity Modifier Two Constants maximum");
+                Require(gpu.startRotationMode ==
+                        ParticleSystemCurveMode.TwoConstants &&
+                        gpu.randomizeStartRotation,
+                    "Start Rotation Two Constants mode was not preserved.");
+                RequireApproximately(gpu.startRotationMin, -0.5f,
+                    "Start Rotation Two Constants minimum");
+                RequireApproximately(gpu.startRotation, 0.5f,
+                    "Start Rotation Two Constants maximum");
                 Require(gpu.textureSheetRowMode ==
                         ParticleSystemAnimationRowMode.Random,
                     "Texture Sheet Animation Random row mode was not mapped.");
@@ -2063,6 +2168,7 @@ namespace GPUParticles.Editor
                 gpu.startSpeedLUT = null;
                 gpu.startSizeLUT = null;
                 gpu.gravityModifierLUT = null;
+                gpu.startRotationLUT = null;
 
                 if (gpu.startColorLUT != null)
                 {
@@ -2237,6 +2343,11 @@ namespace GPUParticles.Editor
                 {
                     Object.DestroyImmediate(firstStartLifetimeLUT);
                 }
+                if (firstStartRotationLUT != null &&
+                    string.IsNullOrEmpty(firstStartRotationAssetPath))
+                {
+                    Object.DestroyImmediate(firstStartRotationLUT);
+                }
                 if (firstStartSpeedLUT != null &&
                     string.IsNullOrEmpty(firstStartSpeedAssetPath))
                 {
@@ -2325,6 +2436,10 @@ namespace GPUParticles.Editor
                 if (!string.IsNullOrEmpty(firstStartLifetimeAssetPath))
                 {
                     AssetDatabase.DeleteAsset(firstStartLifetimeAssetPath);
+                }
+                if (!string.IsNullOrEmpty(firstStartRotationAssetPath))
+                {
+                    AssetDatabase.DeleteAsset(firstStartRotationAssetPath);
                 }
                 if (!string.IsNullOrEmpty(firstStartSpeedAssetPath))
                 {

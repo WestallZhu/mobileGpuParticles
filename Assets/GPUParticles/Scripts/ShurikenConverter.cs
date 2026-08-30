@@ -578,8 +578,16 @@ namespace GPUParticles
                     "Start Rotation 3D X/Y axes are ignored for GPU billboards; mapping Z roll.",
                     context);
             }
-            GetCurveRange(startRotation, "Start Rotation", context, out minimum, out maximum);
+            ShurikenMinMaxUtility.TryGetConstantRange(
+                startRotation, out minimum, out maximum);
             gpu.SetStartRotationRange(minimum, maximum);
+            gpu.startRotationMode = startRotation.mode;
+            gpu.startRotationLUT = IsCurveMode(startRotation.mode)
+                ? CurveLUTBuilder.BuildSigned(
+                    startRotation,
+                    saveAsAsset: true,
+                    assetName: "StartRotation_LUT")
+                : CurveLUTBuilder.GetDefaultZeroLUT();
 
             var rotationOverLifetime = particleSystem.rotationOverLifetime;
             if (!rotationOverLifetime.enabled)
@@ -604,21 +612,6 @@ namespace GPUParticles
                     rotationCurve,
                     saveAsAsset: true,
                     assetName: "RotationOverLife_IntegralLUT");
-            }
-        }
-
-        static void GetCurveRange(
-            ParticleSystem.MinMaxCurve curve,
-            string label,
-            Object context,
-            out float minimum,
-            out float maximum)
-        {
-            if (!ShurikenMinMaxUtility.TryGetConstantRange(curve, out minimum, out maximum))
-            {
-                Debug.LogWarning(
-                    $"{label} Curve modes require system-time sampling and currently use the value at t=0.",
-                    context);
             }
         }
 

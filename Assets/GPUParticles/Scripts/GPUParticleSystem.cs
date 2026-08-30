@@ -72,6 +72,9 @@ namespace GPUParticles
         public Texture2D gravityModifierLUT;
         [Min(0.0f)] public float simulationSpeed = 1.0f;
         public float startRotation = 0.0f;
+        public ParticleSystemCurveMode startRotationMode =
+            ParticleSystemCurveMode.Constant;
+        public Texture2D startRotationLUT;
         public float rotationOverLifetime = 0.0f;
         public SimulationSpace simulationSpace = SimulationSpace.Local;
 
@@ -303,6 +306,12 @@ namespace GPUParticles
         static readonly int _StartRotation = Shader.PropertyToID("_StartRotation");
         static readonly int _StartRotationMin = Shader.PropertyToID("_StartRotationMin");
         static readonly int _RandomizeStartRotation = Shader.PropertyToID("_RandomizeStartRotation");
+        static readonly int _StartRotationMode =
+            Shader.PropertyToID("_StartRotationMode");
+        static readonly int _StartRotationLUT =
+            Shader.PropertyToID("_StartRotationLUT");
+        static readonly int _StartRotationLUTInvWidth =
+            Shader.PropertyToID("_StartRotationLUTInvWidth");
         static readonly int _RotationOverLifetime = Shader.PropertyToID("_RotationOverLifetime");
         static readonly int _RotationOverLifetimeMin = Shader.PropertyToID("_RotationOverLifetimeMin");
         static readonly int _RandomizeRotationOverLifetime = Shader.PropertyToID("_RandomizeRotationOverLifetime");
@@ -699,6 +708,9 @@ namespace GPUParticles
             startRotationMin = Mathf.Min(minimum, maximum);
             startRotation = Mathf.Max(minimum, maximum);
             randomizeStartRotation = !Mathf.Approximately(startRotationMin, startRotation);
+            startRotationMode = randomizeStartRotation
+                ? ParticleSystemCurveMode.TwoConstants
+                : ParticleSystemCurveMode.Constant;
         }
 
         public void SetRotationOverLifetimeRange(float minimum, float maximum)
@@ -994,12 +1006,9 @@ namespace GPUParticles
                 out float particleStartLifetime,
                 out float age,
                 out _);
-            float particleStartRotation = ResolveRandomRange(
-                randomizeStartRotation,
-                startRotationMin,
-                startRotation,
+            float particleStartRotation = ResolveStartRotation(
                 id,
-                0x165667B1u);
+                age);
 
             if (rotationOverLifetimeIntegralLUT == null)
             {
@@ -1038,6 +1047,52 @@ namespace GPUParticles
             ParticleSystemCurveMode mode = EffectiveStartLifetimeMode();
             return mode == ParticleSystemCurveMode.Curve ||
                    mode == ParticleSystemCurveMode.TwoCurves;
+        }
+
+        internal float ResolveStartRotation(uint particleId, float particleAge)
+        {
+            ParticleSystemCurveMode mode = EffectiveStartRotationMode();
+            if (mode == ParticleSystemCurveMode.Constant ||
+                mode == ParticleSystemCurveMode.TwoConstants)
+            {
+                return ResolveRandomRange(
+                    mode == ParticleSystemCurveMode.TwoConstants,
+                    startRotationMin,
+                    startRotation,
+                    particleId,
+                    0x165667B1u);
+            }
+
+            float activeTime = Mathf.Max(
+                0f,
+                emissionTime - ResolveEmissionStartDelay());
+            float birthActiveTime = Mathf.Max(0f, activeTime - particleAge);
+            float duration = Mathf.Max(0.05f, emissionDuration);
+            float normalizedBirthTime = emissionLooping
+                ? Mathf.Repeat(birthActiveTime, duration) / duration
+                : Mathf.Clamp01(birthActiveTime / duration);
+            float minimum = SampleLUTRow(
+                startRotationLUT,
+                normalizedBirthTime,
+                0);
+            float maximum = SampleLUTRow(
+                startRotationLUT,
+                normalizedBirthTime,
+                1);
+            return mode == ParticleSystemCurveMode.TwoCurves
+                ? Mathf.LerpUnclamped(
+                    minimum,
+                    maximum,
+                    Hash01(particleId ^ 0x165667B1u))
+                : maximum;
+        }
+
+        ParticleSystemCurveMode EffectiveStartRotationMode()
+        {
+            return startRotationMode == ParticleSystemCurveMode.Constant &&
+                   randomizeStartRotation
+                ? ParticleSystemCurveMode.TwoConstants
+                : startRotationMode;
         }
 
         static float SampleLUTRow(Texture2D texture, float normalizedPosition, int row)
@@ -2036,6 +2091,18 @@ namespace GPUParticles
             renderMaterial.SetFloat(_StartRotation, startRotation);
             renderMaterial.SetFloat(_StartRotationMin, startRotationMin);
             renderMaterial.SetInt(_RandomizeStartRotation, randomizeStartRotation ? 1 : 0);
+            Texture2D selectedStartRotationLUT = startRotationLUT != null
+                ? startRotationLUT
+                : CurveLUTBuilder.GetDefaultZeroLUT();
+            renderMaterial.SetTexture(
+                _StartRotationLUT,
+                selectedStartRotationLUT);
+            renderMaterial.SetFloat(
+                _StartRotationLUTInvWidth,
+                InverseTextureWidth(selectedStartRotationLUT));
+            renderMaterial.SetInt(
+                _StartRotationMode,
+                (int)EffectiveStartRotationMode());
             renderMaterial.SetFloat(_RotationOverLifetime, rotationOverLifetime);
             renderMaterial.SetFloat(_RotationOverLifetimeMin, rotationOverLifetimeMin);
             renderMaterial.SetInt(_RandomizeRotationOverLifetime,

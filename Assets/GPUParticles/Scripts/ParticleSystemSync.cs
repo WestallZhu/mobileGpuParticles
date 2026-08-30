@@ -51,6 +51,7 @@ namespace GPUParticles
         private float lastStartSpeedLUTUpdate = 0f;
         private float lastStartSizeLUTUpdate = 0f;
         private float lastGravityModifierLUTUpdate = 0f;
+        private float lastStartRotationLUTUpdate = 0f;
         private float lastSizeLUTUpdate = 0f;
         private float lastForceLUTUpdate = 0f;
         private float lastVelocityLUTUpdate = 0f;
@@ -76,6 +77,7 @@ namespace GPUParticles
         private Texture2D generatedStartSpeedLUT;
         private Texture2D generatedStartSizeLUT;
         private Texture2D generatedGravityModifierLUT;
+        private Texture2D generatedStartRotationLUT;
         private Texture2D generatedSizeLUT;
         private Texture2D generatedColorBySpeedLUT;
         private Texture2D generatedSizeBySpeedLUT;
@@ -372,6 +374,28 @@ namespace GPUParticles
                 : main.startRotation;
             ShurikenMinMaxUtility.TryGetConstantRange(startRotation, out minimum, out maximum);
             targetGPUParticleSystem.SetStartRotationRange(minimum, maximum);
+            targetGPUParticleSystem.startRotationMode = startRotation.mode;
+            bool updateStartRotationLUT = force ||
+                Time.realtimeSinceStartup - lastStartRotationLUTUpdate >
+                LUT_UPDATE_INTERVAL;
+            if (updateStartRotationLUT)
+            {
+                DestroyGeneratedTexture(ref generatedStartRotationLUT);
+                if (IsCurveMode(startRotation.mode))
+                {
+                    generatedStartRotationLUT = CurveLUTBuilder.BuildSigned(
+                        startRotation,
+                        assetName: "StartRotation_LUT");
+                    targetGPUParticleSystem.startRotationLUT =
+                        generatedStartRotationLUT;
+                }
+                else
+                {
+                    targetGPUParticleSystem.startRotationLUT =
+                        CurveLUTBuilder.GetDefaultZeroLUT();
+                }
+                lastStartRotationLUTUpdate = Time.realtimeSinceStartup;
+            }
         }
 
         void SyncEmissionParameters(bool force = false)
@@ -872,6 +896,7 @@ namespace GPUParticles
             DestroyGeneratedTexture(ref generatedStartSpeedLUT);
             DestroyGeneratedTexture(ref generatedStartSizeLUT);
             DestroyGeneratedTexture(ref generatedGravityModifierLUT);
+            DestroyGeneratedTexture(ref generatedStartRotationLUT);
             DestroyGeneratedColorLUT();
             DestroyGeneratedSizeLUT();
             DestroyGeneratedColorBySpeedLUT();

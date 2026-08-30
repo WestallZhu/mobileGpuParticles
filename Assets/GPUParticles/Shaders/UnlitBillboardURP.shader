@@ -27,6 +27,7 @@ Shader "GPUParticles/UnlitBillboardURP"
             TEXTURE2D(_CurRotationPhase); SAMPLER(sampler_CurRotationPhase);
             TEXTURE2D(_BaseMap);    SAMPLER(sampler_BaseMap);
             TEXTURE2D(_StartLifetimeLUT);
+            TEXTURE2D(_StartRotationLUT);
             TEXTURE2D(_RotationOverLifetimeIntegralLUT);
             SAMPLER(sampler_RotationOverLifetimeIntegralLUT);
             TEXTURE2D(_LifetimeByEmitterSpeedLUT);
@@ -60,6 +61,8 @@ Shader "GPUParticles/UnlitBillboardURP"
                 float _StartRotation;
                 float _StartRotationMin;
                 int   _RandomizeStartRotation;
+                int   _StartRotationMode;
+                float _StartRotationLUTInvWidth;
                 float _RotationOverLifetime;
                 float _RotationOverLifetimeMin;
                 int   _RandomizeRotationOverLifetime;
@@ -132,6 +135,21 @@ Shader "GPUParticles/UnlitBillboardURP"
                        0.5 * inverseWidth;
             }
 
+            float BirthSystemTime(float particleAge)
+            {
+                float activeTime = max(
+                    0.0,
+                    _EmissionTimeAfterStep - particleAge -
+                    _EmissionStartDelay);
+                float duration = max(0.05, _EmissionDuration);
+                if (_EmissionLooping == 0)
+                {
+                    return saturate(activeTime / duration);
+                }
+
+                return frac(activeTime / duration);
+            }
+
             float StartLifetimeAtBirth(uint id, float particleAge)
             {
                 if (_StartLifetimeMode == 0) // Constant
@@ -182,6 +200,41 @@ Shader "GPUParticles/UnlitBillboardURP"
                 return max(
                     0.001,
                     lerp(minimum, maximum, randomValue));
+            }
+
+            float StartRotationAtBirth(uint id, float particleAge)
+            {
+                if (_StartRotationMode == 0) // Constant
+                {
+                    return _StartRotation;
+                }
+
+                float randomValue = Hash01(id ^ 0x165667B1u);
+                if (_StartRotationMode == 3) // TwoConstants
+                {
+                    return lerp(
+                        _StartRotationMin,
+                        _StartRotation,
+                        randomValue);
+                }
+
+                float x = LUTCoordinate(
+                    BirthSystemTime(particleAge),
+                    _StartRotationLUTInvWidth);
+                float maximum = SAMPLE_TEXTURE2D_LOD(
+                    _StartRotationLUT,
+                    sampler_RotationOverLifetimeIntegralLUT,
+                    float2(x, 0.75), 0).r;
+                if (_StartRotationMode != 2) // Curve
+                {
+                    return maximum;
+                }
+
+                float minimum = SAMPLE_TEXTURE2D_LOD(
+                    _StartRotationLUT,
+                    sampler_RotationOverLifetimeIntegralLUT,
+                    float2(x, 0.25), 0).r;
+                return lerp(minimum, maximum, randomValue);
             }
 
             float SampleRotationIntegral(uint id, float normalizedAge)
@@ -552,9 +605,9 @@ Shader "GPUParticles/UnlitBillboardURP"
 
                 if (_RenderMode != 3)
                 {
-                    float particleStartRotation = RandomRange(
-                        quadId, 0x165667B1u, _RandomizeStartRotation,
-                        _StartRotationMin, _StartRotation);
+                    float particleStartRotation = StartRotationAtBirth(
+                        quadId,
+                        particleAge);
                     float particleRotationOverLifetime = RandomRange(
                         quadId, 0xD3A2646Cu, _RandomizeRotationOverLifetime,
                         _RotationOverLifetimeMin, _RotationOverLifetime);
