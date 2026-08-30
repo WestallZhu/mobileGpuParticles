@@ -312,6 +312,21 @@ namespace GPUParticles.Editor
             StartCapture(false, ParticleABValidationProfile.VelocityOverLifetimePoint);
         }
 
+        [MenuItem("Tools/GPU Particles/Run Velocity Orbital Radial A-B RT Capture")]
+        public static void RunVelocityOrbitalRadialCaptureMenu()
+        {
+            if (EditorApplication.isPlaying)
+            {
+                Debug.LogWarning("Stop Play Mode before starting a deterministic A/B capture.");
+                return;
+            }
+
+            if (!EditorSceneManager.SaveCurrentModifiedScenesIfUserWantsTo()) return;
+            StartCapture(
+                false,
+                ParticleABValidationProfile.VelocityOrbitalRadialPoint);
+        }
+
         [MenuItem("Tools/GPU Particles/Run Velocity Speed Modifier A-B RT Capture")]
         public static void RunVelocitySpeedModifierCaptureMenu()
         {
@@ -715,6 +730,14 @@ namespace GPUParticles.Editor
             StartCapture(true, ParticleABValidationProfile.VelocityOverLifetimePoint);
         }
 
+        public static void RunBatchVelocityOrbitalRadialCapture()
+        {
+            ValidateCommonFeatureMapping();
+            StartCapture(
+                true,
+                ParticleABValidationProfile.VelocityOrbitalRadialPoint);
+        }
+
         public static void RunBatchVelocitySpeedModifierCapture()
         {
             ValidateCommonFeatureMapping();
@@ -976,6 +999,7 @@ namespace GPUParticles.Editor
                 case ParticleABValidationProfile.EmissionRateCurvePoint: return 2.2f;
                 case ParticleABValidationProfile.EmissionRateDistancePoint: return 2.2f;
                 case ParticleABValidationProfile.VelocityOverLifetimePoint: return 3f;
+                case ParticleABValidationProfile.VelocityOrbitalRadialPoint: return 3f;
                 case ParticleABValidationProfile.VelocitySpeedModifierPoint: return 3f;
                 case ParticleABValidationProfile.LimitVelocityOverLifetimePoint: return 3.5f;
                 case ParticleABValidationProfile.LimitVelocityOverLifetimeAxesPoint: return 2.5f;
@@ -1019,8 +1043,9 @@ namespace GPUParticles.Editor
                    profile == ParticleABValidationProfile.GravityModifierCurvePoint ||
                    profile == ParticleABValidationProfile.GravityModifierTwoCurvesPoint ||
                    profile == ParticleABValidationProfile.EmissionRateCurvePoint ||
-                   profile == ParticleABValidationProfile.EmissionRateDistancePoint ||
-                   profile == ParticleABValidationProfile.VelocitySpeedModifierPoint ||
+                    profile == ParticleABValidationProfile.EmissionRateDistancePoint ||
+                    profile == ParticleABValidationProfile.VelocityOrbitalRadialPoint ||
+                    profile == ParticleABValidationProfile.VelocitySpeedModifierPoint ||
                    profile == ParticleABValidationProfile.InheritVelocityInitialPoint ||
                    profile == ParticleABValidationProfile.InheritVelocityCurrentPoint ||
                    profile == ParticleABValidationProfile.LifetimeByEmitterSpeedPoint ||
@@ -1076,6 +1101,8 @@ namespace GPUParticles.Editor
                     return "TestResults/ParticleEmissionRateDistance";
                 case ParticleABValidationProfile.VelocityOverLifetimePoint:
                     return "TestResults/ParticleVelocityOverLifetime";
+                case ParticleABValidationProfile.VelocityOrbitalRadialPoint:
+                    return "TestResults/ParticleVelocityOrbitalRadial";
                 case ParticleABValidationProfile.VelocitySpeedModifierPoint:
                     return "TestResults/ParticleVelocitySpeedModifier";
                 case ParticleABValidationProfile.LimitVelocityOverLifetimePoint:
@@ -1127,6 +1154,8 @@ namespace GPUParticles.Editor
             owner.SetActive(false);
             Texture2D firstForceLUT = null;
             Texture2D firstVelocityLUT = null;
+            Texture2D firstVelocityOrbitalLUT = null;
+            Texture2D firstVelocityOrbitalOffsetLUT = null;
             Texture2D firstLimitVelocityLUT = null;
             Texture2D firstInheritVelocityLUT = null;
             Texture2D firstLifetimeByEmitterSpeedLUT = null;
@@ -1148,6 +1177,10 @@ namespace GPUParticles.Editor
             string secondForceAssetPath = null;
             string firstVelocityAssetPath = null;
             string secondVelocityAssetPath = null;
+            string firstVelocityOrbitalAssetPath = null;
+            string secondVelocityOrbitalAssetPath = null;
+            string firstVelocityOrbitalOffsetAssetPath = null;
+            string secondVelocityOrbitalOffsetAssetPath = null;
             string firstLimitVelocityAssetPath = null;
             string secondLimitVelocityAssetPath = null;
             string firstInheritVelocityAssetPath = null;
@@ -1287,6 +1320,22 @@ namespace GPUParticles.Editor
                 velocity.speedModifier = new ParticleSystem.MinMaxCurve(
                     1f,
                     AnimationCurve.Linear(0f, -0.5f, 1f, 0.25f),
+                    AnimationCurve.Linear(0f, 0.5f, 1f, 1.5f));
+                velocity.orbitalX = new ParticleSystem.MinMaxCurve(-0.5f, 0.5f);
+                velocity.orbitalY = 2f;
+                velocity.orbitalZ = new ParticleSystem.MinMaxCurve(
+                    1f,
+                    AnimationCurve.Linear(0f, -1f, 1f, -0.25f),
+                    AnimationCurve.Linear(0f, 1f, 1f, 2f));
+                velocity.radial = new ParticleSystem.MinMaxCurve(
+                    1f,
+                    AnimationCurve.Linear(0f, 0.1f, 1f, 0.3f),
+                    AnimationCurve.Linear(0f, 0.4f, 1f, 0.8f));
+                velocity.orbitalOffsetX =
+                    new ParticleSystem.MinMaxCurve(-3f, 3f);
+                velocity.orbitalOffsetY = 2f;
+                velocity.orbitalOffsetZ = new ParticleSystem.MinMaxCurve(
+                    1f,
                     AnimationCurve.Linear(0f, 0.5f, 1f, 1.5f));
 
                 var limitVelocity = shuriken.limitVelocityOverLifetime;
@@ -1611,6 +1660,14 @@ namespace GPUParticles.Editor
                     "Velocity over Lifetime Linear XYZ LUT was not generated.");
                 Require(gpu.velocityOverLifetimeSpeedModifierEnabled,
                     "Velocity over Lifetime Speed Modifier state was not mapped.");
+                Require(gpu.velocityOverLifetimeOrbitalEnabled,
+                    "Velocity over Lifetime Orbital/Radius state was not mapped.");
+                Require(gpu.velocityOverLifetimeOrbitalLUT != null &&
+                        gpu.velocityOverLifetimeOrbitalLUT.height == 2,
+                    "Velocity over Lifetime Orbital XYZ and Radial LUT was not generated.");
+                Require(gpu.velocityOverLifetimeOrbitalOffsetLUT != null &&
+                        gpu.velocityOverLifetimeOrbitalOffsetLUT.height == 2,
+                    "Velocity over Lifetime Orbital Offset LUT was not generated.");
                 Require(gpu.limitVelocityOverLifetimeEnabled,
                     "Limit Velocity over Lifetime enabled state was not mapped.");
                 Require(gpu.limitVelocityOverLifetimeSeparateAxes,
@@ -1850,6 +1907,60 @@ namespace GPUParticles.Editor
                 RequireApproximately(maximum.a, 1.5f,
                     "Velocity Speed Modifier maximum end");
 
+                firstVelocityOrbitalLUT =
+                    gpu.velocityOverLifetimeOrbitalLUT;
+                firstVelocityOrbitalAssetPath =
+                    AssetDatabase.GetAssetPath(firstVelocityOrbitalLUT);
+                minimum = firstVelocityOrbitalLUT.GetPixel(0, 0);
+                maximum = firstVelocityOrbitalLUT.GetPixel(0, 1);
+                RequireColorApproximately(
+                    minimum,
+                    new Color(-0.5f, 2f, -1f, 0.1f),
+                    "Velocity Orbital/Radial minimum start");
+                RequireColorApproximately(
+                    maximum,
+                    new Color(0.5f, 2f, 1f, 0.4f),
+                    "Velocity Orbital/Radial maximum start");
+                minimum = firstVelocityOrbitalLUT.GetPixel(
+                    firstVelocityOrbitalLUT.width - 1, 0);
+                maximum = firstVelocityOrbitalLUT.GetPixel(
+                    firstVelocityOrbitalLUT.width - 1, 1);
+                RequireColorApproximately(
+                    minimum,
+                    new Color(-0.5f, 2f, -0.25f, 0.3f),
+                    "Velocity Orbital/Radial minimum end");
+                RequireColorApproximately(
+                    maximum,
+                    new Color(0.5f, 2f, 2f, 0.8f),
+                    "Velocity Orbital/Radial maximum end");
+
+                firstVelocityOrbitalOffsetLUT =
+                    gpu.velocityOverLifetimeOrbitalOffsetLUT;
+                firstVelocityOrbitalOffsetAssetPath =
+                    AssetDatabase.GetAssetPath(firstVelocityOrbitalOffsetLUT);
+                minimum = firstVelocityOrbitalOffsetLUT.GetPixel(0, 0);
+                maximum = firstVelocityOrbitalOffsetLUT.GetPixel(0, 1);
+                RequireColorApproximately(
+                    minimum,
+                    new Color(-3f, 2f, 0.5f, 0f),
+                    "Velocity Orbital Offset minimum start");
+                RequireColorApproximately(
+                    maximum,
+                    new Color(3f, 2f, 0.5f, 0f),
+                    "Velocity Orbital Offset maximum start");
+                minimum = firstVelocityOrbitalOffsetLUT.GetPixel(
+                    firstVelocityOrbitalOffsetLUT.width - 1, 0);
+                maximum = firstVelocityOrbitalOffsetLUT.GetPixel(
+                    firstVelocityOrbitalOffsetLUT.width - 1, 1);
+                RequireColorApproximately(
+                    minimum,
+                    new Color(-3f, 2f, 1.5f, 0f),
+                    "Velocity Orbital Offset minimum end");
+                RequireColorApproximately(
+                    maximum,
+                    new Color(3f, 2f, 1.5f, 0f),
+                    "Velocity Orbital Offset maximum end");
+
                 firstLimitVelocityLUT = gpu.limitVelocityOverLifetimeLUT;
                 firstLimitVelocityAssetPath =
                     AssetDatabase.GetAssetPath(firstLimitVelocityLUT);
@@ -2014,6 +2125,20 @@ namespace GPUParticles.Editor
                 }
                 firstVelocityLUT = null;
                 gpu.velocityOverLifetimeLUT = null;
+
+                if (string.IsNullOrEmpty(firstVelocityOrbitalAssetPath))
+                {
+                    Object.DestroyImmediate(firstVelocityOrbitalLUT);
+                }
+                firstVelocityOrbitalLUT = null;
+                gpu.velocityOverLifetimeOrbitalLUT = null;
+
+                if (string.IsNullOrEmpty(firstVelocityOrbitalOffsetAssetPath))
+                {
+                    Object.DestroyImmediate(firstVelocityOrbitalOffsetLUT);
+                }
+                firstVelocityOrbitalOffsetLUT = null;
+                gpu.velocityOverLifetimeOrbitalOffsetLUT = null;
 
                 if (string.IsNullOrEmpty(firstLimitVelocityAssetPath))
                 {
@@ -2202,6 +2327,33 @@ namespace GPUParticles.Editor
                     gpu.velocityOverLifetimeLUT = null;
                 }
 
+                if (gpu.velocityOverLifetimeOrbitalLUT != null)
+                {
+                    secondVelocityOrbitalAssetPath =
+                        AssetDatabase.GetAssetPath(
+                            gpu.velocityOverLifetimeOrbitalLUT);
+                    if (string.IsNullOrEmpty(secondVelocityOrbitalAssetPath))
+                    {
+                        Object.DestroyImmediate(
+                            gpu.velocityOverLifetimeOrbitalLUT);
+                    }
+                    gpu.velocityOverLifetimeOrbitalLUT = null;
+                }
+
+                if (gpu.velocityOverLifetimeOrbitalOffsetLUT != null)
+                {
+                    secondVelocityOrbitalOffsetAssetPath =
+                        AssetDatabase.GetAssetPath(
+                            gpu.velocityOverLifetimeOrbitalOffsetLUT);
+                    if (string.IsNullOrEmpty(
+                            secondVelocityOrbitalOffsetAssetPath))
+                    {
+                        Object.DestroyImmediate(
+                            gpu.velocityOverLifetimeOrbitalOffsetLUT);
+                    }
+                    gpu.velocityOverLifetimeOrbitalOffsetLUT = null;
+                }
+
                 if (gpu.limitVelocityOverLifetimeLUT != null)
                 {
                     secondLimitVelocityAssetPath =
@@ -2377,6 +2529,17 @@ namespace GPUParticles.Editor
                 {
                     Object.DestroyImmediate(firstVelocityLUT);
                 }
+                if (firstVelocityOrbitalLUT != null &&
+                    string.IsNullOrEmpty(firstVelocityOrbitalAssetPath))
+                {
+                    Object.DestroyImmediate(firstVelocityOrbitalLUT);
+                }
+                if (firstVelocityOrbitalOffsetLUT != null &&
+                    string.IsNullOrEmpty(
+                        firstVelocityOrbitalOffsetAssetPath))
+                {
+                    Object.DestroyImmediate(firstVelocityOrbitalOffsetLUT);
+                }
                 if (firstLimitVelocityLUT != null &&
                     string.IsNullOrEmpty(firstLimitVelocityAssetPath))
                 {
@@ -2479,6 +2642,30 @@ namespace GPUParticles.Editor
                     secondVelocityAssetPath != firstVelocityAssetPath)
                 {
                     AssetDatabase.DeleteAsset(secondVelocityAssetPath);
+                }
+                if (!string.IsNullOrEmpty(firstVelocityOrbitalAssetPath))
+                {
+                    AssetDatabase.DeleteAsset(firstVelocityOrbitalAssetPath);
+                }
+                if (!string.IsNullOrEmpty(secondVelocityOrbitalAssetPath) &&
+                    secondVelocityOrbitalAssetPath !=
+                        firstVelocityOrbitalAssetPath)
+                {
+                    AssetDatabase.DeleteAsset(secondVelocityOrbitalAssetPath);
+                }
+                if (!string.IsNullOrEmpty(
+                        firstVelocityOrbitalOffsetAssetPath))
+                {
+                    AssetDatabase.DeleteAsset(
+                        firstVelocityOrbitalOffsetAssetPath);
+                }
+                if (!string.IsNullOrEmpty(
+                        secondVelocityOrbitalOffsetAssetPath) &&
+                    secondVelocityOrbitalOffsetAssetPath !=
+                        firstVelocityOrbitalOffsetAssetPath)
+                {
+                    AssetDatabase.DeleteAsset(
+                        secondVelocityOrbitalOffsetAssetPath);
                 }
                 if (!string.IsNullOrEmpty(firstLimitVelocityAssetPath))
                 {

@@ -66,6 +66,8 @@ namespace GPUParticles
         private float lastEmissionTimelineUpdate = 0f;
         private Texture2D generatedForceLUT;
         private Texture2D generatedVelocityLUT;
+        private Texture2D generatedVelocityOrbitalLUT;
+        private Texture2D generatedVelocityOrbitalOffsetLUT;
         private Texture2D generatedLimitVelocityLUT;
         private Texture2D generatedInheritVelocityLUT;
         private Texture2D generatedLifetimeByEmitterSpeedLUT;
@@ -694,6 +696,12 @@ namespace GPUParticles
                 velocity.space == ParticleSystemSimulationSpace.World
                     ? SimulationSpace.World
                     : SimulationSpace.Local;
+            targetGPUParticleSystem.velocityOverLifetimeOrbitalEnabled =
+                velocity.enabled &&
+                (HasNonZeroCurve(velocity.orbitalX) ||
+                 HasNonZeroCurve(velocity.orbitalY) ||
+                 HasNonZeroCurve(velocity.orbitalZ) ||
+                 HasNonZeroCurve(velocity.radial));
 
             DestroyGeneratedVelocityLUT();
             if (velocity.enabled)
@@ -704,14 +712,57 @@ namespace GPUParticles
                     velocity.z,
                     velocity.speedModifier);
                 targetGPUParticleSystem.velocityOverLifetimeLUT = generatedVelocityLUT;
+                if (targetGPUParticleSystem.velocityOverLifetimeOrbitalEnabled)
+                {
+                    generatedVelocityOrbitalLUT =
+                        MinMaxCurveVector3LUTBuilder.Build(
+                            velocity.orbitalX,
+                            velocity.orbitalY,
+                            velocity.orbitalZ,
+                            velocity.radial);
+                    generatedVelocityOrbitalOffsetLUT =
+                        MinMaxCurveVector3LUTBuilder.Build(
+                            velocity.orbitalOffsetX,
+                            velocity.orbitalOffsetY,
+                            velocity.orbitalOffsetZ);
+                    targetGPUParticleSystem.velocityOverLifetimeOrbitalLUT =
+                        generatedVelocityOrbitalLUT;
+                    targetGPUParticleSystem.velocityOverLifetimeOrbitalOffsetLUT =
+                        generatedVelocityOrbitalOffsetLUT;
+                }
+                else
+                {
+                    targetGPUParticleSystem.velocityOverLifetimeOrbitalLUT =
+                        MinMaxCurveVector3LUTBuilder.GetDefaultZeroLUT();
+                    targetGPUParticleSystem.velocityOverLifetimeOrbitalOffsetLUT =
+                        MinMaxCurveVector3LUTBuilder.GetDefaultZeroLUT();
+                }
             }
             else
             {
                 targetGPUParticleSystem.velocityOverLifetimeLUT =
                     MinMaxCurveVector3LUTBuilder.GetDefaultVelocityLUT();
+                targetGPUParticleSystem.velocityOverLifetimeOrbitalLUT =
+                    MinMaxCurveVector3LUTBuilder.GetDefaultZeroLUT();
+                targetGPUParticleSystem.velocityOverLifetimeOrbitalOffsetLUT =
+                    MinMaxCurveVector3LUTBuilder.GetDefaultZeroLUT();
             }
 
             lastVelocityLUTUpdate = Time.realtimeSinceStartup;
+        }
+
+        static bool HasNonZeroCurve(ParticleSystem.MinMaxCurve curve)
+        {
+            for (int i = 0; i <= 16; i++)
+            {
+                float time = i / 16f;
+                if (Mathf.Abs(curve.Evaluate(time, 0f)) > 1e-5f ||
+                    Mathf.Abs(curve.Evaluate(time, 1f)) > 1e-5f)
+                {
+                    return true;
+                }
+            }
+            return false;
         }
 
         void SyncLimitVelocityOverLifetime(bool forceUpdate = false)
@@ -916,11 +967,9 @@ namespace GPUParticles
 
         void DestroyGeneratedVelocityLUT()
         {
-            if (generatedVelocityLUT == null) return;
-
-            if (Application.isPlaying) Destroy(generatedVelocityLUT);
-            else DestroyImmediate(generatedVelocityLUT);
-            generatedVelocityLUT = null;
+            DestroyGeneratedTexture(ref generatedVelocityLUT);
+            DestroyGeneratedTexture(ref generatedVelocityOrbitalLUT);
+            DestroyGeneratedTexture(ref generatedVelocityOrbitalOffsetLUT);
         }
 
         void DestroyGeneratedLimitVelocityLUT()

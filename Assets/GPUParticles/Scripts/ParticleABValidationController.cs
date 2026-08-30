@@ -55,7 +55,8 @@ namespace GPUParticles
         StartLifetimeCurvePoint,
         StartLifetimeTwoCurvesPoint,
         StartRotationCurvePoint,
-        StartRotationTwoCurvesPoint
+        StartRotationTwoCurvesPoint,
+        VelocityOrbitalRadialPoint
     }
 
     [DisallowMultipleComponent]
@@ -134,6 +135,8 @@ namespace GPUParticles
         int gpuTextureSheetFrameMask;
         Texture2D profileForceLUT;
         Texture2D profileVelocityLUT;
+        Texture2D profileVelocityOrbitalLUT;
+        Texture2D profileVelocityOrbitalOffsetLUT;
         Texture2D profileLimitVelocityLUT;
         Texture2D profileInheritVelocityLUT;
         Texture2D profileLifetimeByEmitterSpeedLUT;
@@ -297,6 +300,14 @@ namespace GPUParticles
             Time.captureFramerate = 0;
             if (profileForceLUT != null) Destroy(profileForceLUT);
             if (profileVelocityLUT != null) Destroy(profileVelocityLUT);
+            if (profileVelocityOrbitalLUT != null)
+            {
+                Destroy(profileVelocityOrbitalLUT);
+            }
+            if (profileVelocityOrbitalOffsetLUT != null)
+            {
+                Destroy(profileVelocityOrbitalOffsetLUT);
+            }
             if (profileLimitVelocityLUT != null) Destroy(profileLimitVelocityLUT);
             if (profileInheritVelocityLUT != null) Destroy(profileInheritVelocityLUT);
             if (profileLifetimeByEmitterSpeedLUT != null)
@@ -553,6 +564,13 @@ namespace GPUParticles
             }
 
             if (validationProfile ==
+                ParticleABValidationProfile.VelocityOrbitalRadialPoint)
+            {
+                ConfigureVelocityOrbitalRadialProfile();
+                return;
+            }
+
+            if (validationProfile ==
                 ParticleABValidationProfile.VelocitySpeedModifierPoint)
             {
                 ConfigureVelocitySpeedModifierProfile();
@@ -704,8 +722,13 @@ namespace GPUParticles
             gpuParticles.forceOverLifetimeLUT = profileForceLUT;
             gpuParticles.velocityOverLifetimeEnabled = false;
             gpuParticles.velocityOverLifetimeSpeedModifierEnabled = false;
+            gpuParticles.velocityOverLifetimeOrbitalEnabled = false;
             gpuParticles.velocityOverLifetimeLUT =
                 MinMaxCurveVector3LUTBuilder.GetDefaultVelocityLUT();
+            gpuParticles.velocityOverLifetimeOrbitalLUT =
+                MinMaxCurveVector3LUTBuilder.GetDefaultZeroLUT();
+            gpuParticles.velocityOverLifetimeOrbitalOffsetLUT =
+                MinMaxCurveVector3LUTBuilder.GetDefaultZeroLUT();
             gpuParticles.limitVelocityOverLifetimeEnabled = false;
             gpuParticles.limitVelocityOverLifetimeSeparateAxes = false;
             gpuParticles.limitVelocityOverLifetimeSpace = SimulationSpace.Local;
@@ -800,8 +823,13 @@ namespace GPUParticles
             gpuParticles.forceOverLifetimeLUT = MinMaxCurveVector3LUTBuilder.GetDefaultZeroLUT();
             gpuParticles.velocityOverLifetimeEnabled = false;
             gpuParticles.velocityOverLifetimeSpeedModifierEnabled = false;
+            gpuParticles.velocityOverLifetimeOrbitalEnabled = false;
             gpuParticles.velocityOverLifetimeLUT =
                 MinMaxCurveVector3LUTBuilder.GetDefaultVelocityLUT();
+            gpuParticles.velocityOverLifetimeOrbitalLUT =
+                MinMaxCurveVector3LUTBuilder.GetDefaultZeroLUT();
+            gpuParticles.velocityOverLifetimeOrbitalOffsetLUT =
+                MinMaxCurveVector3LUTBuilder.GetDefaultZeroLUT();
             gpuParticles.inheritVelocityEnabled = false;
             gpuParticles.inheritVelocityLUT = CurveLUTBuilder.GetDefaultZeroLUT();
         }
@@ -1253,8 +1281,84 @@ namespace GPUParticles
                 velocity.speedModifier);
             gpuParticles.velocityOverLifetimeEnabled = true;
             gpuParticles.velocityOverLifetimeSpeedModifierEnabled = true;
+            gpuParticles.velocityOverLifetimeOrbitalEnabled = false;
             gpuParticles.velocityOverLifetimeSpace = SimulationSpace.World;
             gpuParticles.velocityOverLifetimeLUT = profileVelocityLUT;
+            gpuParticles.velocityOverLifetimeOrbitalLUT =
+                MinMaxCurveVector3LUTBuilder.GetDefaultZeroLUT();
+            gpuParticles.velocityOverLifetimeOrbitalOffsetLUT =
+                MinMaxCurveVector3LUTBuilder.GetDefaultZeroLUT();
+        }
+
+        void ConfigureVelocityOrbitalRadialProfile()
+        {
+            ConfigureEmissionPointBase(4f, true);
+
+            var main = shuriken.main;
+            main.startLifetime = 4f;
+            main.startSpeed = 0f;
+            main.simulationSpace = ParticleSystemSimulationSpace.World;
+            gpuParticles.SetStartLifetimeRange(4f, 4f);
+            gpuParticles.SetStartSpeedRange(0f, 0f);
+            gpuParticles.simulationSpace = SimulationSpace.World;
+
+            var emission = shuriken.emission;
+            emission.rateOverTime = 12f;
+            emission.rateOverDistance = 0f;
+            emission.SetBursts(Array.Empty<ParticleSystem.Burst>());
+            gpuParticles.SetEmissionRateOverTime(emission.rateOverTime);
+            gpuParticles.SetEmissionRateOverDistance(emission.rateOverDistance);
+            gpuParticles.SetEmissionBursts(Array.Empty<ParticleSystem.Burst>());
+
+            var velocity = shuriken.velocityOverLifetime;
+            velocity.enabled = true;
+            velocity.space = ParticleSystemSimulationSpace.World;
+            velocity.x = 0.35f;
+            velocity.y = -0.15f;
+            velocity.z = 0.1f;
+            velocity.speedModifier = 1f;
+            velocity.orbitalX = 0.2f;
+            velocity.orbitalY = -0.1f;
+            velocity.orbitalZ = 1f;
+            velocity.orbitalOffsetX = -1.5f;
+            velocity.orbitalOffsetY = 0.25f;
+            velocity.orbitalOffsetZ = 0.15f;
+            velocity.radial = 0.2f;
+
+            if (profileVelocityLUT != null) Destroy(profileVelocityLUT);
+            if (profileVelocityOrbitalLUT != null)
+            {
+                Destroy(profileVelocityOrbitalLUT);
+            }
+            if (profileVelocityOrbitalOffsetLUT != null)
+            {
+                Destroy(profileVelocityOrbitalOffsetLUT);
+            }
+            profileVelocityLUT = MinMaxCurveVector3LUTBuilder.Build(
+                velocity.x,
+                velocity.y,
+                velocity.z,
+                velocity.speedModifier);
+            profileVelocityOrbitalLUT = MinMaxCurveVector3LUTBuilder.Build(
+                velocity.orbitalX,
+                velocity.orbitalY,
+                velocity.orbitalZ,
+                velocity.radial);
+            profileVelocityOrbitalOffsetLUT =
+                MinMaxCurveVector3LUTBuilder.Build(
+                    velocity.orbitalOffsetX,
+                    velocity.orbitalOffsetY,
+                    velocity.orbitalOffsetZ);
+
+            gpuParticles.velocityOverLifetimeEnabled = true;
+            gpuParticles.velocityOverLifetimeSpeedModifierEnabled = true;
+            gpuParticles.velocityOverLifetimeOrbitalEnabled = true;
+            gpuParticles.velocityOverLifetimeSpace = SimulationSpace.World;
+            gpuParticles.velocityOverLifetimeLUT = profileVelocityLUT;
+            gpuParticles.velocityOverLifetimeOrbitalLUT =
+                profileVelocityOrbitalLUT;
+            gpuParticles.velocityOverLifetimeOrbitalOffsetLUT =
+                profileVelocityOrbitalOffsetLUT;
         }
 
         void ConfigureVelocitySpeedModifierProfile()
@@ -1304,8 +1408,13 @@ namespace GPUParticles
                 velocity.speedModifier);
             gpuParticles.velocityOverLifetimeEnabled = true;
             gpuParticles.velocityOverLifetimeSpeedModifierEnabled = true;
+            gpuParticles.velocityOverLifetimeOrbitalEnabled = false;
             gpuParticles.velocityOverLifetimeSpace = SimulationSpace.World;
             gpuParticles.velocityOverLifetimeLUT = profileVelocityLUT;
+            gpuParticles.velocityOverLifetimeOrbitalLUT =
+                MinMaxCurveVector3LUTBuilder.GetDefaultZeroLUT();
+            gpuParticles.velocityOverLifetimeOrbitalOffsetLUT =
+                MinMaxCurveVector3LUTBuilder.GetDefaultZeroLUT();
         }
 
         void ConfigureLimitVelocityOverLifetimeProfile()
@@ -2243,8 +2352,13 @@ namespace GPUParticles
             gpuParticles.forceOverLifetimeLUT = MinMaxCurveVector3LUTBuilder.GetDefaultZeroLUT();
             gpuParticles.velocityOverLifetimeEnabled = false;
             gpuParticles.velocityOverLifetimeSpeedModifierEnabled = false;
+            gpuParticles.velocityOverLifetimeOrbitalEnabled = false;
             gpuParticles.velocityOverLifetimeLUT =
                 MinMaxCurveVector3LUTBuilder.GetDefaultVelocityLUT();
+            gpuParticles.velocityOverLifetimeOrbitalLUT =
+                MinMaxCurveVector3LUTBuilder.GetDefaultZeroLUT();
+            gpuParticles.velocityOverLifetimeOrbitalOffsetLUT =
+                MinMaxCurveVector3LUTBuilder.GetDefaultZeroLUT();
             gpuParticles.limitVelocityOverLifetimeEnabled = false;
             gpuParticles.limitVelocityOverLifetimeSeparateAxes = false;
             gpuParticles.limitVelocityOverLifetimeSpace = SimulationSpace.Local;
@@ -3324,6 +3438,8 @@ namespace GPUParticles
                 (gpuMeanVelocity - shurikenMeanVelocity).magnitude);
             if ((validationProfile == ParticleABValidationProfile.EmissionRateDistancePoint ||
                  validationProfile == ParticleABValidationProfile.VelocityOverLifetimePoint ||
+                 validationProfile ==
+                     ParticleABValidationProfile.VelocityOrbitalRadialPoint ||
                  validationProfile ==
                      ParticleABValidationProfile.VelocitySpeedModifierPoint ||
                  validationProfile ==
@@ -4405,6 +4521,14 @@ namespace GPUParticles
                 case ParticleABValidationProfile.VelocityOverLifetimePoint:
                     profileSpecificPassed = maximumMeanVelocityError <= 0.02f &&
                                             maximumMeanPositionError <= 0.03f &&
+                                            maximumShurikenParticleCount > 0 &&
+                                            maximumGPUParticleCount > 0;
+                    break;
+
+                case ParticleABValidationProfile.VelocityOrbitalRadialPoint:
+                    profileSpecificPassed = maximumMeanSpeedError <= 0.05f &&
+                                            maximumMeanVelocityError <= 0.06f &&
+                                            maximumMeanPositionError <= 0.04f &&
                                             maximumShurikenParticleCount > 0 &&
                                             maximumGPUParticleCount > 0;
                     break;

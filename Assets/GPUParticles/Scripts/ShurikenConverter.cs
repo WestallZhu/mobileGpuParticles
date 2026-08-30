@@ -763,6 +763,14 @@ namespace GPUParticles
                     ? SimulationSpace.World
                     : SimulationSpace.Local;
 
+            bool hasOrbitalOrRadial =
+                HasNonZeroRate(velocity.orbitalX) ||
+                HasNonZeroRate(velocity.orbitalY) ||
+                HasNonZeroRate(velocity.orbitalZ) ||
+                HasNonZeroRate(velocity.radial);
+            gpu.velocityOverLifetimeOrbitalEnabled =
+                velocity.enabled && hasOrbitalOrRadial;
+
             if (velocity.space == ParticleSystemSimulationSpace.Custom)
             {
                 Debug.LogWarning(
@@ -779,25 +787,25 @@ namespace GPUParticles
                     saveAsAsset: true,
                     assetName: "VelocityOverLife_LUT")
                 : MinMaxCurveVector3LUTBuilder.GetDefaultVelocityLUT();
-
-            if (!velocity.enabled) return;
-
-            bool hasOrbitalOrRadial =
-                HasNonZeroRate(velocity.orbitalX) ||
-                HasNonZeroRate(velocity.orbitalY) ||
-                HasNonZeroRate(velocity.orbitalZ) ||
-                HasNonZeroRate(velocity.radial);
-            bool hasOrbitalOffset =
-                HasNonZeroRate(velocity.orbitalOffsetX) ||
-                HasNonZeroRate(velocity.orbitalOffsetY) ||
-                HasNonZeroRate(velocity.orbitalOffsetZ);
-            if (hasOrbitalOrRadial || hasOrbitalOffset)
-            {
-                Debug.LogWarning(
-                    "Velocity over Lifetime Orbital, Offset and Radial channels are not supported yet; " +
-                    "Linear XYZ was mapped.",
-                    context);
-            }
+            gpu.velocityOverLifetimeOrbitalLUT =
+                gpu.velocityOverLifetimeOrbitalEnabled
+                ? MinMaxCurveVector3LUTBuilder.Build(
+                    velocity.orbitalX,
+                    velocity.orbitalY,
+                    velocity.orbitalZ,
+                    velocity.radial,
+                    saveAsAsset: true,
+                    assetName: "VelocityOverLifeOrbital_LUT")
+                : MinMaxCurveVector3LUTBuilder.GetDefaultZeroLUT();
+            gpu.velocityOverLifetimeOrbitalOffsetLUT =
+                gpu.velocityOverLifetimeOrbitalEnabled
+                ? MinMaxCurveVector3LUTBuilder.Build(
+                    velocity.orbitalOffsetX,
+                    velocity.orbitalOffsetY,
+                    velocity.orbitalOffsetZ,
+                    saveAsAsset: true,
+                    assetName: "VelocityOverLifeOrbitalOffset_LUT")
+                : MinMaxCurveVector3LUTBuilder.GetDefaultZeroLUT();
         }
 
         static void ApplyLimitVelocityOverLifetime(
@@ -1022,9 +1030,9 @@ namespace GPUParticles
 
         static bool HasNonZeroRate(ParticleSystem.MinMaxCurve curve)
         {
-            for (int i = 0; i <= 4; i++)
+            for (int i = 0; i <= 16; i++)
             {
-                float time = i * 0.25f;
+                float time = i / 16f;
                 if (Mathf.Abs(curve.Evaluate(time, 0f)) > 1e-5f ||
                     Mathf.Abs(curve.Evaluate(time, 1f)) > 1e-5f)
                 {

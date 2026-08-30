@@ -44,6 +44,10 @@ Shader "Hidden/GPUParticles/SimulateMRT"
             TEXTURE2D(_RotationBySpeedLUT); SAMPLER(sampler_RotationBySpeedLUT);
             TEXTURE2D(_ForceOverLifetimeLUT); SAMPLER(sampler_ForceOverLifetimeLUT);
             TEXTURE2D(_VelocityOverLifetimeLUT); SAMPLER(sampler_VelocityOverLifetimeLUT);
+            TEXTURE2D(_VelocityOverLifetimeOrbitalLUT);
+            SAMPLER(sampler_VelocityOverLifetimeOrbitalLUT);
+            TEXTURE2D(_VelocityOverLifetimeOrbitalOffsetLUT);
+            SAMPLER(sampler_VelocityOverLifetimeOrbitalOffsetLUT);
             TEXTURE2D(_LimitVelocityLUT); SAMPLER(sampler_LimitVelocityLUT);
             TEXTURE2D(_InheritVelocityLUT); SAMPLER(sampler_InheritVelocityLUT);
             TEXTURE2D(_LifetimeByEmitterSpeedLUT);
@@ -107,6 +111,7 @@ Shader "Hidden/GPUParticles/SimulateMRT"
                 int     _VelocityOverLifetimeEnabled;
                 int     _VelocityOverLifetimeSpace;    // 0 Local, 1 World
                 int     _VelocityOverLifetimeSpeedModifierEnabled;
+                int     _VelocityOverLifetimeOrbitalEnabled;
                 int     _LimitVelocityEnabled;
                 int     _LimitVelocitySeparateAxes;
                 int     _LimitVelocitySpace;            // 0 Local, 1 World
@@ -133,6 +138,8 @@ Shader "Hidden/GPUParticles/SimulateMRT"
                 float   _SizeLUTInvWidth;
                 float   _ForceOverLifetimeLUTInvWidth;
                 float   _VelocityOverLifetimeLUTInvWidth;
+                float   _VelocityOverLifetimeOrbitalLUTInvWidth;
+                float   _VelocityOverLifetimeOrbitalOffsetLUTInvWidth;
                 float   _ColorBySpeedLUTInvWidth;
                 float   _SizeBySpeedLUTInvWidth;
 
@@ -524,6 +531,15 @@ Shader "Hidden/GPUParticles/SimulateMRT"
                 return vLocal;
             }
 
+            float3 SimPositionToEmitterLocal(float3 position)
+            {
+                if (_SimulationSpace == 1)
+                {
+                    return mul(_EmitterWorldToLocal, float4(position, 1.0)).xyz;
+                }
+                return position;
+            }
+
             float3 ModuleVectorToSimSpace(float3 value, int moduleSpace)
             {
                 if (moduleSpace == 1) // Module value is world-space.
@@ -610,6 +626,73 @@ Shader "Hidden/GPUParticles/SimulateMRT"
                     maximum.a,
                     Hash01(id ^ 0xD1B54A35u));
                 return float4(linearVelocity, speedModifier);
+            }
+
+            float4 VelocityOverLifetimeOrbitalParameters(
+                uint id,
+                float normalizedAge)
+            {
+                float lutPosition = LUTPosition(
+                    normalizedAge,
+                    _VelocityOverLifetimeOrbitalLUTInvWidth);
+                float4 minimum = SAMPLE_TEXTURE2D_LOD(
+                    _VelocityOverLifetimeOrbitalLUT,
+                    sampler_VelocityOverLifetimeOrbitalLUT,
+                    float2(lutPosition, 0.25), 0);
+                float4 maximum = SAMPLE_TEXTURE2D_LOD(
+                    _VelocityOverLifetimeOrbitalLUT,
+                    sampler_VelocityOverLifetimeOrbitalLUT,
+                    float2(lutPosition, 0.75), 0);
+                float3 randomValue = Hash03(
+                    id * 3266489917u + 0x85EBCA77u);
+                return float4(
+                    lerp(minimum.rgb, maximum.rgb, randomValue),
+                    lerp(
+                        minimum.a,
+                        maximum.a,
+                        Hash01(id ^ 0xC2B2AE3Du)));
+            }
+
+            float3 VelocityOverLifetimeOrbitalOffset(
+                uint id,
+                float normalizedAge)
+            {
+                float lutPosition = LUTPosition(
+                    normalizedAge,
+                    _VelocityOverLifetimeOrbitalOffsetLUTInvWidth);
+                float3 minimum = SAMPLE_TEXTURE2D_LOD(
+                    _VelocityOverLifetimeOrbitalOffsetLUT,
+                    sampler_VelocityOverLifetimeOrbitalOffsetLUT,
+                    float2(lutPosition, 0.25), 0).rgb;
+                float3 maximum = SAMPLE_TEXTURE2D_LOD(
+                    _VelocityOverLifetimeOrbitalOffsetLUT,
+                    sampler_VelocityOverLifetimeOrbitalOffsetLUT,
+                    float2(lutPosition, 0.75), 0).rgb;
+                return lerp(
+                    minimum,
+                    maximum,
+                    Hash03(id * 668265263u + 0x27D4EB2Fu));
+            }
+
+            float3 VelocityOverLifetimeOrbitalVelocity(
+                float3 position,
+                float4 orbitalAndRadial,
+                float3 orbitalOffset)
+            {
+                // Shuriken evaluates Orbital axes and Offset in emitter-local
+                // space even when Linear XYZ uses World space.
+                float3 localPosition = SimPositionToEmitterLocal(position);
+                float3 relativePosition = localPosition - orbitalOffset;
+                float radius = length(relativePosition);
+                float3 localVelocity = cross(
+                    orbitalAndRadial.xyz,
+                    relativePosition);
+                if (radius > 1e-6)
+                {
+                    localVelocity += relativePosition *
+                        (orbitalAndRadial.w / radius);
+                }
+                return ToSimSpaceVec(localVelocity);
             }
 
             float InheritVelocityMultiplier(uint id, float normalizedAge)
@@ -1526,7 +1609,95 @@ Shader "Hidden/GPUParticles/SimulateMRT"
                     vel += acceleration * stepDt;
 
                     float movementSpeedModifier = 1.0;
-                    if (_VelocityOverLifetimeEnabled != 0)
+                    bool integratedOrbitalMotion =
+                        _VelocityOverLifetimeEnabled != 0 &&
+                        _VelocityOverLifetimeOrbitalEnabled != 0;
+                    if (integratedOrbitalMotion)
+                    {
+                        float normalizedAgeMidStep =
+                            (normalizedAgeBeforeStep +
+                             normalizedAgeAfterStep) * 0.5;
+                        float4 velocityBeforeStep =
+                            VelocityOverLifetimeParameters(
+                                id, normalizedAgeBeforeStep);
+                        float4 velocityMidStep =
+                            VelocityOverLifetimeParameters(
+                                id, normalizedAgeMidStep);
+                        float4 velocityAfterStep =
+                            VelocityOverLifetimeParameters(
+                                id, normalizedAgeAfterStep);
+                        float4 orbitalBeforeStep =
+                            VelocityOverLifetimeOrbitalParameters(
+                                id, normalizedAgeBeforeStep);
+                        float4 orbitalMidStep =
+                            VelocityOverLifetimeOrbitalParameters(
+                                id, normalizedAgeMidStep);
+                        float4 orbitalAfterStep =
+                            VelocityOverLifetimeOrbitalParameters(
+                                id, normalizedAgeAfterStep);
+                        float3 offsetBeforeStep =
+                            VelocityOverLifetimeOrbitalOffset(
+                                id, normalizedAgeBeforeStep);
+                        float3 offsetMidStep =
+                            VelocityOverLifetimeOrbitalOffset(
+                                id, normalizedAgeMidStep);
+                        float3 offsetAfterStep =
+                            VelocityOverLifetimeOrbitalOffset(
+                                id, normalizedAgeAfterStep);
+                        float3 orbitalVelocityBeforeStep =
+                            VelocityOverLifetimeOrbitalVelocity(
+                                pos,
+                                orbitalBeforeStep,
+                                offsetBeforeStep);
+
+                        // Keep the persistent state as the underlying velocity.
+                        // Orbital and Radial are position-dependent module
+                        // contributions, so remove the prior contribution before
+                        // evaluating this step.
+                        if (!spawn)
+                        {
+                            vel -= velocityBeforeStep.rgb +
+                                   orbitalVelocityBeforeStep;
+                        }
+
+                        if (_VelocityOverLifetimeSpeedModifierEnabled != 0)
+                        {
+                            movementSpeedModifier = velocityMidStep.a;
+                        }
+
+                        // A midpoint integration keeps circular Shuriken orbits
+                        // stable without adding another simulation render target.
+                        float3 velocityAtStepStart = vel +
+                            velocityBeforeStep.rgb +
+                            orbitalVelocityBeforeStep;
+                        velocityAtStepStart += InheritVelocityContribution(
+                            id,
+                            normalizedAgeBeforeStep,
+                            birthEmitterVelocityWS,
+                            _EmitterPreviousVelocityWS);
+                        float3 midpointPosition = pos +
+                            velocityAtStepStart *
+                            (movementSpeedModifier * stepDt * 0.5);
+                        float3 midpointVelocity = vel + velocityMidStep.rgb +
+                            VelocityOverLifetimeOrbitalVelocity(
+                                midpointPosition,
+                                orbitalMidStep,
+                                offsetMidStep);
+                        midpointVelocity += InheritVelocityContribution(
+                            id,
+                            normalizedAgeMidStep,
+                            birthEmitterVelocityWS,
+                            (_EmitterPreviousVelocityWS +
+                             _EmitterVelocityWS) * 0.5);
+                        pos += midpointVelocity *
+                               (movementSpeedModifier * stepDt);
+                        vel += velocityAfterStep.rgb +
+                            VelocityOverLifetimeOrbitalVelocity(
+                                pos,
+                                orbitalAfterStep,
+                                offsetAfterStep);
+                    }
+                    else if (_VelocityOverLifetimeEnabled != 0)
                     {
                         float4 velocityBeforeStep =
                             VelocityOverLifetimeParameters(
@@ -1562,7 +1733,10 @@ Shader "Hidden/GPUParticles/SimulateMRT"
                         normalizedAgeAfterStep,
                         birthEmitterVelocityWS,
                         _EmitterVelocityWS);
-                    pos += vel * movementSpeedModifier * stepDt;
+                    if (!integratedOrbitalMotion)
+                    {
+                        pos += vel * movementSpeedModifier * stepDt;
+                    }
 
                     // lifetime normalized 0..1 (0 birth, 1 death)
                     float t = normalizedAgeAfterStep;

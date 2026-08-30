@@ -118,11 +118,14 @@ namespace GPUParticles
         public SimulationSpace forceOverLifetimeSpace = SimulationSpace.Local;
         public bool forceOverLifetimeRandomized;
 
-        [Header("Velocity Over Lifetime (Linear XYZ + Speed Modifier)")]
+        [Header("Velocity Over Lifetime")]
         public bool velocityOverLifetimeEnabled;
         public Texture2D velocityOverLifetimeLUT;
         public SimulationSpace velocityOverLifetimeSpace = SimulationSpace.Local;
         public bool velocityOverLifetimeSpeedModifierEnabled;
+        public bool velocityOverLifetimeOrbitalEnabled;
+        public Texture2D velocityOverLifetimeOrbitalLUT;
+        public Texture2D velocityOverLifetimeOrbitalOffsetLUT;
 
         [Header("Limit Velocity Over Lifetime")]
         public bool limitVelocityOverLifetimeEnabled;
@@ -357,10 +360,16 @@ namespace GPUParticles
         static readonly int _ForceOverLifetimeSpace = Shader.PropertyToID("_ForceOverLifetimeSpace");
         static readonly int _ForceOverLifetimeRandomized = Shader.PropertyToID("_ForceOverLifetimeRandomized");
         static readonly int _VelocityOverLifetimeLUT = Shader.PropertyToID("_VelocityOverLifetimeLUT");
+        static readonly int _VelocityOverLifetimeOrbitalLUT =
+            Shader.PropertyToID("_VelocityOverLifetimeOrbitalLUT");
+        static readonly int _VelocityOverLifetimeOrbitalOffsetLUT =
+            Shader.PropertyToID("_VelocityOverLifetimeOrbitalOffsetLUT");
         static readonly int _VelocityOverLifetimeEnabled = Shader.PropertyToID("_VelocityOverLifetimeEnabled");
         static readonly int _VelocityOverLifetimeSpace = Shader.PropertyToID("_VelocityOverLifetimeSpace");
         static readonly int _VelocityOverLifetimeSpeedModifierEnabled =
             Shader.PropertyToID("_VelocityOverLifetimeSpeedModifierEnabled");
+        static readonly int _VelocityOverLifetimeOrbitalEnabled =
+            Shader.PropertyToID("_VelocityOverLifetimeOrbitalEnabled");
         static readonly int _LimitVelocityLUT =
             Shader.PropertyToID("_LimitVelocityLUT");
         static readonly int _LimitVelocityLUTInvWidth =
@@ -404,6 +413,10 @@ namespace GPUParticles
             Shader.PropertyToID("_ForceOverLifetimeLUTInvWidth");
         static readonly int _VelocityOverLifetimeLUTInvWidth =
             Shader.PropertyToID("_VelocityOverLifetimeLUTInvWidth");
+        static readonly int _VelocityOverLifetimeOrbitalLUTInvWidth =
+            Shader.PropertyToID("_VelocityOverLifetimeOrbitalLUTInvWidth");
+        static readonly int _VelocityOverLifetimeOrbitalOffsetLUTInvWidth =
+            Shader.PropertyToID("_VelocityOverLifetimeOrbitalOffsetLUTInvWidth");
         static readonly int _ColorBySpeedLUT = Shader.PropertyToID("_ColorBySpeedLUT");
         static readonly int _ColorBySpeedLUTInvWidth =
             Shader.PropertyToID("_ColorBySpeedLUTInvWidth");
@@ -1638,6 +1651,14 @@ namespace GPUParticles
             Texture2D selectedVelocityOverLifetimeLUT = velocityOverLifetimeLUT != null
                 ? velocityOverLifetimeLUT
                 : MinMaxCurveVector3LUTBuilder.GetDefaultVelocityLUT();
+            Texture2D selectedVelocityOverLifetimeOrbitalLUT =
+                velocityOverLifetimeOrbitalLUT != null
+                    ? velocityOverLifetimeOrbitalLUT
+                    : MinMaxCurveVector3LUTBuilder.GetDefaultZeroLUT();
+            Texture2D selectedVelocityOverLifetimeOrbitalOffsetLUT =
+                velocityOverLifetimeOrbitalOffsetLUT != null
+                    ? velocityOverLifetimeOrbitalOffsetLUT
+                    : MinMaxCurveVector3LUTBuilder.GetDefaultZeroLUT();
             Texture2D selectedLimitVelocityLUT = limitVelocityOverLifetimeLUT != null
                 ? limitVelocityOverLifetimeLUT
                 : LimitVelocityLUTBuilder.GetDefaultZeroLUT();
@@ -1666,6 +1687,12 @@ namespace GPUParticles
                 _ForceOverLifetimeLUT, selectedForceOverLifetimeLUT);
             simulateMaterial.SetTexture(
                 _VelocityOverLifetimeLUT, selectedVelocityOverLifetimeLUT);
+            simulateMaterial.SetTexture(
+                _VelocityOverLifetimeOrbitalLUT,
+                selectedVelocityOverLifetimeOrbitalLUT);
+            simulateMaterial.SetTexture(
+                _VelocityOverLifetimeOrbitalOffsetLUT,
+                selectedVelocityOverLifetimeOrbitalOffsetLUT);
             simulateMaterial.SetTexture(
                 _LimitVelocityLUT, selectedLimitVelocityLUT);
             simulateMaterial.SetTexture(
@@ -1705,6 +1732,12 @@ namespace GPUParticles
             simulateMaterial.SetFloat(
                 _VelocityOverLifetimeLUTInvWidth,
                 InverseTextureWidth(selectedVelocityOverLifetimeLUT));
+            simulateMaterial.SetFloat(
+                _VelocityOverLifetimeOrbitalLUTInvWidth,
+                InverseTextureWidth(selectedVelocityOverLifetimeOrbitalLUT));
+            simulateMaterial.SetFloat(
+                _VelocityOverLifetimeOrbitalOffsetLUTInvWidth,
+                InverseTextureWidth(selectedVelocityOverLifetimeOrbitalOffsetLUT));
             simulateMaterial.SetFloat(
                 _LimitVelocityLUTInvWidth,
                 InverseTextureWidth(selectedLimitVelocityLUT));
@@ -1812,6 +1845,9 @@ namespace GPUParticles
             simulateMaterial.SetInt(
                 _VelocityOverLifetimeSpeedModifierEnabled,
                 velocityOverLifetimeSpeedModifierEnabled ? 1 : 0);
+            simulateMaterial.SetInt(
+                _VelocityOverLifetimeOrbitalEnabled,
+                velocityOverLifetimeOrbitalEnabled ? 1 : 0);
             simulateMaterial.SetInt(
                 _LimitVelocityEnabled,
                 limitVelocityOverLifetimeEnabled ? 1 : 0);
