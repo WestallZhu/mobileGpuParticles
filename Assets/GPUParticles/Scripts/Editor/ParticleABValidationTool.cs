@@ -254,6 +254,13 @@ namespace GPUParticles.Editor
                 ParticleABValidationProfile.ScalingShapePoint);
         }
 
+        [MenuItem("Tools/GPU Particles/Run Playback Lifecycle A-B RT Capture")]
+        public static void RunPlaybackLifecycleCaptureMenu()
+        {
+            StartStartSizeCapture(
+                ParticleABValidationProfile.PlaybackLifecyclePoint);
+        }
+
         static void StartStartSizeCapture(
             ParticleABValidationProfile profile)
         {
@@ -780,6 +787,14 @@ namespace GPUParticles.Editor
                 ParticleABValidationProfile.ScalingShapePoint);
         }
 
+        public static void RunBatchPlaybackLifecycleCapture()
+        {
+            ValidateCommonFeatureMapping();
+            StartCapture(
+                true,
+                ParticleABValidationProfile.PlaybackLifecyclePoint);
+        }
+
         public static void RunBatchGravityModifierCurveCapture()
         {
             ValidateCommonFeatureMapping();
@@ -1027,6 +1042,10 @@ namespace GPUParticles.Editor
             shuriken.randomSeed = 12345;
             var main = shuriken.main;
             main.cullingMode = ParticleSystemCullingMode.AlwaysSimulate;
+            bool validatePlaybackLifecycle = profile ==
+                ParticleABValidationProfile.PlaybackLifecyclePoint;
+            main.playOnAwake = !validatePlaybackLifecycle;
+            gpu.playOnAwake = !validatePlaybackLifecycle;
 
             var shurikenRenderer = shuriken.GetComponent<ParticleSystemRenderer>();
             if (shurikenRenderer == null)
@@ -1056,6 +1075,7 @@ namespace GPUParticles.Editor
             controller.exitEditorWhenCaptureCompletes = exitWhenComplete;
 
             EditorUtility.SetDirty(shuriken);
+            EditorUtility.SetDirty(gpu);
             EditorUtility.SetDirty(shurikenRenderer);
             EditorUtility.SetDirty(controller);
             EditorSceneManager.MarkSceneDirty(validationScene);
@@ -1092,6 +1112,8 @@ namespace GPUParticles.Editor
                 case ParticleABValidationProfile.ScalingLocalPoint:
                 case ParticleABValidationProfile.ScalingShapePoint:
                     return 1.5f;
+                case ParticleABValidationProfile.PlaybackLifecyclePoint:
+                    return 4.7f;
                 case ParticleABValidationProfile.StartLifetimeCurvePoint:
                 case ParticleABValidationProfile.StartLifetimeTwoCurvesPoint:
                     return 4.5f;
@@ -1128,6 +1150,11 @@ namespace GPUParticles.Editor
 
         static float CaptureFrequency(ParticleABValidationProfile profile)
         {
+            if (profile == ParticleABValidationProfile.PlaybackLifecyclePoint)
+            {
+                return 10f;
+            }
+
             return profile == ParticleABValidationProfile.EmissionBurstPoint ||
                    profile == ParticleABValidationProfile.StartColorGradientPoint ||
                    profile == ParticleABValidationProfile.StartColorTwoGradientsPoint ||
@@ -1207,6 +1234,8 @@ namespace GPUParticles.Editor
                     return "TestResults/ParticleScalingLocal";
                 case ParticleABValidationProfile.ScalingShapePoint:
                     return "TestResults/ParticleScalingShape";
+                case ParticleABValidationProfile.PlaybackLifecyclePoint:
+                    return "TestResults/ParticlePlaybackLifecycle";
                 case ParticleABValidationProfile.GravityModifierCurvePoint:
                     return "TestResults/ParticleGravityModifierCurve";
                 case ParticleABValidationProfile.GravityModifierTwoCurvesPoint:
@@ -1334,6 +1363,7 @@ namespace GPUParticles.Editor
                 var shuriken = owner.AddComponent<ParticleSystem>();
                 var main = shuriken.main;
                 main.useUnscaledTime = true;
+                main.playOnAwake = false;
                 main.scalingMode = ParticleSystemScalingMode.Local;
                 var shurikenRenderer =
                     owner.GetComponent<ParticleSystemRenderer>();
@@ -1566,6 +1596,8 @@ namespace GPUParticles.Editor
                 Require(gpu != null, "Converter did not create GPUParticleSystem.");
                 Require(gpu.useUnscaledTime,
                     "Main Use Unscaled Time was not mapped.");
+                Require(!gpu.playOnAwake,
+                    "Main Play On Awake was not mapped.");
                 Require(
                     gpu.scalingMode == ParticleSystemScalingMode.Local,
                     "Main Scaling Mode Local was not mapped.");

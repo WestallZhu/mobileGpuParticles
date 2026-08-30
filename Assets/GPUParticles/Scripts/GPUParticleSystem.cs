@@ -77,6 +77,7 @@ namespace GPUParticles
         public Texture2D gravityModifierLUT;
         [Min(0.0f)] public float simulationSpeed = 1.0f;
         public bool useUnscaledTime;
+        public bool playOnAwake = true;
         public ParticleSystemScalingMode scalingMode =
             ParticleSystemScalingMode.Hierarchy;
         [Tooltip("Optional source Transform used for Shuriken Local scaling when the GPU system is created as a child.")]
@@ -272,6 +273,26 @@ namespace GPUParticles
         uint simulationTick;
         float lastSimulationDeltaTime = 1f / 60f;
         int lastSimulatedFrame = -1;
+        PlaybackState playbackState = PlaybackState.Stopped;
+        PlaybackState resumeState = PlaybackState.Playing;
+        float stoppingElapsed;
+        float stoppingDuration;
+
+        enum PlaybackState
+        {
+            Stopped,
+            Playing,
+            Paused,
+            Stopping
+        }
+
+        public bool isPlaying =>
+            playbackState == PlaybackState.Playing ||
+            playbackState == PlaybackState.Stopping;
+        public bool isPaused => playbackState == PlaybackState.Paused;
+        public bool isStopped => playbackState == PlaybackState.Stopped;
+        public bool isEmitting => IsActivelyEmitting();
+        public float time => emissionTime;
         // Unity 2022.3 Shuriken samples Main curves just after the emission
         // tick boundary. This measured phase keeps automatic births aligned.
         const float StartLifetimeCurveTickPhase = 0.2f;
@@ -562,6 +583,7 @@ namespace GPUParticles
             if (!Active.Contains(this)) Active.Add(this);
             EnsureMaterials();
             RecreateTargetsIfNeeded(true);
+            InitializePlaybackFromSettings();
         }
 
         void OnDisable()
@@ -707,6 +729,221 @@ namespace GPUParticles
         {
             EnsureMaterials();
             RecreateTargetsIfNeeded(true);
+        }
+
+        internal void InitializePlaybackFromSettings()
+        {
+            playbackState = !Application.isPlaying || playOnAwake
+                ? PlaybackState.Playing
+                : PlaybackState.Stopped;
+            resumeState = PlaybackState.Playing;
+            stoppingElapsed = 0f;
+            stoppingDuration = 0f;
+            lastSimulatedFrame = -1;
+        }
+
+        public void Play(bool withChildren = true)
+        {
+            PlaySelf();
+            if (withChildren)
+            {
+                ApplyToChildren(system => system.PlaySelf());
+            }
+        }
+
+        public void Pause(bool withChildren = true)
+        {
+            PauseSelf();
+            if (withChildren)
+            {
+                ApplyToChildren(system => system.PauseSelf());
+            }
+        }
+
+        public void Stop(
+            bool withChildren = true,
+            ParticleSystemStopBehavior stopBehavior =
+                ParticleSystemStopBehavior.StopEmitting)
+        {
+            StopSelf(stopBehavior);
+            if (withChildren)
+            {
+                ApplyToChildren(system => system.StopSelf(stopBehavior));
+            }
+        }
+
+        public void Clear(bool withChildren = true)
+        {
+            ClearSelf();
+            if (withChildren)
+            {
+                ApplyToChildren(system => system.ClearSelf());
+            }
+        }
+
+        void PlaySelf()
+        {
+            if (playbackState == PlaybackState.Playing) return;
+
+            bool resumeFromPause = playbackState == PlaybackState.Paused;
+            if (!resumeFromPause)
+            {
+                ResetEmissionTimeline();
+            }
+
+            playbackState = PlaybackState.Playing;
+            resumeState = PlaybackState.Playing;
+            stoppingElapsed = 0f;
+            stoppingDuration = 0f;
+            lastSimulatedFrame = -1;
+        }
+
+        void PauseSelf()
+        {
+            if (!isPlaying) return;
+
+            resumeState = playbackState;
+            playbackState = PlaybackState.Paused;
+            lastSimulatedFrame = -1;
+        }
+
+        void StopSelf(ParticleSystemStopBehavior stopBehavior)
+        {
+            playbackState = stopBehavior ==
+                ParticleSystemStopBehavior.StopEmitting
+                    ? PlaybackState.Stopping
+                    : PlaybackState.Stopped;
+            resumeState = PlaybackState.Playing;
+            stoppingElapsed = 0f;
+            stoppingDuration = playbackState == PlaybackState.Stopping
+                ? MaximumParticleLifetime()
+                : 0f;
+            lastSimulatedFrame = -1;
+
+            if (stopBehavior ==
+                ParticleSystemStopBehavior.StopEmittingAndClear)
+            {
+                ResetSimulation();
+            }
+        }
+
+        void ClearSelf()
+        {
+            PlaybackState savedPlaybackState = playbackState;
+            PlaybackState savedResumeState = resumeState;
+            float savedStoppingElapsed = stoppingElapsed;
+            float savedStoppingDuration = stoppingDuration;
+            float savedEmissionTime = emissionTime;
+            float savedEmitCarry = emitCarry;
+            float savedDistanceEmitCarry = distanceEmitCarry;
+            Vector3 savedPreviousEmitterPosition = previousEmitterPositionWS;
+            bool savedPreviousEmitterPositionValid =
+                previousEmitterPositionValid;
+            Vector3 savedPreviousEmitterVelocity = previousEmitterVelocityWS;
+            uint savedSimulationTick = simulationTick;
+
+            ResetSimulation();
+
+            playbackState = savedPlaybackState;
+            resumeState = savedResumeState;
+            stoppingElapsed = savedStoppingElapsed;
+            stoppingDuration = savedStoppingDuration;
+            emissionTime = savedEmissionTime;
+            emitCarry = savedEmitCarry;
+            distanceEmitCarry = savedDistanceEmitCarry;
+            previousEmitterPositionWS = savedPreviousEmitterPosition;
+            previousEmitterPositionValid =
+                savedPreviousEmitterPositionValid;
+            previousEmitterVelocityWS = savedPreviousEmitterVelocity;
+            simulationTick = savedSimulationTick;
+        }
+
+        void ResetEmissionTimeline()
+        {
+            emitCursor = 0;
+            emitCarry = 0f;
+            distanceEmitCarry = 0f;
+            emissionTime = 0f;
+            previousEmitterPositionWS = transform.position;
+            previousEmitterPositionValid = true;
+            previousEmitterVelocityWS = Vector3.zero;
+            stepBurstGroupCount = 0;
+            System.Array.Clear(stepBurstCounts, 0, stepBurstCounts.Length);
+            System.Array.Clear(stepBurstAges, 0, stepBurstAges.Length);
+            simulationTick = 0;
+        }
+
+        bool IsActivelyEmitting()
+        {
+            if (playbackState != PlaybackState.Playing || !emissionEnabled)
+            {
+                return false;
+            }
+
+            float startDelay = ResolveEmissionStartDelay();
+            if (emissionTime < startDelay) return false;
+            return emissionLooping ||
+                   emissionTime < startDelay + Mathf.Max(0.05f, emissionDuration);
+        }
+
+        float MaximumParticleLifetime()
+        {
+            float maximumLifetime = Mathf.Max(
+                0.001f,
+                Mathf.Max(startLifetime, startLifetimeMin));
+            if (startLifetimeMode == ParticleSystemCurveMode.Curve ||
+                startLifetimeMode == ParticleSystemCurveMode.TwoCurves)
+            {
+                maximumLifetime = MaximumLUTValue(
+                    startLifetimeLUT,
+                    maximumLifetime);
+            }
+
+            if (lifetimeByEmitterSpeedEnabled)
+            {
+                float maximumMultiplier = MaximumLUTValue(
+                    lifetimeByEmitterSpeedLUT,
+                    1f);
+                maximumLifetime *= Mathf.Max(0f, maximumMultiplier);
+            }
+
+            return Mathf.Max(0.001f, maximumLifetime);
+        }
+
+        static float MaximumLUTValue(Texture2D texture, float fallback)
+        {
+            if (texture == null || !texture.isReadable) return fallback;
+
+            try
+            {
+                Color[] pixels = texture.GetPixels();
+                float maximum = float.NegativeInfinity;
+                for (int i = 0; i < pixels.Length; i++)
+                {
+                    maximum = Mathf.Max(maximum, pixels[i].r);
+                }
+                return float.IsNegativeInfinity(maximum)
+                    ? fallback
+                    : maximum;
+            }
+            catch (UnityException)
+            {
+                return fallback;
+            }
+        }
+
+        void ApplyToChildren(System.Action<GPUParticleSystem> action)
+        {
+            GPUParticleSystem[] systems =
+                GetComponentsInChildren<GPUParticleSystem>(true);
+            for (int i = 0; i < systems.Length; i++)
+            {
+                GPUParticleSystem system = systems[i];
+                if (system != null && system != this)
+                {
+                    action(system);
+                }
+            }
         }
 
         public void SetStartLifetimeRange(float minimum, float maximum)
@@ -1702,6 +1939,11 @@ namespace GPUParticles
         {
             if (simulateMaterial == null) return;
 
+            bool advance = !Application.isPlaying ||
+                           playbackState == PlaybackState.Playing ||
+                           playbackState == PlaybackState.Stopping;
+            if (!advance) return;
+
             // A renderer feature executes once per camera. Shuriken advances once per
             // player-loop frame, so advancing here for Scene/Game/overlay cameras would
             // make the GPU system run faster whenever more than one camera renders.
@@ -1714,7 +1956,22 @@ namespace GPUParticles
 
             float dt = FrameDeltaTime();
             dt *= simulationSpeed;
-            SimulateStep(cmd, dt);
+            SimulateStep(
+                cmd,
+                dt,
+                !Application.isPlaying ||
+                playbackState == PlaybackState.Playing);
+
+            if (Application.isPlaying &&
+                playbackState == PlaybackState.Stopping)
+            {
+                stoppingElapsed += dt;
+                if (stoppingElapsed + 1e-5f >= stoppingDuration)
+                {
+                    playbackState = PlaybackState.Stopped;
+                    stoppingElapsed = stoppingDuration;
+                }
+            }
         }
 
         float FrameDeltaTime()
@@ -1765,6 +2022,15 @@ namespace GPUParticles
 
         internal void SimulateStep(CommandBuffer cmd, float dt)
         {
+            SimulateStep(
+                cmd,
+                dt,
+                !Application.isPlaying ||
+                playbackState == PlaybackState.Playing);
+        }
+
+        void SimulateStep(CommandBuffer cmd, float dt, bool allowEmission)
+        {
             dt = Mathf.Max(0f, dt);
             lastSimulationDeltaTime = dt;
             Matrix4x4 particleLocalToWorld = ParticleLocalToWorldMatrix();
@@ -1793,7 +2059,7 @@ namespace GPUParticles
             float distanceEmissionAmount = 0f;
             int distanceEmitCount = 0;
 
-            if (emissionEnabled)
+            if (allowEmission && emissionEnabled)
             {
                 CalculateContinuousEmission(
                     stepStart,

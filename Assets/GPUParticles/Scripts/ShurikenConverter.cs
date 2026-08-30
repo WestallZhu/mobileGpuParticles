@@ -35,6 +35,7 @@ namespace GPUParticles
             ApplyMainRanges(ps, gpu, owner);
             gpu.simulationSpeed = main.simulationSpeed;
             gpu.useUnscaledTime = main.useUnscaledTime;
+            gpu.playOnAwake = main.playOnAwake;
 
             ApplyForceOverLifetime(ps, gpu, owner);
             ApplyVelocityOverLifetime(ps, gpu, owner);
@@ -242,6 +243,7 @@ namespace GPUParticles
                 }
             }
 
+            gpu.InitializePlaybackFromSettings();
             Debug.Log("Shuriken → GPU (MRT) basic conversion complete.", owner);
         }
 
@@ -287,6 +289,7 @@ namespace GPUParticles
             ApplyMainRanges(particleSystem, gpu, gpuChild);
             gpu.simulationSpeed = main.simulationSpeed;
             gpu.useUnscaledTime = main.useUnscaledTime;
+            gpu.playOnAwake = main.playOnAwake;
 
             ApplyForceOverLifetime(particleSystem, gpu, gpuChild);
             ApplyVelocityOverLifetime(particleSystem, gpu, gpuChild);
@@ -487,6 +490,7 @@ namespace GPUParticles
 
             // 添加运行时同步组件（会在Awake中自动初始化）
             gpuChild.AddComponent<ParticleSystemSync>();
+            gpu.InitializePlaybackFromSettings();
 
             Debug.Log($"Shuriken → GPU conversion complete on new child node: {gpuChild.name}", gpuChild);
         }

@@ -1580,6 +1580,13 @@ Shader "Hidden/GPUParticles/SimulateMRT"
                             1.0 -
                             (life / max(particleStartLifetime, 1e-5)));
                         life = max(0.0, life - stepDt);
+                        // Shuriken retires particles on the lifetime boundary.
+                        // Floating-point subtraction can otherwise leave a tiny
+                        // positive remainder for one extra GPU frame.
+                        if (life <= 1e-5)
+                        {
+                            life = 0.0;
+                        }
                         normalizedAgeAfterStep = saturate(
                             1.0 -
                             (life / max(particleStartLifetime, 1e-5)));

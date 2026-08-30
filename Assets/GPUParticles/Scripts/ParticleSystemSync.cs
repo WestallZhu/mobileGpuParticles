@@ -6,6 +6,7 @@ namespace GPUParticles
     /// <summary>
     /// 运行时同步组件，监听ParticleSystem参数变化并同步到GPUParticleSystem
     /// </summary>
+    [DefaultExecutionOrder(100)]
     public class ParticleSystemSync : MonoBehaviour
     {
         private ParticleSystem sourceParticleSystem;
@@ -21,12 +22,24 @@ namespace GPUParticles
         private float cachedGravityModifier;
         private float cachedSimulationSpeed;
         private bool cachedUseUnscaledTime;
+        private bool cachedPlayOnAwake;
         private float cachedStartRotation;
         private float cachedRotationOverLifetime;
         private bool cachedEmissionEnabled;
         private int cachedMaxParticles;
         private ParticleSystemSimulationSpace cachedSimulationSpace;
         private ParticleSystemScalingMode cachedScalingMode;
+        private PlaybackSyncState cachedPlaybackState =
+            PlaybackSyncState.Unknown;
+
+        private enum PlaybackSyncState
+        {
+            Unknown,
+            Playing,
+            Paused,
+            StoppedEmitting,
+            StoppedAndClear
+        }
 
         // Shape缓存
         private ParticleSystemShapeType cachedShapeType;
@@ -155,6 +168,14 @@ namespace GPUParticles
             isInitialized = true;
         }
 
+        void Start()
+        {
+            if (isInitialized)
+            {
+                SyncPlaybackState(true);
+            }
+        }
+
         void CacheCurrentValues()
         {
             if (sourceParticleSystem == null || targetGPUParticleSystem == null) return;
@@ -170,6 +191,7 @@ namespace GPUParticles
             cachedGravityModifier = main.gravityModifier.mode == ParticleSystemCurveMode.Constant ? main.gravityModifier.constant : cachedGravityModifier;
             cachedSimulationSpeed = main.simulationSpeed;
             cachedUseUnscaledTime = main.useUnscaledTime;
+            cachedPlayOnAwake = main.playOnAwake;
             cachedStartRotation = main.startRotation.mode == ParticleSystemCurveMode.Constant ? main.startRotation.constant : cachedStartRotation;
             cachedEmissionEnabled = emission.enabled;
             cachedMaxParticles = main.maxParticles;
@@ -226,6 +248,7 @@ namespace GPUParticles
             SyncColorBySpeed();
             SyncSizeBySpeed();
             SyncRotationBySpeed();
+            SyncPlaybackState();
         }
 
         void SyncMainParameters(bool force = false)
@@ -260,6 +283,12 @@ namespace GPUParticles
             {
                 targetGPUParticleSystem.scalingMode = main.scalingMode;
                 cachedScalingMode = main.scalingMode;
+            }
+
+            if (force || main.playOnAwake != cachedPlayOnAwake)
+            {
+                targetGPUParticleSystem.playOnAwake = main.playOnAwake;
+                cachedPlayOnAwake = main.playOnAwake;
             }
 
             ParticleSystem.MinMaxCurve startLifetime = main.startLifetime;
@@ -458,6 +487,73 @@ namespace GPUParticles
                 }
                 lastStartRotationLUTUpdate = Time.realtimeSinceStartup;
             }
+        }
+
+        void SyncPlaybackState(bool force = false)
+        {
+            PlaybackSyncState state = ResolvePlaybackState();
+            if (!force && state == cachedPlaybackState) return;
+
+            switch (state)
+            {
+                case PlaybackSyncState.Playing:
+                    targetGPUParticleSystem.Play(false);
+                    break;
+
+                case PlaybackSyncState.Paused:
+                    targetGPUParticleSystem.Pause(false);
+                    break;
+
+                case PlaybackSyncState.StoppedEmitting:
+                    targetGPUParticleSystem.Stop(
+                        false,
+                        ParticleSystemStopBehavior.StopEmitting);
+                    break;
+
+                case PlaybackSyncState.StoppedAndClear:
+                    targetGPUParticleSystem.Stop(
+                        false,
+                        ParticleSystemStopBehavior.StopEmittingAndClear);
+                    break;
+            }
+
+            cachedPlaybackState = state;
+        }
+
+        PlaybackSyncState ResolvePlaybackState()
+        {
+            if (sourceParticleSystem.isPaused)
+            {
+                return PlaybackSyncState.Paused;
+            }
+
+            if (sourceParticleSystem.isPlaying)
+            {
+                if (!sourceParticleSystem.isEmitting &&
+                    SourceWasStoppedEmitting())
+                {
+                    return PlaybackSyncState.StoppedEmitting;
+                }
+                return PlaybackSyncState.Playing;
+            }
+
+            return sourceParticleSystem.particleCount > 0
+                ? PlaybackSyncState.StoppedEmitting
+                : PlaybackSyncState.StoppedAndClear;
+        }
+
+        bool SourceWasStoppedEmitting()
+        {
+            var emission = sourceParticleSystem.emission;
+            if (!emission.enabled) return false;
+
+            var main = sourceParticleSystem.main;
+            if (main.loop) return true;
+
+            float naturalEmissionEnd =
+                Mathf.Max(0f, main.startDelay.constantMax) +
+                Mathf.Max(0.05f, main.duration);
+            return sourceParticleSystem.time < naturalEmissionEnd - 1e-4f;
         }
 
         void SyncEmissionParameters(bool force = false)

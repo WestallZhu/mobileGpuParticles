@@ -62,7 +62,8 @@ namespace GPUParticles
         UnscaledTimePoint,
         ScalingHierarchyPoint,
         ScalingLocalPoint,
-        ScalingShapePoint
+        ScalingShapePoint,
+        PlaybackLifecyclePoint
     }
 
     [DisallowMultipleComponent]
@@ -152,6 +153,14 @@ namespace GPUParticles
         Vector2 currentShurikenScalingOffsetPixels;
         float maximumShurikenMeanAge;
         float maximumGPUMeanAge;
+        int playbackStateMismatchCount;
+        int playbackEmptyViolationCount;
+        int playbackTransitionMask;
+        bool playbackInitialStopped;
+        bool playbackDrainObserved;
+        bool playbackClearObserved;
+        int maximumShurikenStoppedParticleCount;
+        int maximumGPUStoppedParticleCount;
         Texture2D profileForceLUT;
         Texture2D profileVelocityLUT;
         Texture2D profileVelocityOrbitalLUT;
@@ -224,6 +233,13 @@ namespace GPUParticles
         const float RendererClampPairTolerancePixels = 2f;
         const float ScalingPairTolerancePixels = 5f;
         const float UnscaledTimeScale = 0f;
+        const int PlaybackPlayFrame = 31;
+        const int PlaybackPauseFrame = 77;
+        const int PlaybackResumeFrame = 107;
+        const int PlaybackStopEmittingFrame = 151;
+        const int PlaybackDrainExpectedFrame = 230;
+        const int PlaybackReplayFrame = 241;
+        const int PlaybackClearFrame = 260;
         static readonly Color32 RendererClampMarker =
             new Color32(242, 31, 242, 255);
         static readonly Color32 ScalingModeMarker =
@@ -277,6 +293,8 @@ namespace GPUParticles
         ObservedRange gpuScalingSpawnOffsetPixelRange;
         ObservedRange shurikenScalingBirthXRange;
         ObservedRange gpuScalingBirthXRange;
+        ObservedRange shurikenPausedMeanAgeRange;
+        ObservedRange gpuPausedMeanAgeRange;
 
         struct MarkerPixelBounds
         {
@@ -351,6 +369,10 @@ namespace GPUParticles
                 ? gpuParticles.transform.position
                 : Vector3.zero;
 
+            playbackInitialStopped = !IsPlaybackLifecycleProfile() ||
+                (shuriken != null && gpuParticles != null &&
+                 shuriken.isStopped && gpuParticles.isStopped);
+
             ConfigureValidationProfile();
             RestartPlayback();
             ApplyDisplayMode();
@@ -421,6 +443,8 @@ namespace GPUParticles
 
         void Update()
         {
+            UpdatePlaybackLifecycle();
+
             if (captureActive && UsesMovingEmitterProfile())
             {
                 float nextSimulationTime = (playbackFrame + 1f) / fixedFrameRate;
@@ -438,6 +462,11 @@ namespace GPUParticles
         void LateUpdate()
         {
             if (!captureActive) return;
+
+            if (IsPlaybackLifecycleProfile())
+            {
+                ObservePlaybackState();
+            }
 
             if (IsUnscaledTimeProfile() && playbackFrame < 3)
             {
@@ -487,6 +516,12 @@ namespace GPUParticles
 
             ResetBySpeedModules();
             ResetTextureSheetAnimation();
+
+            if (IsPlaybackLifecycleProfile())
+            {
+                ConfigurePlaybackLifecycleProfile();
+                return;
+            }
 
             if (IsShapeProfile())
             {
@@ -2664,6 +2699,148 @@ namespace GPUParticles
             gpuParticles.rotationBySpeedLUT = CurveLUTBuilder.GetDefaultZeroLUT();
         }
 
+        void ConfigurePlaybackLifecycleProfile()
+        {
+            ConfigureEmissionPointBase(5f, true);
+
+            var main = shuriken.main;
+            main.playOnAwake = false;
+            main.startLifetime = 1.25f;
+            main.startSize = 0.5f;
+
+            var emission = shuriken.emission;
+            emission.rateOverTime = 12f;
+
+            gpuParticles.playOnAwake = false;
+            gpuParticles.SetStartLifetimeRange(1.25f, 1.25f);
+            gpuParticles.SetStartSizeRange(0.5f, 0.5f);
+            gpuParticles.SetEmissionRateOverTime(emission.rateOverTime);
+
+            shuriken.Stop(
+                true,
+                ParticleSystemStopBehavior.StopEmittingAndClear);
+            gpuParticles.Stop(
+                false,
+                ParticleSystemStopBehavior.StopEmittingAndClear);
+        }
+
+        bool IsPlaybackLifecycleProfile()
+        {
+            return validationProfile ==
+                ParticleABValidationProfile.PlaybackLifecyclePoint;
+        }
+
+        void UpdatePlaybackLifecycle()
+        {
+            if (!captureActive || !IsPlaybackLifecycleProfile() ||
+                shuriken == null || gpuParticles == null)
+            {
+                return;
+            }
+
+            switch (playbackFrame)
+            {
+                case PlaybackPlayFrame:
+                    shuriken.Play(true);
+                    break;
+
+                case PlaybackPauseFrame:
+                    shuriken.Pause(true);
+                    break;
+
+                case PlaybackResumeFrame:
+                    shuriken.Play(true);
+                    break;
+
+                case PlaybackStopEmittingFrame:
+                    shuriken.Stop(
+                        true,
+                        ParticleSystemStopBehavior.StopEmitting);
+                    break;
+
+                case PlaybackReplayFrame:
+                    shuriken.Play(true);
+                    break;
+
+                case PlaybackClearFrame:
+                    shuriken.Stop(
+                        true,
+                        ParticleSystemStopBehavior.StopEmittingAndClear);
+                    break;
+            }
+        }
+
+        void ObservePlaybackState()
+        {
+            bool statesMatch =
+                shuriken.isPlaying == gpuParticles.isPlaying &&
+                shuriken.isPaused == gpuParticles.isPaused &&
+                shuriken.isStopped == gpuParticles.isStopped &&
+                shuriken.isEmitting == gpuParticles.isEmitting;
+            if (!statesMatch)
+            {
+                playbackStateMismatchCount++;
+            }
+
+            if (playbackFrame < PlaybackPlayFrame)
+            {
+                if (shuriken.isStopped && gpuParticles.isStopped)
+                {
+                    playbackTransitionMask |= 1 << 0;
+                }
+            }
+            else if (playbackFrame < PlaybackPauseFrame)
+            {
+                if (shuriken.isPlaying && gpuParticles.isPlaying &&
+                    shuriken.isEmitting && gpuParticles.isEmitting)
+                {
+                    playbackTransitionMask |= 1 << 1;
+                }
+            }
+            else if (playbackFrame < PlaybackResumeFrame)
+            {
+                if (shuriken.isPaused && gpuParticles.isPaused)
+                {
+                    playbackTransitionMask |= 1 << 2;
+                }
+            }
+            else if (playbackFrame < PlaybackStopEmittingFrame)
+            {
+                if (shuriken.isPlaying && gpuParticles.isPlaying)
+                {
+                    playbackTransitionMask |= 1 << 3;
+                }
+            }
+            else if (playbackFrame < PlaybackDrainExpectedFrame)
+            {
+                if (shuriken.isPlaying && gpuParticles.isPlaying &&
+                    !shuriken.isStopped && !gpuParticles.isStopped &&
+                    !shuriken.isEmitting && !gpuParticles.isEmitting)
+                {
+                    playbackTransitionMask |= 1 << 4;
+                }
+            }
+            else if (playbackFrame < PlaybackReplayFrame)
+            {
+                if (shuriken.isStopped && gpuParticles.isStopped)
+                {
+                    playbackTransitionMask |= 1 << 5;
+                }
+            }
+            else if (playbackFrame < PlaybackClearFrame)
+            {
+                if (shuriken.isPlaying && gpuParticles.isPlaying &&
+                    shuriken.isEmitting && gpuParticles.isEmitting)
+                {
+                    playbackTransitionMask |= 1 << 6;
+                }
+            }
+            else if (shuriken.isStopped && gpuParticles.isStopped)
+            {
+                playbackTransitionMask |= 1 << 7;
+            }
+        }
+
         void ConfigureEmissionPointBase(float duration, bool looping)
         {
             shuriken.Stop(true, ParticleSystemStopBehavior.StopEmittingAndClear);
@@ -2800,12 +2977,25 @@ namespace GPUParticles
                 shuriken.randomSeed = randomSeed == 0 ? 1u : randomSeed;
                 var main = shuriken.main;
                 main.cullingMode = ParticleSystemCullingMode.AlwaysSimulate;
-                shuriken.Play(true);
+                if (!IsPlaybackLifecycleProfile())
+                {
+                    shuriken.Play(true);
+                }
             }
 
             if (gpuParticles != null)
             {
                 gpuParticles.ResetSimulation();
+                if (IsPlaybackLifecycleProfile())
+                {
+                    gpuParticles.Stop(
+                        false,
+                        ParticleSystemStopBehavior.StopEmittingAndClear);
+                }
+                else
+                {
+                    gpuParticles.Play(false);
+                }
             }
 
             if (captureActive)
@@ -3069,6 +3259,13 @@ namespace GPUParticles
             currentShurikenScalingOffsetPixels = Vector2.zero;
             maximumShurikenMeanAge = 0f;
             maximumGPUMeanAge = 0f;
+            playbackStateMismatchCount = 0;
+            playbackEmptyViolationCount = 0;
+            playbackTransitionMask = 0;
+            playbackDrainObserved = false;
+            playbackClearObserved = false;
+            maximumShurikenStoppedParticleCount = 0;
+            maximumGPUStoppedParticleCount = 0;
             shurikenLifetimeRange.Reset();
             gpuLifetimeRange.Reset();
             shurikenSpeedRange.Reset();
@@ -3117,6 +3314,8 @@ namespace GPUParticles
             gpuScalingSpawnOffsetPixelRange.Reset();
             shurikenScalingBirthXRange.Reset();
             gpuScalingBirthXRange.Reset();
+            shurikenPausedMeanAgeRange.Reset();
+            gpuPausedMeanAgeRange.Reset();
             captureActive = true;
 
             Debug.Log($"Particle A/B RT capture started: {sessionFolder}", this);
@@ -4111,6 +4310,11 @@ namespace GPUParticles
             maximumGPUMeanAge = Mathf.Max(
                 maximumGPUMeanAge,
                 gpuMeanAge);
+            ObservePlaybackMetrics(
+                shurikenCount,
+                gpuCount,
+                shurikenMeanAge,
+                gpuMeanAge);
             float shurikenMeanLifetime = shurikenCount > 0
                 ? shurikenLifetimeSum / shurikenCount
                 : 0f;
@@ -5047,6 +5251,63 @@ namespace GPUParticles
             cameraCaptureRT = null;
         }
 
+        void ObservePlaybackMetrics(
+            int shurikenCount,
+            int gpuCount,
+            float shurikenMeanAge,
+            float gpuMeanAge)
+        {
+            if (!IsPlaybackLifecycleProfile()) return;
+
+            if (playbackFrame < PlaybackPlayFrame)
+            {
+                if (shurikenCount != 0 || gpuCount != 0)
+                {
+                    playbackEmptyViolationCount++;
+                }
+                return;
+            }
+
+            if (playbackFrame >= PlaybackPauseFrame &&
+                playbackFrame < PlaybackResumeFrame &&
+                shurikenCount > 0 && gpuCount > 0)
+            {
+                shurikenPausedMeanAgeRange.Observe(shurikenMeanAge);
+                gpuPausedMeanAgeRange.Observe(gpuMeanAge);
+            }
+
+            if (playbackFrame >= PlaybackStopEmittingFrame &&
+                playbackFrame < PlaybackDrainExpectedFrame)
+            {
+                maximumShurikenStoppedParticleCount = Mathf.Max(
+                    maximumShurikenStoppedParticleCount,
+                    shurikenCount);
+                maximumGPUStoppedParticleCount = Mathf.Max(
+                    maximumGPUStoppedParticleCount,
+                    gpuCount);
+            }
+
+            if (playbackFrame >= PlaybackDrainExpectedFrame &&
+                playbackFrame < PlaybackReplayFrame &&
+                shurikenCount == 0 && gpuCount == 0)
+            {
+                playbackDrainObserved = true;
+            }
+
+            if (playbackFrame >= PlaybackClearFrame &&
+                shurikenCount == 0 && gpuCount == 0)
+            {
+                playbackClearObserved = true;
+            }
+        }
+
+        static float ObservedSpread(ObservedRange range)
+        {
+            return range.HasSamples
+                ? range.Maximum - range.Minimum
+                : float.PositiveInfinity;
+        }
+
         void CompleteCapture()
         {
             captureActive = false;
@@ -5237,6 +5498,22 @@ namespace GPUParticles
                                             maximumScalingSpawnOffsetPixelError <=
                                                 ScalingPairTolerancePixels &&
                                             ScalingModeSemanticsPass();
+                    break;
+
+                case ParticleABValidationProfile.PlaybackLifecyclePoint:
+                    profileSpecificPassed =
+                        playbackInitialStopped &&
+                        playbackStateMismatchCount == 0 &&
+                        playbackEmptyViolationCount == 0 &&
+                        playbackTransitionMask == 0xFF &&
+                        shurikenPausedMeanAgeRange.HasSamples &&
+                        gpuPausedMeanAgeRange.HasSamples &&
+                        ObservedSpread(shurikenPausedMeanAgeRange) <= 0.02f &&
+                        ObservedSpread(gpuPausedMeanAgeRange) <= 0.02f &&
+                        maximumShurikenStoppedParticleCount > 0 &&
+                        maximumGPUStoppedParticleCount > 0 &&
+                        playbackDrainObserved &&
+                        playbackClearObserved;
                     break;
 
                 case ParticleABValidationProfile.UnscaledTimePoint:
@@ -5458,6 +5735,9 @@ namespace GPUParticles
                 : validationProfile ==
                     ParticleABValidationProfile.StartLifetimeTwoCurvesPoint
                     ? 6
+                    : validationProfile ==
+                        ParticleABValidationProfile.PlaybackLifecyclePoint
+                        ? 1
                     : 0;
             float allowedMeanAgeError = validationProfile ==
                     ParticleABValidationProfile.StartLifetimeCurvePoint
@@ -5465,6 +5745,12 @@ namespace GPUParticles
                 : validationProfile ==
                     ParticleABValidationProfile.StartLifetimeTwoCurvesPoint
                     ? 0.16f
+                    : validationProfile ==
+                        ParticleABValidationProfile.PlaybackLifecyclePoint
+                        // Shuriken exposes a zero-remaining-lifetime entry for
+                        // one StopEmitting drain frame; it is not rendered, but
+                        // its inclusion shifts the raw mean age for that sample.
+                        ? 0.05f
                     : 0.001f;
             bool passed = maximumCountDelta <= allowedCountDelta &&
                           maximumMeanAgeError <= allowedMeanAgeError &&
@@ -5477,6 +5763,20 @@ namespace GPUParticles
                 $"maxMeanAgeError={maximumMeanAgeError:R}; " +
                 $"maxShurikenMeanAge={maximumShurikenMeanAge:R}; " +
                 $"maxGPUMeanAge={maximumGPUMeanAge:R}; " +
+                $"playbackInitialStopped={playbackInitialStopped}; " +
+                $"playbackStateMismatchCount={playbackStateMismatchCount}; " +
+                $"playbackEmptyViolationCount={playbackEmptyViolationCount}; " +
+                $"playbackTransitionMask=0x{playbackTransitionMask:X2}; " +
+                $"playbackPausedShurikenAgeSpread=" +
+                $"{ObservedSpread(shurikenPausedMeanAgeRange):R}; " +
+                $"playbackPausedGPUAgeSpread=" +
+                $"{ObservedSpread(gpuPausedMeanAgeRange):R}; " +
+                $"playbackStoppedShurikenCount=" +
+                $"{maximumShurikenStoppedParticleCount}; " +
+                $"playbackStoppedGPUCount=" +
+                $"{maximumGPUStoppedParticleCount}; " +
+                $"playbackDrainObserved={playbackDrainObserved}; " +
+                $"playbackClearObserved={playbackClearObserved}; " +
                 $"maxMeanLifetimeError={maximumMeanLifetimeError:R}; " +
                 $"maxMeanStartRotationError=" +
                 $"{maximumMeanStartRotationError:R}; " +
