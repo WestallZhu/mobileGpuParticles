@@ -62,6 +62,11 @@ namespace GPUParticles
         public ParticleSystemCurveMode startSizeMode =
             ParticleSystemCurveMode.Constant;
         public Texture2D startSizeLUT;
+        public bool startSize3D;
+        [Min(0.0f)] public float startSizeY = 0.1f;
+        public ParticleSystemCurveMode startSizeYMode =
+            ParticleSystemCurveMode.Constant;
+        public Texture2D startSizeYLUT;
         public Color startColor = Color.white;
         public ParticleSystemGradientMode startColorMode =
             ParticleSystemGradientMode.Color;
@@ -85,6 +90,8 @@ namespace GPUParticles
         public float startSpeedMin = 5.0f;
         public bool randomizeStartSize;
         [Min(0.0f)] public float startSizeMin = 0.1f;
+        public bool randomizeStartSizeY;
+        [Min(0.0f)] public float startSizeYMin = 0.1f;
         public bool randomizeStartColor;
         public Color startColorMin = Color.white;
         public bool randomizeGravityModifier;
@@ -99,6 +106,8 @@ namespace GPUParticles
         public Texture2D colorOverLifetimeLUT;
         public ParticleSystemGradientMode colorOverLifetimeMode = ParticleSystemGradientMode.Gradient;
         public Texture2D sizeOverLifetimeLUT;
+        public bool sizeOverLifetimeSeparateAxes;
+        public Texture2D sizeOverLifetimeYLUT;
 
         [Header("By Speed (LUTs)")]
         public bool colorBySpeedEnabled;
@@ -107,6 +116,8 @@ namespace GPUParticles
         public Vector2 colorBySpeedRange = new Vector2(0f, 1f);
         public bool sizeBySpeedEnabled;
         public Texture2D sizeBySpeedLUT;
+        public bool sizeBySpeedSeparateAxes;
+        public Texture2D sizeBySpeedYLUT;
         public Vector2 sizeBySpeedRange = new Vector2(0f, 1f);
         public bool rotationBySpeedEnabled;
         public Texture2D rotationBySpeedLUT;
@@ -299,6 +310,19 @@ namespace GPUParticles
         static readonly int _StartSizeLUT = Shader.PropertyToID("_StartSizeLUT");
         static readonly int _StartSizeLUTInvWidth =
             Shader.PropertyToID("_StartSizeLUTInvWidth");
+        static readonly int _UseSeparateSizeAxes =
+            Shader.PropertyToID("_UseSeparateSizeAxes");
+        static readonly int _StartSize3D = Shader.PropertyToID("_StartSize3D");
+        static readonly int _SizeOverLifetimeSeparateAxes =
+            Shader.PropertyToID("_SizeOverLifetimeSeparateAxes");
+        static readonly int _SizeBySpeedSeparateAxes =
+            Shader.PropertyToID("_SizeBySpeedSeparateAxes");
+        static readonly int _StartSizeY = Shader.PropertyToID("_StartSizeY");
+        static readonly int _StartSizeYMin = Shader.PropertyToID("_StartSizeYMin");
+        static readonly int _StartSizeYMode = Shader.PropertyToID("_StartSizeYMode");
+        static readonly int _StartSizeYLUT = Shader.PropertyToID("_StartSizeYLUT");
+        static readonly int _StartSizeYLUTInvWidth =
+            Shader.PropertyToID("_StartSizeYLUTInvWidth");
         static readonly int _StartColor = Shader.PropertyToID("_StartColor");
         static readonly int _StartColorMin = Shader.PropertyToID("_StartColorMin");
         static readonly int _RandomizeStartColor = Shader.PropertyToID("_RandomizeStartColor");
@@ -409,6 +433,8 @@ namespace GPUParticles
         static readonly int _ColorOverLifetimeMode = Shader.PropertyToID("_ColorOverLifetimeMode");
         static readonly int _GradLUTInvWidth = Shader.PropertyToID("_GradLUTInvWidth");
         static readonly int _SizeLUTInvWidth = Shader.PropertyToID("_SizeLUTInvWidth");
+        static readonly int _SizeYLUT = Shader.PropertyToID("_SizeYLUT");
+        static readonly int _SizeYLUTInvWidth = Shader.PropertyToID("_SizeYLUTInvWidth");
         static readonly int _ForceOverLifetimeLUTInvWidth =
             Shader.PropertyToID("_ForceOverLifetimeLUTInvWidth");
         static readonly int _VelocityOverLifetimeLUTInvWidth =
@@ -426,6 +452,9 @@ namespace GPUParticles
         static readonly int _SizeBySpeedLUT = Shader.PropertyToID("_SizeBySpeedLUT");
         static readonly int _SizeBySpeedLUTInvWidth =
             Shader.PropertyToID("_SizeBySpeedLUTInvWidth");
+        static readonly int _SizeBySpeedYLUT = Shader.PropertyToID("_SizeBySpeedYLUT");
+        static readonly int _SizeBySpeedYLUTInvWidth =
+            Shader.PropertyToID("_SizeBySpeedYLUTInvWidth");
         static readonly int _SizeBySpeedEnabled = Shader.PropertyToID("_SizeBySpeedEnabled");
         static readonly int _SizeBySpeedRange = Shader.PropertyToID("_SizeBySpeedRange");
         static readonly int _RotationBySpeedLUT = Shader.PropertyToID("_RotationBySpeedLUT");
@@ -692,6 +721,16 @@ namespace GPUParticles
             startSize = Mathf.Max(0f, Mathf.Max(minimum, maximum));
             randomizeStartSize = !Mathf.Approximately(startSizeMin, startSize);
             startSizeMode = randomizeStartSize
+                ? ParticleSystemCurveMode.TwoConstants
+                : ParticleSystemCurveMode.Constant;
+        }
+
+        public void SetStartSizeYRange(float minimum, float maximum)
+        {
+            startSizeYMin = Mathf.Max(0f, Mathf.Min(minimum, maximum));
+            startSizeY = Mathf.Max(0f, Mathf.Max(minimum, maximum));
+            randomizeStartSizeY = !Mathf.Approximately(startSizeYMin, startSizeY);
+            startSizeYMode = randomizeStartSizeY
                 ? ParticleSystemCurveMode.TwoConstants
                 : ParticleSystemCurveMode.Constant;
         }
@@ -1047,12 +1086,155 @@ namespace GPUParticles
                    rotationBySpeedPhase;
         }
 
+        internal Vector2 ResolveParticleBillboardSize(
+            int particleId,
+            float lifetimeState,
+            float currentSizeX,
+            float particleSpeed,
+            Vector3 birthEmitterVelocityWS = default)
+        {
+            bool useSeparateAxes = startSize3D ||
+                                   sizeOverLifetimeSeparateAxes ||
+                                   (sizeBySpeedEnabled &&
+                                    sizeBySpeedSeparateAxes);
+            if (!useSeparateAxes)
+            {
+                return new Vector2(currentSizeX, currentSizeX);
+            }
+
+            ResolveParticleLifetimeState(
+                particleId,
+                lifetimeState,
+                birthEmitterVelocityWS,
+                out float particleStartLifetime,
+                out float particleAge,
+                out _);
+            float normalizedAge = particleStartLifetime > 1e-6f
+                ? Mathf.Clamp01(particleAge / particleStartLifetime)
+                : 0f;
+            uint id = (uint)particleId;
+
+            float startY = ResolveStartSizeAxis(
+                id,
+                particleAge,
+                startSize3D ? EffectiveStartSizeYMode() : EffectiveStartSizeMode(),
+                startSize3D ? startSizeYMin : startSizeMin,
+                startSize3D ? startSizeY : startSize,
+                startSize3D ? startSizeYLUT : startSizeLUT,
+                startSize3D ? 0xC13FA9A9u : 0x1B56C4E9u);
+            Texture2D lifetimeYLUT = sizeOverLifetimeSeparateAxes
+                ? sizeOverLifetimeYLUT
+                : sizeOverLifetimeLUT;
+            uint lifetimeSalt = sizeOverLifetimeSeparateAxes
+                ? 0xA24BAED4u
+                : 0x91E10DA5u;
+            float lifetimeMultiplier = ResolveMinMaxCurveLUT(
+                lifetimeYLUT,
+                normalizedAge,
+                id,
+                lifetimeSalt,
+                1f);
+
+            float speedMultiplier = 1f;
+            if (sizeBySpeedEnabled)
+            {
+                float rangeWidth = sizeBySpeedRange.y - sizeBySpeedRange.x;
+                float speedPosition = rangeWidth > 1e-6f
+                    ? Mathf.Clamp01(
+                        (particleSpeed - sizeBySpeedRange.x) / rangeWidth)
+                    : particleSpeed > sizeBySpeedRange.x ? 1f : 0f;
+                speedMultiplier = ResolveMinMaxCurveLUT(
+                    sizeBySpeedSeparateAxes
+                        ? sizeBySpeedYLUT
+                        : sizeBySpeedLUT,
+                    speedPosition,
+                    id,
+                    sizeBySpeedSeparateAxes
+                        ? 0xB5297A4Du
+                        : 0xD192ED03u,
+                    1f);
+            }
+
+            return new Vector2(
+                currentSizeX,
+                startY * lifetimeMultiplier * speedMultiplier);
+        }
+
+        float ResolveStartSizeAxis(
+            uint particleId,
+            float particleAge,
+            ParticleSystemCurveMode mode,
+            float minimum,
+            float maximum,
+            Texture2D lut,
+            uint salt)
+        {
+            if (mode == ParticleSystemCurveMode.Constant ||
+                mode == ParticleSystemCurveMode.TwoConstants)
+            {
+                return ResolveRandomRange(
+                    mode == ParticleSystemCurveMode.TwoConstants,
+                    minimum,
+                    maximum,
+                    particleId,
+                    salt);
+            }
+
+            float activeTime = Mathf.Max(
+                0f,
+                emissionTime - ResolveEmissionStartDelay() - particleAge);
+            float duration = Mathf.Max(0.05f, emissionDuration);
+            float systemTime = emissionLooping
+                ? Mathf.Repeat(activeTime, duration) / duration
+                : Mathf.Clamp01(activeTime / duration);
+            float minimumValue = SampleLUTRow(lut, systemTime, 0);
+            float maximumValue = SampleLUTRow(lut, systemTime, 1);
+            return mode == ParticleSystemCurveMode.TwoCurves
+                ? Mathf.LerpUnclamped(
+                    minimumValue,
+                    maximumValue,
+                    Hash01(particleId ^ salt))
+                : maximumValue;
+        }
+
+        static float ResolveMinMaxCurveLUT(
+            Texture2D lut,
+            float normalizedPosition,
+            uint particleId,
+            uint salt,
+            float defaultValue)
+        {
+            if (lut == null) return defaultValue;
+            float minimum = SampleLUTRow(lut, normalizedPosition, 0);
+            float maximum = SampleLUTRow(lut, normalizedPosition, 1);
+            return Mathf.LerpUnclamped(
+                minimum,
+                maximum,
+                Hash01(particleId ^ salt));
+        }
+
         ParticleSystemCurveMode EffectiveStartLifetimeMode()
         {
             return startLifetimeMode == ParticleSystemCurveMode.Constant &&
                    randomizeStartLifetime
                 ? ParticleSystemCurveMode.TwoConstants
                 : startLifetimeMode;
+        }
+
+        ParticleSystemCurveMode EffectiveStartSizeMode()
+        {
+            return startSizeMode == ParticleSystemCurveMode.Constant &&
+                   randomizeStartSize
+                ? ParticleSystemCurveMode.TwoConstants
+                : startSizeMode;
+        }
+
+        ParticleSystemCurveMode EffectiveStartSizeYMode()
+        {
+            return startSizeYMode == ParticleSystemCurveMode.Constant &&
+                   randomizeStartSizeY
+                ? ParticleSystemCurveMode.TwoConstants
+                : startSizeYMode;
         }
 
         internal bool IsStartLifetimeCurveMode()
@@ -2052,6 +2234,103 @@ namespace GPUParticles
             renderMaterial.SetFloat(
                 _DeltaTime,
                 lastSimulationDeltaTime);
+            bool useSeparateSizeAxes = startSize3D ||
+                                       sizeOverLifetimeSeparateAxes ||
+                                       (sizeBySpeedEnabled &&
+                                        sizeBySpeedSeparateAxes);
+            Texture2D selectedStartSizeLUT = startSizeLUT != null
+                ? startSizeLUT
+                : CurveLUTBuilder.GetDefaultUnitLUT();
+            Texture2D selectedStartSizeYLUT = startSize3D &&
+                                              startSizeYLUT != null
+                ? startSizeYLUT
+                : selectedStartSizeLUT;
+            Texture2D selectedSizeOverLifetimeLUT =
+                sizeOverLifetimeLUT != null
+                    ? sizeOverLifetimeLUT
+                    : CurveLUTBuilder.GetDefaultUnitLUT();
+            Texture2D selectedSizeOverLifetimeYLUT =
+                sizeOverLifetimeSeparateAxes &&
+                sizeOverLifetimeYLUT != null
+                    ? sizeOverLifetimeYLUT
+                    : selectedSizeOverLifetimeLUT;
+            Texture2D selectedSizeBySpeedLUT = sizeBySpeedLUT != null
+                ? sizeBySpeedLUT
+                : CurveLUTBuilder.GetDefaultUnitLUT();
+            Texture2D selectedSizeBySpeedYLUT =
+                sizeBySpeedSeparateAxes && sizeBySpeedYLUT != null
+                    ? sizeBySpeedYLUT
+                    : selectedSizeBySpeedLUT;
+            renderMaterial.SetInt(
+                _UseSeparateSizeAxes,
+                useSeparateSizeAxes ? 1 : 0);
+            renderMaterial.SetInt(_StartSize3D, startSize3D ? 1 : 0);
+            renderMaterial.SetInt(
+                _SizeOverLifetimeSeparateAxes,
+                sizeOverLifetimeSeparateAxes ? 1 : 0);
+            renderMaterial.SetInt(
+                _SizeBySpeedSeparateAxes,
+                sizeBySpeedSeparateAxes ? 1 : 0);
+            renderMaterial.SetFloat(_StartSize, startSize);
+            renderMaterial.SetFloat(_StartSizeMin, startSizeMin);
+            renderMaterial.SetInt(
+                _StartSizeMode,
+                (int)EffectiveStartSizeMode());
+            renderMaterial.SetTexture(_StartSizeLUT, selectedStartSizeLUT);
+            renderMaterial.SetFloat(
+                _StartSizeLUTInvWidth,
+                InverseTextureWidth(selectedStartSizeLUT));
+            renderMaterial.SetFloat(
+                _StartSizeY,
+                startSize3D ? startSizeY : startSize);
+            renderMaterial.SetFloat(
+                _StartSizeYMin,
+                startSize3D ? startSizeYMin : startSizeMin);
+            renderMaterial.SetInt(
+                _StartSizeYMode,
+                (int)(startSize3D
+                    ? EffectiveStartSizeYMode()
+                    : EffectiveStartSizeMode()));
+            renderMaterial.SetTexture(
+                _StartSizeYLUT,
+                selectedStartSizeYLUT);
+            renderMaterial.SetFloat(
+                _StartSizeYLUTInvWidth,
+                InverseTextureWidth(selectedStartSizeYLUT));
+            renderMaterial.SetTexture(
+                "_SizeLUT",
+                selectedSizeOverLifetimeLUT);
+            renderMaterial.SetFloat(
+                _SizeLUTInvWidth,
+                InverseTextureWidth(selectedSizeOverLifetimeLUT));
+            renderMaterial.SetTexture(
+                _SizeYLUT,
+                selectedSizeOverLifetimeYLUT);
+            renderMaterial.SetFloat(
+                _SizeYLUTInvWidth,
+                InverseTextureWidth(selectedSizeOverLifetimeYLUT));
+            renderMaterial.SetInt(
+                _SizeBySpeedEnabled,
+                sizeBySpeedEnabled ? 1 : 0);
+            renderMaterial.SetVector(
+                _SizeBySpeedRange,
+                new Vector4(
+                    sizeBySpeedRange.x,
+                    sizeBySpeedRange.y,
+                    0f,
+                    0f));
+            renderMaterial.SetTexture(
+                _SizeBySpeedLUT,
+                selectedSizeBySpeedLUT);
+            renderMaterial.SetFloat(
+                _SizeBySpeedLUTInvWidth,
+                InverseTextureWidth(selectedSizeBySpeedLUT));
+            renderMaterial.SetTexture(
+                _SizeBySpeedYLUT,
+                selectedSizeBySpeedYLUT);
+            renderMaterial.SetFloat(
+                _SizeBySpeedYLUTInvWidth,
+                InverseTextureWidth(selectedSizeBySpeedYLUT));
             Texture2D selectedLifetimeByEmitterSpeedLUT =
                 lifetimeByEmitterSpeedLUT != null
                     ? lifetimeByEmitterSpeedLUT

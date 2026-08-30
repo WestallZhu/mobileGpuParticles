@@ -27,6 +27,12 @@ Shader "GPUParticles/UnlitBillboardURP"
             TEXTURE2D(_CurRotationPhase); SAMPLER(sampler_CurRotationPhase);
             TEXTURE2D(_BaseMap);    SAMPLER(sampler_BaseMap);
             TEXTURE2D(_StartLifetimeLUT);
+            TEXTURE2D(_StartSizeLUT); SAMPLER(sampler_StartSizeLUT);
+            TEXTURE2D(_StartSizeYLUT); SAMPLER(sampler_StartSizeYLUT);
+            TEXTURE2D(_SizeLUT); SAMPLER(sampler_SizeLUT);
+            TEXTURE2D(_SizeYLUT); SAMPLER(sampler_SizeYLUT);
+            TEXTURE2D(_SizeBySpeedLUT); SAMPLER(sampler_SizeBySpeedLUT);
+            TEXTURE2D(_SizeBySpeedYLUT); SAMPLER(sampler_SizeBySpeedYLUT);
             TEXTURE2D(_StartRotationLUT);
             TEXTURE2D(_RotationOverLifetimeIntegralLUT);
             SAMPLER(sampler_RotationOverLifetimeIntegralLUT);
@@ -55,6 +61,24 @@ Shader "GPUParticles/UnlitBillboardURP"
                 float _EmissionDuration;
                 int   _EmissionLooping;
                 float _DeltaTime;
+                int   _UseSeparateSizeAxes;
+                int   _StartSize3D;
+                int   _SizeOverLifetimeSeparateAxes;
+                int   _SizeBySpeedSeparateAxes;
+                float _StartSize;
+                float _StartSizeMin;
+                int   _StartSizeMode;
+                float _StartSizeLUTInvWidth;
+                float _StartSizeY;
+                float _StartSizeYMin;
+                int   _StartSizeYMode;
+                float _StartSizeYLUTInvWidth;
+                float _SizeLUTInvWidth;
+                float _SizeYLUTInvWidth;
+                int   _SizeBySpeedEnabled;
+                float2 _SizeBySpeedRange;
+                float _SizeBySpeedLUTInvWidth;
+                float _SizeBySpeedYLUTInvWidth;
                 int   _LifetimeByEmitterSpeedEnabled;
                 float2 _LifetimeByEmitterSpeedRange;
                 float _LifetimeByEmitterSpeedLUTInvWidth;
@@ -237,6 +261,170 @@ Shader "GPUParticles/UnlitBillboardURP"
                 return lerp(minimum, maximum, randomValue);
             }
 
+            float StartSizeXAtBirth(uint id, float particleAge)
+            {
+                if (_StartSizeMode == 0)
+                {
+                    return _StartSize;
+                }
+
+                float randomValue = Hash01(id ^ 0x1B56C4E9u);
+                if (_StartSizeMode == 3)
+                {
+                    return lerp(_StartSizeMin, _StartSize, randomValue);
+                }
+
+                float x = LUTCoordinate(
+                    BirthSystemTime(particleAge),
+                    _StartSizeLUTInvWidth);
+                float maximum = SAMPLE_TEXTURE2D_LOD(
+                    _StartSizeLUT,
+                    sampler_StartSizeLUT,
+                    float2(x, 0.75), 0).r;
+                if (_StartSizeMode != 2)
+                {
+                    return maximum;
+                }
+                float minimum = SAMPLE_TEXTURE2D_LOD(
+                    _StartSizeLUT,
+                    sampler_StartSizeLUT,
+                    float2(x, 0.25), 0).r;
+                return lerp(minimum, maximum, randomValue);
+            }
+
+            float StartSizeYAtBirth(uint id, float particleAge)
+            {
+                if (_StartSizeYMode == 0)
+                {
+                    return _StartSizeY;
+                }
+
+                uint salt = _StartSize3D != 0
+                    ? 0xC13FA9A9u
+                    : 0x1B56C4E9u;
+                float randomValue = Hash01(id ^ salt);
+                if (_StartSizeYMode == 3)
+                {
+                    return lerp(_StartSizeYMin, _StartSizeY, randomValue);
+                }
+
+                float x = LUTCoordinate(
+                    BirthSystemTime(particleAge),
+                    _StartSizeYLUTInvWidth);
+                float maximum = SAMPLE_TEXTURE2D_LOD(
+                    _StartSizeYLUT,
+                    sampler_StartSizeYLUT,
+                    float2(x, 0.75), 0).r;
+                if (_StartSizeYMode != 2)
+                {
+                    return maximum;
+                }
+                float minimum = SAMPLE_TEXTURE2D_LOD(
+                    _StartSizeYLUT,
+                    sampler_StartSizeYLUT,
+                    float2(x, 0.25), 0).r;
+                return lerp(minimum, maximum, randomValue);
+            }
+
+            float SizeOverLifetimeX(uint id, float normalizedAge)
+            {
+                float x = LUTCoordinate(normalizedAge, _SizeLUTInvWidth);
+                float minimum = SAMPLE_TEXTURE2D_LOD(
+                    _SizeLUT, sampler_SizeLUT,
+                    float2(x, 0.25), 0).r;
+                float maximum = SAMPLE_TEXTURE2D_LOD(
+                    _SizeLUT, sampler_SizeLUT,
+                    float2(x, 0.75), 0).r;
+                return lerp(
+                    minimum,
+                    maximum,
+                    Hash01(id ^ 0x91E10DA5u));
+            }
+
+            float SizeOverLifetimeY(uint id, float normalizedAge)
+            {
+                float x = LUTCoordinate(normalizedAge, _SizeYLUTInvWidth);
+                float minimum = SAMPLE_TEXTURE2D_LOD(
+                    _SizeYLUT, sampler_SizeYLUT,
+                    float2(x, 0.25), 0).r;
+                float maximum = SAMPLE_TEXTURE2D_LOD(
+                    _SizeYLUT, sampler_SizeYLUT,
+                    float2(x, 0.75), 0).r;
+                uint salt = _SizeOverLifetimeSeparateAxes != 0
+                    ? 0xA24BAED4u
+                    : 0x91E10DA5u;
+                return lerp(minimum, maximum, Hash01(id ^ salt));
+            }
+
+            float SizeBySpeedX(uint id, float speedPosition)
+            {
+                float x = LUTCoordinate(
+                    speedPosition, _SizeBySpeedLUTInvWidth);
+                float minimum = SAMPLE_TEXTURE2D_LOD(
+                    _SizeBySpeedLUT, sampler_SizeBySpeedLUT,
+                    float2(x, 0.25), 0).r;
+                float maximum = SAMPLE_TEXTURE2D_LOD(
+                    _SizeBySpeedLUT, sampler_SizeBySpeedLUT,
+                    float2(x, 0.75), 0).r;
+                return lerp(
+                    minimum,
+                    maximum,
+                    Hash01(id ^ 0xD192ED03u));
+            }
+
+            float SizeBySpeedY(uint id, float speedPosition)
+            {
+                float x = LUTCoordinate(
+                    speedPosition, _SizeBySpeedYLUTInvWidth);
+                float minimum = SAMPLE_TEXTURE2D_LOD(
+                    _SizeBySpeedYLUT, sampler_SizeBySpeedYLUT,
+                    float2(x, 0.25), 0).r;
+                float maximum = SAMPLE_TEXTURE2D_LOD(
+                    _SizeBySpeedYLUT, sampler_SizeBySpeedYLUT,
+                    float2(x, 0.75), 0).r;
+                uint salt = _SizeBySpeedSeparateAxes != 0
+                    ? 0xB5297A4Du
+                    : 0xD192ED03u;
+                return lerp(minimum, maximum, Hash01(id ^ salt));
+            }
+
+            float SpeedRangePosition(float speed, float2 speedRange)
+            {
+                float width = speedRange.y - speedRange.x;
+                if (width <= 1e-6)
+                {
+                    return speed > speedRange.x ? 1.0 : 0.0;
+                }
+                return saturate((speed - speedRange.x) / width);
+            }
+
+            float2 BillboardSize(
+                uint id,
+                float particleAge,
+                float normalizedAge,
+                float particleSpeed,
+                float currentSizeX)
+            {
+                if (_UseSeparateSizeAxes == 0)
+                {
+                    return currentSizeX.xx;
+                }
+
+                float sizeX = StartSizeXAtBirth(id, particleAge) *
+                    SizeOverLifetimeX(id, normalizedAge);
+                float sizeY = StartSizeYAtBirth(id, particleAge) *
+                    SizeOverLifetimeY(id, normalizedAge);
+                if (_SizeBySpeedEnabled != 0)
+                {
+                    float speedPosition = SpeedRangePosition(
+                        particleSpeed,
+                        _SizeBySpeedRange);
+                    sizeX *= SizeBySpeedX(id, speedPosition);
+                    sizeY *= SizeBySpeedY(id, speedPosition);
+                }
+                return float2(sizeX, sizeY);
+            }
+
             float SampleRotationIntegral(uint id, float normalizedAge)
             {
                 float x = LUTCoordinate(
@@ -250,16 +438,6 @@ Shader "GPUParticles/UnlitBillboardURP"
                     sampler_RotationOverLifetimeIntegralLUT,
                     float2(x, 0.75), 0).r;
                 return lerp(minimum, maximum, Hash01(id ^ 0xD3A2646Cu));
-            }
-
-            float SpeedRangePosition(float speed, float2 speedRange)
-            {
-                float width = speedRange.y - speedRange.x;
-                if (width <= 1e-6)
-                {
-                    return speed > speedRange.x ? 1.0 : 0.0;
-                }
-                return saturate((speed - speedRange.x) / width);
             }
 
             float LifetimeByEmitterSpeedMultiplier(
@@ -582,9 +760,20 @@ Shader "GPUParticles/UnlitBillboardURP"
                 }
 
                 // size (W/L) & pivot
-                float size = velSize.w;
-                float W = size;
-                float L = (_RenderMode==3) ? max(1e-4, size * (_LenScale + length(velWS)*_VelScale + length(_CameraVelWS)*_CamVelScale)) : size;
+                float2 sizeXY = BillboardSize(
+                    quadId,
+                    particleAge,
+                    normalizedAge,
+                    length(velWS),
+                    velSize.w);
+                float W = sizeXY.x;
+                float H = sizeXY.y;
+                float L = (_RenderMode==3)
+                    ? max(
+                        1e-4,
+                        H * (_LenScale + length(velWS)*_VelScale +
+                             length(_CameraVelWS)*_CamVelScale))
+                    : H;
 
                 float2 quadUV[4] = { float2(0,0), float2(1,0), float2(1,1), float2(0,1) };
                 float2 localXY[4]= { float2(-0.5,-0.5), float2(0.5,-0.5), float2(0.5,0.5), float2(-0.5,0.5) };
@@ -593,14 +782,16 @@ Shader "GPUParticles/UnlitBillboardURP"
                 if (_RenderMode == 1 || _RenderMode == 2)
                 {
                     float scale = 0.70710678; // 1/sqrt(2)
-                    local = localXY[corner] * float2(W, W) * scale;
+                    local = localXY[corner] * float2(W, H) * scale;
                 }
                 else
                 {
-                    local = localXY[corner] * float2(W, (_RenderMode==3)?L:W);
+                    local = localXY[corner] * float2(W, (_RenderMode==3)?L:H);
                 }
-                
-                float2 pivotOff = float2(_Pivot.x*W, (_RenderMode==3)?(_Pivot.y*L):(_Pivot.y*W));
+
+                float2 pivotOff = float2(
+                    _Pivot.x * W,
+                    (_RenderMode==3) ? (_Pivot.y * L) : (_Pivot.y * H));
                 local -= pivotOff;
 
                 if (_RenderMode != 3)

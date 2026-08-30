@@ -528,12 +528,6 @@ namespace GPUParticles
                 : CurveLUTBuilder.GetDefaultZeroLUT();
 
             ParticleSystem.MinMaxCurve startSize = main.startSize3D ? main.startSizeX : main.startSize;
-            if (main.startSize3D)
-            {
-                Debug.LogWarning(
-                    "Start Size 3D is reduced to the X size for GPU billboards.",
-                    context);
-            }
             ShurikenMinMaxUtility.TryGetConstantRange(
                 startSize, out minimum, out maximum);
             gpu.SetStartSizeRange(minimum, maximum);
@@ -543,6 +537,21 @@ namespace GPUParticles
                     startSize,
                     saveAsAsset: true,
                     assetName: "StartSize_LUT")
+                : CurveLUTBuilder.GetDefaultUnitLUT();
+            gpu.startSize3D = main.startSize3D;
+            ParticleSystem.MinMaxCurve startSizeY = main.startSize3D
+                ? main.startSizeY
+                : main.startSize;
+            ShurikenMinMaxUtility.TryGetConstantRange(
+                startSizeY, out minimum, out maximum);
+            gpu.SetStartSizeYRange(minimum, maximum);
+            gpu.startSizeYMode = startSizeY.mode;
+            gpu.startSizeYLUT = main.startSize3D &&
+                                IsCurveMode(startSizeY.mode)
+                ? CurveLUTBuilder.Build(
+                    startSizeY,
+                    saveAsAsset: true,
+                    assetName: "StartSizeY_LUT")
                 : CurveLUTBuilder.GetDefaultUnitLUT();
 
             ShurikenMinMaxUtility.TryGetColorRange(
@@ -673,17 +682,18 @@ namespace GPUParticles
             ParticleSystem.MinMaxCurve sizeCurve = size.separateAxes
                 ? size.x
                 : size.size;
-            if (size.enabled && size.separateAxes)
-            {
-                Debug.LogWarning(
-                    "Size over Lifetime Separate Axes is reduced to X and applied uniformly " +
-                    "to GPU billboards; Y/Z are not supported yet.",
-                    context);
-            }
-
+            gpu.sizeOverLifetimeSeparateAxes =
+                size.enabled && size.separateAxes;
             gpu.sizeOverLifetimeLUT = size.enabled
                 ? CurveLUTBuilder.Build(sizeCurve, saveAsAsset: true)
                 : CurveLUTBuilder.GetDefaultUnitLUT();
+            gpu.sizeOverLifetimeYLUT =
+                size.enabled && size.separateAxes
+                    ? CurveLUTBuilder.Build(
+                        size.y,
+                        saveAsAsset: true,
+                        assetName: "SizeOverLifetimeY_LUT")
+                    : CurveLUTBuilder.GetDefaultUnitLUT();
         }
 
         static void ApplyColorAndSizeBySpeed(
@@ -706,23 +716,23 @@ namespace GPUParticles
 
             var size = particleSystem.sizeBySpeed;
             gpu.sizeBySpeedEnabled = size.enabled;
+            gpu.sizeBySpeedSeparateAxes =
+                size.enabled && size.separateAxes;
             gpu.SetSizeBySpeedRange(size.range);
             ParticleSystem.MinMaxCurve sizeCurve = size.separateAxes
                 ? size.x
                 : size.size;
-            if (size.enabled && size.separateAxes)
-            {
-                Debug.LogWarning(
-                    "Size by Speed Separate Axes is reduced to X and applied uniformly " +
-                    "to GPU billboards; Y/Z are not supported yet.",
-                    context);
-            }
-
             gpu.sizeBySpeedLUT = size.enabled
                 ? CurveLUTBuilder.Build(
                     sizeCurve,
                     saveAsAsset: true,
                     assetName: "SizeBySpeed_LUT")
+                : CurveLUTBuilder.GetDefaultUnitLUT();
+            gpu.sizeBySpeedYLUT = size.enabled && size.separateAxes
+                ? CurveLUTBuilder.Build(
+                    size.y,
+                    saveAsAsset: true,
+                    assetName: "SizeBySpeedY_LUT")
                 : CurveLUTBuilder.GetDefaultUnitLUT();
         }
 

@@ -212,6 +212,13 @@ namespace GPUParticles.Editor
                 ParticleABValidationProfile.StartSizeTwoCurvesPoint);
         }
 
+        [MenuItem("Tools/GPU Particles/Run Separate Axes Size A-B RT Capture")]
+        public static void RunSizeSeparateAxesCaptureMenu()
+        {
+            StartStartSizeCapture(
+                ParticleABValidationProfile.SizeSeparateAxesPoint);
+        }
+
         static void StartStartSizeCapture(
             ParticleABValidationProfile profile)
         {
@@ -690,6 +697,14 @@ namespace GPUParticles.Editor
                 ParticleABValidationProfile.StartSizeTwoCurvesPoint);
         }
 
+        public static void RunBatchSizeSeparateAxesCapture()
+        {
+            ValidateCommonFeatureMapping();
+            StartCapture(
+                true,
+                ParticleABValidationProfile.SizeSeparateAxesPoint);
+        }
+
         public static void RunBatchGravityModifierCurveCapture()
         {
             ValidateCommonFeatureMapping();
@@ -992,6 +1007,8 @@ namespace GPUParticles.Editor
                 case ParticleABValidationProfile.StartRotationCurvePoint:
                 case ParticleABValidationProfile.StartRotationTwoCurvesPoint:
                     return 2.5f;
+                case ParticleABValidationProfile.SizeSeparateAxesPoint:
+                    return 3f;
                 case ParticleABValidationProfile.StartLifetimeCurvePoint:
                 case ParticleABValidationProfile.StartLifetimeTwoCurvesPoint:
                     return 4.5f;
@@ -1038,8 +1055,9 @@ namespace GPUParticles.Editor
                    profile == ParticleABValidationProfile.StartRotationTwoCurvesPoint ||
                    profile == ParticleABValidationProfile.StartSpeedCurvePoint ||
                    profile == ParticleABValidationProfile.StartSpeedTwoCurvesPoint ||
-                   profile == ParticleABValidationProfile.StartSizeCurvePoint ||
-                   profile == ParticleABValidationProfile.StartSizeTwoCurvesPoint ||
+                    profile == ParticleABValidationProfile.StartSizeCurvePoint ||
+                    profile == ParticleABValidationProfile.StartSizeTwoCurvesPoint ||
+                    profile == ParticleABValidationProfile.SizeSeparateAxesPoint ||
                    profile == ParticleABValidationProfile.GravityModifierCurvePoint ||
                    profile == ParticleABValidationProfile.GravityModifierTwoCurvesPoint ||
                    profile == ParticleABValidationProfile.EmissionRateCurvePoint ||
@@ -1089,6 +1107,8 @@ namespace GPUParticles.Editor
                     return "TestResults/ParticleStartSizeCurve";
                 case ParticleABValidationProfile.StartSizeTwoCurvesPoint:
                     return "TestResults/ParticleStartSizeTwoCurves";
+                case ParticleABValidationProfile.SizeSeparateAxesPoint:
+                    return "TestResults/ParticleSizeSeparateAxes";
                 case ParticleABValidationProfile.GravityModifierCurvePoint:
                     return "TestResults/ParticleGravityModifierCurve";
                 case ParticleABValidationProfile.GravityModifierTwoCurvesPoint:
@@ -2485,6 +2505,7 @@ namespace GPUParticles.Editor
                     gpu.sizeBySpeedLUT = null;
                 }
 
+                ValidateSeparateAxisSizeMapping();
                 ValidateShapeMappings();
                 Debug.Log("PARTICLE_COMMON_FEATURE_MAPPING_RESULT:PASS");
             }
@@ -2773,6 +2794,157 @@ namespace GPUParticles.Editor
                 {
                     AssetDatabase.DeleteAsset(secondSizeBySpeedAssetPath);
                 }
+            }
+        }
+
+        static void ValidateSeparateAxisSizeMapping()
+        {
+            var owner = new GameObject("ParticleSeparateAxisSizeMappingValidation");
+            owner.SetActive(false);
+            var generatedTextures = new Texture2D[6];
+            try
+            {
+                var shuriken = owner.AddComponent<ParticleSystem>();
+                var main = shuriken.main;
+                main.startSize3D = true;
+                main.startSizeX = new ParticleSystem.MinMaxCurve(
+                    1f,
+                    AnimationCurve.Linear(0f, 0.5f, 1f, 1f),
+                    AnimationCurve.Linear(0f, 1.5f, 1f, 2.5f));
+                main.startSizeY = new ParticleSystem.MinMaxCurve(
+                    1f,
+                    AnimationCurve.Linear(0f, 0.25f, 1f, 0.75f),
+                    AnimationCurve.Linear(0f, 2f, 1f, 3f));
+                main.startSizeZ = 4f;
+
+                var sizeOverLifetime = shuriken.sizeOverLifetime;
+                sizeOverLifetime.enabled = true;
+                sizeOverLifetime.separateAxes = true;
+                sizeOverLifetime.x = new ParticleSystem.MinMaxCurve(
+                    1f,
+                    AnimationCurve.Linear(0f, 0.5f, 1f, 1f),
+                    AnimationCurve.Linear(0f, 1.5f, 1f, 2f));
+                sizeOverLifetime.y = new ParticleSystem.MinMaxCurve(
+                    1f,
+                    AnimationCurve.Linear(0f, 0.75f, 1f, 0.25f),
+                    AnimationCurve.Linear(0f, 2.5f, 1f, 1.5f));
+                sizeOverLifetime.z = 3f;
+
+                var sizeBySpeed = shuriken.sizeBySpeed;
+                sizeBySpeed.enabled = true;
+                sizeBySpeed.separateAxes = true;
+                sizeBySpeed.range = new Vector2(2f, 6f);
+                sizeBySpeed.x = new ParticleSystem.MinMaxCurve(
+                    1f,
+                    AnimationCurve.Linear(0f, 0.25f, 1f, 0.75f),
+                    AnimationCurve.Linear(0f, 1.25f, 1f, 2.25f));
+                sizeBySpeed.y = new ParticleSystem.MinMaxCurve(
+                    1f,
+                    AnimationCurve.Linear(0f, 0.5f, 1f, 1f),
+                    AnimationCurve.Linear(0f, 1.5f, 1f, 0.75f));
+                sizeBySpeed.z = 2f;
+
+                ShurikenConverter.Convert(owner);
+                var gpu = owner.GetComponent<GPUParticleSystem>();
+                Require(gpu != null,
+                    "Separate-axis size conversion did not create GPUParticleSystem.");
+
+                generatedTextures[0] = gpu.startSizeLUT;
+                generatedTextures[1] = gpu.startSizeYLUT;
+                generatedTextures[2] = gpu.sizeOverLifetimeLUT;
+                generatedTextures[3] = gpu.sizeOverLifetimeYLUT;
+                generatedTextures[4] = gpu.sizeBySpeedLUT;
+                generatedTextures[5] = gpu.sizeBySpeedYLUT;
+
+                Require(gpu.startSize3D,
+                    "Start Size 3D enabled state was not mapped.");
+                Require(gpu.startSizeMode == ParticleSystemCurveMode.TwoCurves &&
+                        gpu.startSizeYMode == ParticleSystemCurveMode.TwoCurves,
+                    "Start Size 3D X/Y curve modes were not mapped.");
+                RequireTwoRowLUT(gpu.startSizeLUT, "Start Size 3D X");
+                RequireTwoRowLUT(gpu.startSizeYLUT, "Start Size 3D Y");
+                RequireLUTEndpoints(
+                    gpu.startSizeLUT, 0.5f, 1f, 1.5f, 2.5f,
+                    "Start Size 3D X");
+                RequireLUTEndpoints(
+                    gpu.startSizeYLUT, 0.25f, 0.75f, 2f, 3f,
+                    "Start Size 3D Y");
+
+                Require(gpu.sizeOverLifetimeSeparateAxes,
+                    "Size over Lifetime Separate Axes state was not mapped.");
+                RequireTwoRowLUT(
+                    gpu.sizeOverLifetimeLUT, "Size over Lifetime X");
+                RequireTwoRowLUT(
+                    gpu.sizeOverLifetimeYLUT, "Size over Lifetime Y");
+                RequireLUTEndpoints(
+                    gpu.sizeOverLifetimeLUT, 0.5f, 1f, 1.5f, 2f,
+                    "Size over Lifetime X");
+                RequireLUTEndpoints(
+                    gpu.sizeOverLifetimeYLUT, 0.75f, 0.25f, 2.5f, 1.5f,
+                    "Size over Lifetime Y");
+
+                Require(gpu.sizeBySpeedEnabled &&
+                        gpu.sizeBySpeedSeparateAxes,
+                    "Size by Speed Separate Axes state was not mapped.");
+                RequireApproximately(gpu.sizeBySpeedRange.x, 2f,
+                    "Size by Speed Separate Axes range minimum");
+                RequireApproximately(gpu.sizeBySpeedRange.y, 6f,
+                    "Size by Speed Separate Axes range maximum");
+                RequireTwoRowLUT(gpu.sizeBySpeedLUT, "Size by Speed X");
+                RequireTwoRowLUT(gpu.sizeBySpeedYLUT, "Size by Speed Y");
+                RequireLUTEndpoints(
+                    gpu.sizeBySpeedLUT, 0.25f, 0.75f, 1.25f, 2.25f,
+                    "Size by Speed X");
+                RequireLUTEndpoints(
+                    gpu.sizeBySpeedYLUT, 0.5f, 1f, 1.5f, 0.75f,
+                    "Size by Speed Y");
+            }
+            finally
+            {
+                Object.DestroyImmediate(owner);
+                for (int i = 0; i < generatedTextures.Length; i++)
+                {
+                    CleanupGeneratedValidationTexture(generatedTextures[i]);
+                }
+            }
+        }
+
+        static void RequireTwoRowLUT(Texture2D texture, string label)
+        {
+            Require(texture != null && texture.height == 2,
+                $"{label} minimum/maximum LUT rows were not generated.");
+        }
+
+        static void RequireLUTEndpoints(
+            Texture2D texture,
+            float minimumStart,
+            float minimumEnd,
+            float maximumStart,
+            float maximumEnd,
+            string label)
+        {
+            RequireApproximately(texture.GetPixel(0, 0).r,
+                minimumStart, $"{label} minimum start");
+            RequireApproximately(texture.GetPixel(texture.width - 1, 0).r,
+                minimumEnd, $"{label} minimum end");
+            RequireApproximately(texture.GetPixel(0, 1).r,
+                maximumStart, $"{label} maximum start");
+            RequireApproximately(texture.GetPixel(texture.width - 1, 1).r,
+                maximumEnd, $"{label} maximum end");
+        }
+
+        static void CleanupGeneratedValidationTexture(Texture2D texture)
+        {
+            if (texture == null) return;
+
+            string assetPath = AssetDatabase.GetAssetPath(texture);
+            if (string.IsNullOrEmpty(assetPath))
+            {
+                Object.DestroyImmediate(texture);
+            }
+            else
+            {
+                AssetDatabase.DeleteAsset(assetPath);
             }
         }
 
