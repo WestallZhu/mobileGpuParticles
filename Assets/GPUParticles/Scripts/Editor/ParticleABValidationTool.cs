@@ -692,6 +692,13 @@ namespace GPUParticles.Editor
                 ParticleABValidationProfile.RendererTextureUVFlipPoint);
         }
 
+        [MenuItem("Tools/GPU Particles/Run Stretched Billboard A-B RT Capture")]
+        public static void RunStretchedBillboardCaptureMenu()
+        {
+            StartTextureSheetCaptureMenu(
+                ParticleABValidationProfile.StretchedBillboardPoint);
+        }
+
         [MenuItem("Tools/GPU Particles/Run Texture Sheet Blend Lifetime A-B RT Capture")]
         public static void RunTextureSheetBlendLifetimeCaptureMenu()
         {
@@ -1460,6 +1467,14 @@ namespace GPUParticles.Editor
                 ParticleABValidationProfile.RendererTextureUVFlipPoint);
         }
 
+        public static void RunBatchStretchedBillboardCapture()
+        {
+            ValidateCommonFeatureMapping();
+            StartCapture(
+                true,
+                ParticleABValidationProfile.StretchedBillboardPoint);
+        }
+
         public static void RunBatchTextureSheetBlendLifetimeCapture()
         {
             ValidateCommonFeatureMapping();
@@ -1741,6 +1756,7 @@ namespace GPUParticles.Editor
                 case ParticleABValidationProfile.TextureSheetFPSPoint:
                 case ParticleABValidationProfile.TextureSheetSingleRowPoint:
                 case ParticleABValidationProfile.RendererTextureUVFlipPoint:
+                case ParticleABValidationProfile.StretchedBillboardPoint:
                 case ParticleABValidationProfile.TextureSheetBlendLifetimePoint:
                 case ParticleABValidationProfile.TextureSheetBlendSpeedPoint:
                 case ParticleABValidationProfile.TextureSheetBlendFPSPoint:
@@ -1860,6 +1876,7 @@ namespace GPUParticles.Editor
                    profile == ParticleABValidationProfile.TextureSheetFPSPoint ||
                    profile == ParticleABValidationProfile.TextureSheetSingleRowPoint ||
                    profile == ParticleABValidationProfile.RendererTextureUVFlipPoint ||
+                   profile == ParticleABValidationProfile.StretchedBillboardPoint ||
                    profile == ParticleABValidationProfile.TextureSheetBlendLifetimePoint ||
                    profile == ParticleABValidationProfile.TextureSheetBlendSpeedPoint ||
                    profile == ParticleABValidationProfile.TextureSheetBlendFPSPoint ||
@@ -2016,6 +2033,8 @@ namespace GPUParticles.Editor
                     return "TestResults/ParticleTextureSheetSingleRow";
                 case ParticleABValidationProfile.RendererTextureUVFlipPoint:
                     return "TestResults/ParticleRendererTextureUVFlip";
+                case ParticleABValidationProfile.StretchedBillboardPoint:
+                    return "TestResults/ParticleStretchedBillboard";
                 case ParticleABValidationProfile.TextureSheetBlendLifetimePoint:
                     return "TestResults/ParticleTextureSheetBlendLifetime";
                 case ParticleABValidationProfile.TextureSheetBlendSpeedPoint:
@@ -3600,6 +3619,7 @@ namespace GPUParticles.Editor
                 ValidateCollisionMapping();
                 ValidateTextureSheetFrameBlendingMapping();
                 ValidateRendererTextureUVFlipMapping();
+                ValidateStretchedBillboardMapping();
                 ValidateMaterialColorMapping();
                 ValidateMaterialBlendMapping();
                 ValidateMaterialAlphaClipMapping();
@@ -4385,6 +4405,70 @@ namespace GPUParticles.Editor
                 {
                     CleanupGeneratedValidationTexture(generatedTextures[i]);
                 }
+            }
+        }
+
+        static void ValidateStretchedBillboardMapping()
+        {
+            var owner = new GameObject(
+                "ParticleStretchedBillboardMappingValidation");
+            owner.SetActive(false);
+            try
+            {
+                var shuriken = owner.AddComponent<ParticleSystem>();
+                ParticleSystem.MainModule main = shuriken.main;
+                main.playOnAwake = false;
+
+                ParticleSystemRenderer renderer =
+                    owner.GetComponent<ParticleSystemRenderer>();
+                renderer.renderMode = ParticleSystemRenderMode.Stretch;
+                renderer.lengthScale = 1.5f;
+                renderer.velocityScale = 0.4f;
+                renderer.cameraVelocityScale = 0.2f;
+                renderer.freeformStretching = true;
+                renderer.rotateWithStretchDirection = false;
+
+                ShurikenConverter.Convert(owner);
+                var gpu = owner.GetComponent<GPUParticleSystem>();
+                Require(gpu != null,
+                    "Stretched Billboard conversion did not create a GPU system.");
+                Require(gpu.renderMode == GPURenderMode.StretchedBillboard,
+                    "Stretched Billboard render mode was not mapped.");
+                RequireApproximately(gpu.stretchedLengthScale, 1.5f,
+                    "Stretched Billboard length scale was not mapped.");
+                RequireApproximately(gpu.stretchedVelocityScale, 0.4f,
+                    "Stretched Billboard velocity scale was not mapped.");
+                RequireApproximately(
+                    gpu.stretchedCameraVelocityScale,
+                    0.2f,
+                    "Stretched Billboard camera velocity scale was not mapped.");
+                Require(gpu.freeformStretching,
+                    "Freeform Stretching was not mapped.");
+                Require(!gpu.rotateWithStretchDirection,
+                    "Disabled Rotate With Stretch Direction was not mapped.");
+
+                renderer.lengthScale = 0.75f;
+                renderer.velocityScale = 0.6f;
+                renderer.cameraVelocityScale = 0.1f;
+                renderer.freeformStretching = false;
+                renderer.rotateWithStretchDirection = true;
+                ShurikenConverter.Convert(owner);
+                RequireApproximately(gpu.stretchedLengthScale, 0.75f,
+                    "Changed Stretched Billboard length scale was not remapped.");
+                RequireApproximately(gpu.stretchedVelocityScale, 0.6f,
+                    "Changed Stretched Billboard velocity scale was not remapped.");
+                RequireApproximately(
+                    gpu.stretchedCameraVelocityScale,
+                    0.1f,
+                    "Changed Stretched Billboard camera velocity scale was not remapped.");
+                Require(!gpu.freeformStretching,
+                    "Disabled Freeform Stretching was not remapped.");
+                Require(gpu.rotateWithStretchDirection,
+                    "Enabled Rotate With Stretch Direction was not remapped.");
+            }
+            finally
+            {
+                Object.DestroyImmediate(owner);
             }
         }
 

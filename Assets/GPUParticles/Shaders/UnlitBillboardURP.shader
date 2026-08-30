@@ -168,7 +168,7 @@ Shader "GPUParticles/UnlitBillboardURP"
                 float  _CamVelScale;
 
                 int    _Freeform;
-                int    _RotateWithStretch;  // placeholder; unlit不做UV旋转
+                int    _RotateWithStretch;
                 float  _MinAlphaCull;
                 float  _padLast;
 
@@ -866,6 +866,15 @@ Shader "GPUParticles/UnlitBillboardURP"
                 return baseUV;
             }
 
+            float3 RotateAroundAxis(float3 value, float3 axis, float angle)
+            {
+                float sine = sin(angle);
+                float cosine = cos(angle);
+                return value * cosine +
+                       cross(axis, value) * sine +
+                       axis * dot(axis, value) * (1.0 - cosine);
+            }
+
             float3 Ortho(float3 v){ return normalize( any(abs(v) > 0.0) ? (abs(v.z)<0.999?cross(v,float3(0,0,1)):cross(v,float3(0,1,0))) : float3(1,0,0) ); }
 
             float2 IndexToUV(uint idx, int grid)
@@ -1090,8 +1099,15 @@ Shader "GPUParticles/UnlitBillboardURP"
                 float3 Right, Up, Normal;
                 if (_RenderMode == 3) // Stretched
                 {
-                    if (_Freeform!=0)  Basis_Stretched_Freeform(posWS, velWS, Right, Up, Normal);
-                    else                Basis_Stretched_Classic (velWS, Right, Up, Normal);
+                    if (_Freeform != 0)
+                    {
+                        Basis_Billboard_View(Right, Up, Normal);
+                    }
+                    else
+                    {
+                        Basis_Stretched_Classic(
+                            velWS, Right, Up, Normal);
+                    }
                 }
                 else if (_RenderMode == 1) // Horizontal
                 {
@@ -1139,10 +1155,11 @@ Shader "GPUParticles/UnlitBillboardURP"
                 float L = (_RenderMode==3)
                     ? max(
                         1e-4,
-                        H * (_LenScale + length(velWS)*_VelScale +
-                             length(_CameraVelWS)*_CamVelScale))
+                        W * _LenScale +
+                        length(velWS) * _VelScale +
+                        length(_CameraVelWS) * _CamVelScale)
                     : H;
-                float screenClampWidth = W;
+                float screenClampWidth = (_RenderMode == 3) ? H : W;
                 float screenClampHeight = (_RenderMode == 3) ? L : H;
                 if (_RenderMode == 1 || _RenderMode == 2)
                 {
@@ -1162,7 +1179,34 @@ Shader "GPUParticles/UnlitBillboardURP"
 
                 float2 quadUV[4] = { float2(0,0), float2(1,0), float2(1,1), float2(0,1) };
                 float2 localXY[4]= { float2(-0.5,-0.5), float2(0.5,-0.5), float2(0.5,0.5), float2(-0.5,0.5) };
-                
+
+                float particleStartRotation = StartRotationAtBirth(
+                    quadId,
+                    totalParticleAge);
+                float particleRotationOverLifetime = RandomRange(
+                    quadId, 0xD3A2646Cu, _RandomizeRotationOverLifetime,
+                    _RotationOverLifetimeMin, _RotationOverLifetime);
+                float particleAngle;
+                if (_UseRotationOverLifetimeIntegralLUT != 0)
+                {
+                    particleAngle = particleStartRotation +
+                        RotationOverLifetimeAngle(
+                            quadId,
+                            totalParticleAge,
+                            particleStartLifetime);
+                }
+                else
+                {
+                    particleAngle = particleStartRotation +
+                        particleRotationOverLifetime * totalParticleAge;
+                }
+                particleAngle += rotationBySpeedPhase;
+                float rotationDirection =
+                    Hash01(quadId ^ 0xF1357AEAu) < saturate(_FlipRotation)
+                        ? -1.0
+                        : 1.0;
+                particleAngle *= rotationDirection;
+
                 float2 local;
                 if (_RenderMode == 1 || _RenderMode == 2)
                 {
@@ -1181,40 +1225,102 @@ Shader "GPUParticles/UnlitBillboardURP"
 
                 if (_RenderMode != 3)
                 {
-                    float particleStartRotation = StartRotationAtBirth(
-                        quadId,
-                        totalParticleAge);
-                    float particleRotationOverLifetime = RandomRange(
-                        quadId, 0xD3A2646Cu, _RandomizeRotationOverLifetime,
-                        _RotationOverLifetimeMin, _RotationOverLifetime);
-                    float angle;
-                    if (_UseRotationOverLifetimeIntegralLUT != 0)
-                    {
-                        angle = particleStartRotation +
-                                RotationOverLifetimeAngle(
-                                    quadId,
-                                    totalParticleAge,
-                                    particleStartLifetime);
-                    }
-                    else
-                    {
-                        angle = particleStartRotation +
-                                particleRotationOverLifetime *
-                                    totalParticleAge;
-                    }
-                    angle += rotationBySpeedPhase;
-                    float rotationDirection =
-                        Hash01(quadId ^ 0xF1357AEAu) < saturate(_FlipRotation)
-                            ? -1.0
-                            : 1.0;
-                    angle *= rotationDirection;
-                    float s = sin(angle);
-                    float c = cos(angle);
+                    float s = sin(particleAngle);
+                    float c = cos(particleAngle);
                     local = float2(local.x * c - local.y * s, local.x * s + local.y * c);
                 }
 
-                float3 wpos =
-                    posWS + RenderRight * local.x + RenderUp * local.y;
+                float3 wpos;
+                if (_RenderMode == 3)
+                {
+                    float3 cameraRight;
+                    float3 cameraUp;
+                    float3 cameraForward;
+                    BuildCameraBasis(
+                        cameraRight, cameraUp, cameraForward);
+                    float3 stretchMotion =
+                        velWS * _VelScale -
+                        _CameraVelWS * _CamVelScale;
+                    float3 stretchDirectionSource =
+                        length(stretchMotion) > 1e-6
+                            ? stretchMotion
+                            : velWS;
+                    if (length(stretchDirectionSource) <= 1e-6)
+                    {
+                        stretchDirectionSource = cameraUp;
+                    }
+                    float3 projectedStretchDirection =
+                        stretchDirectionSource -
+                        dot(stretchDirectionSource, cameraForward) *
+                            cameraForward;
+                    if (length(projectedStretchDirection) <= 1e-6)
+                    {
+                        projectedStretchDirection = cameraUp;
+                    }
+                    projectedStretchDirection = normalize(
+                        projectedStretchDirection);
+
+                    float3 offsetWS;
+                    if (_Freeform == 0)
+                    {
+                        float3 widthDirection = normalize(cross(
+                            projectedStretchDirection,
+                            cameraForward));
+                        float stretchPosition =
+                            quadUV[corner].x + _Pivot.x;
+                        float widthPosition =
+                            quadUV[corner].y - 0.5 - _Pivot.y;
+                        offsetWS =
+                            -projectedStretchDirection *
+                                (stretchPosition * L) +
+                            widthDirection * (widthPosition * H);
+                    }
+                    else
+                    {
+                        float3 baseRight = cameraRight;
+                        float3 baseUp = cameraUp;
+                        if (_RotateWithStretch != 0)
+                        {
+                            baseRight = -projectedStretchDirection;
+                            baseUp = normalize(cross(
+                                projectedStretchDirection,
+                                cameraForward));
+                        }
+                        baseRight = RotateAroundAxis(
+                            baseRight,
+                            cameraForward,
+                            -particleAngle);
+                        baseUp = RotateAroundAxis(
+                            baseUp,
+                            cameraForward,
+                            -particleAngle);
+
+                        float horizontalPosition =
+                            quadUV[corner].x - 0.5 - _Pivot.x;
+                        float verticalPosition =
+                            quadUV[corner].y - 0.5 - _Pivot.y;
+                        offsetWS =
+                            baseRight * (horizontalPosition * W) +
+                            baseUp * (verticalPosition * H);
+                        float3 stretchDirection = normalize(
+                            stretchDirectionSource);
+                        float stretchFactor = L / max(1e-4, W);
+                        offsetWS += stretchDirection *
+                            dot(offsetWS, stretchDirection) *
+                            (stretchFactor - 1.0);
+                    }
+
+                    float3 scaledOffsetWS = mul(
+                        _ParticleScaleWorld,
+                        float4(offsetWS, 0.0)).xyz;
+                    wpos = posWS + scaledOffsetWS;
+                }
+                else
+                {
+                    wpos = posWS +
+                        RenderRight * local.x +
+                        RenderUp * local.y;
+                }
 
                 o.posHCS = TransformWorldToHClip(wpos);
                 o.projectedPosition = ComputeScreenPos(o.posHCS);

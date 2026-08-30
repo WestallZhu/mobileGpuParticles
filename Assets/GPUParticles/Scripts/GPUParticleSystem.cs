@@ -351,7 +351,7 @@ namespace GPUParticles
         public float stretchedVelocityScale = 0.0f;
         public float stretchedCameraVelocityScale = 0.0f;
         public bool  freeformStretching = false;
-        public bool  rotateWithStretchDirection = true; // for lit/UV rotation pipelines
+        public bool  rotateWithStretchDirection = true;
 
         // --------- Runtime ---------
         public static readonly List<GPUParticleSystem> Active = new List<GPUParticleSystem>();
