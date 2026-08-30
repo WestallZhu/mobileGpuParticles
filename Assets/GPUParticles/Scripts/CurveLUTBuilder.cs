@@ -6,6 +6,7 @@ namespace GPUParticles
     {
         static Texture2D s_DefaultUnitLut;
         static Texture2D s_DefaultZeroLut;
+        static Texture2D s_DefaultLinear01Lut;
 
         public static Texture2D Build(
             ParticleSystem.MinMaxCurve curve,
@@ -207,6 +208,33 @@ namespace GPUParticles
             tex.SetPixels(pixels);
             tex.Apply(false, false);
             s_DefaultZeroLut = tex;
+            return tex;
+        }
+
+        public static Texture2D GetDefaultLinear01LUT(int resolution = 256)
+        {
+            if (s_DefaultLinear01Lut != null) return s_DefaultLinear01Lut;
+
+            resolution = Mathf.Max(2, resolution);
+            var tex = new Texture2D(resolution, 2, TextureFormat.RHalf, false, true)
+            {
+                name = "Curve_LUT_DefaultLinear01",
+                wrapMode = TextureWrapMode.Clamp,
+                filterMode = FilterMode.Bilinear,
+                hideFlags = HideFlags.HideAndDontSave
+            };
+
+            var pixels = new Color[resolution * 2];
+            for (int i = 0; i < resolution; i++)
+            {
+                float value = i / (float)(resolution - 1);
+                pixels[i] = new Color(value, 0f, 0f, 1f);
+                pixels[resolution + i] = pixels[i];
+            }
+
+            tex.SetPixels(pixels);
+            tex.Apply(false, false);
+            s_DefaultLinear01Lut = tex;
             return tex;
         }
     }

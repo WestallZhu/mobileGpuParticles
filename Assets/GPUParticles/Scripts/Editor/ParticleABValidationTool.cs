@@ -5,6 +5,7 @@ using UnityEditor;
 using UnityEditor.Rendering.Universal.ShaderGUI;
 using UnityEditor.SceneManagement;
 using UnityEngine;
+using UnityEngine.Rendering;
 using UnityEngine.SceneManagement;
 using Object = UnityEngine.Object;
 
@@ -197,6 +198,51 @@ namespace GPUParticles.Editor
                 ParticleABValidationProfile.LifetimeByEmitterSpeedPoint);
         }
 
+        [MenuItem("Tools/GPU Particles/Run Texture Sheet Lifetime A-B RT Capture")]
+        public static void RunTextureSheetLifetimeCaptureMenu()
+        {
+            StartTextureSheetCaptureMenu(
+                ParticleABValidationProfile.TextureSheetLifetimePoint);
+        }
+
+        [MenuItem("Tools/GPU Particles/Run Texture Sheet Speed A-B RT Capture")]
+        public static void RunTextureSheetSpeedCaptureMenu()
+        {
+            StartTextureSheetCaptureMenu(
+                ParticleABValidationProfile.TextureSheetSpeedPoint);
+        }
+
+        [MenuItem("Tools/GPU Particles/Run Texture Sheet FPS A-B RT Capture")]
+        public static void RunTextureSheetFPSCaptureMenu()
+        {
+            StartTextureSheetCaptureMenu(
+                ParticleABValidationProfile.TextureSheetFPSPoint);
+        }
+
+        [MenuItem("Tools/GPU Particles/Run Texture Sheet Single Row A-B RT Capture")]
+        public static void RunTextureSheetSingleRowCaptureMenu()
+        {
+            StartTextureSheetCaptureMenu(
+                ParticleABValidationProfile.TextureSheetSingleRowPoint);
+        }
+
+        static void StartTextureSheetCaptureMenu(
+            ParticleABValidationProfile profile)
+        {
+            if (EditorApplication.isPlaying)
+            {
+                Debug.LogWarning(
+                    "Stop Play Mode before starting a deterministic A/B capture.");
+                return;
+            }
+
+            if (!EditorSceneManager.SaveCurrentModifiedScenesIfUserWantsTo())
+            {
+                return;
+            }
+            StartCapture(false, profile);
+        }
+
         [MenuItem("Tools/GPU Particles/Run Rotation over Lifetime A-B RT Capture")]
         public static void RunRotationOverLifetimeCaptureMenu()
         {
@@ -344,6 +390,38 @@ namespace GPUParticles.Editor
                 ParticleABValidationProfile.LifetimeByEmitterSpeedPoint);
         }
 
+        public static void RunBatchTextureSheetLifetimeCapture()
+        {
+            ValidateCommonFeatureMapping();
+            StartCapture(
+                true,
+                ParticleABValidationProfile.TextureSheetLifetimePoint);
+        }
+
+        public static void RunBatchTextureSheetSpeedCapture()
+        {
+            ValidateCommonFeatureMapping();
+            StartCapture(
+                true,
+                ParticleABValidationProfile.TextureSheetSpeedPoint);
+        }
+
+        public static void RunBatchTextureSheetFPSCapture()
+        {
+            ValidateCommonFeatureMapping();
+            StartCapture(
+                true,
+                ParticleABValidationProfile.TextureSheetFPSPoint);
+        }
+
+        public static void RunBatchTextureSheetSingleRowCapture()
+        {
+            ValidateCommonFeatureMapping();
+            StartCapture(
+                true,
+                ParticleABValidationProfile.TextureSheetSingleRowPoint);
+        }
+
         public static void RunBatchRotationOverLifetimeCapture()
         {
             ValidateCommonFeatureMapping();
@@ -479,6 +557,11 @@ namespace GPUParticles.Editor
                 case ParticleABValidationProfile.InheritVelocityInitialPoint: return 3.2f;
                 case ParticleABValidationProfile.InheritVelocityCurrentPoint: return 3.2f;
                 case ParticleABValidationProfile.LifetimeByEmitterSpeedPoint: return 4.2f;
+                case ParticleABValidationProfile.TextureSheetLifetimePoint:
+                case ParticleABValidationProfile.TextureSheetSpeedPoint:
+                case ParticleABValidationProfile.TextureSheetFPSPoint:
+                case ParticleABValidationProfile.TextureSheetSingleRowPoint:
+                    return 3.8f;
                 case ParticleABValidationProfile.RotationOverLifetimeCurvePoint: return 2.5f;
                 case ParticleABValidationProfile.RotationBySpeedCurvePoint: return 2.5f;
                 case ParticleABValidationProfile.ColorSizeOverLifetimeRandomizedPoint: return 2f;
@@ -494,7 +577,11 @@ namespace GPUParticles.Editor
                    profile == ParticleABValidationProfile.EmissionRateDistancePoint ||
                    profile == ParticleABValidationProfile.InheritVelocityInitialPoint ||
                    profile == ParticleABValidationProfile.InheritVelocityCurrentPoint ||
-                   profile == ParticleABValidationProfile.LifetimeByEmitterSpeedPoint
+                   profile == ParticleABValidationProfile.LifetimeByEmitterSpeedPoint ||
+                   profile == ParticleABValidationProfile.TextureSheetLifetimePoint ||
+                   profile == ParticleABValidationProfile.TextureSheetSpeedPoint ||
+                   profile == ParticleABValidationProfile.TextureSheetFPSPoint ||
+                   profile == ParticleABValidationProfile.TextureSheetSingleRowPoint
                 ? 20f
                 : 5f;
         }
@@ -527,6 +614,14 @@ namespace GPUParticles.Editor
                     return "TestResults/ParticleInheritVelocityCurrent";
                 case ParticleABValidationProfile.LifetimeByEmitterSpeedPoint:
                     return "TestResults/ParticleLifetimeByEmitterSpeed";
+                case ParticleABValidationProfile.TextureSheetLifetimePoint:
+                    return "TestResults/ParticleTextureSheetLifetime";
+                case ParticleABValidationProfile.TextureSheetSpeedPoint:
+                    return "TestResults/ParticleTextureSheetSpeed";
+                case ParticleABValidationProfile.TextureSheetFPSPoint:
+                    return "TestResults/ParticleTextureSheetFPS";
+                case ParticleABValidationProfile.TextureSheetSingleRowPoint:
+                    return "TestResults/ParticleTextureSheetSingleRow";
                 case ParticleABValidationProfile.RotationOverLifetimeCurvePoint:
                     return "TestResults/ParticleRotationOverLifetime";
                 case ParticleABValidationProfile.RotationBySpeedCurvePoint:
@@ -549,6 +644,8 @@ namespace GPUParticles.Editor
             Texture2D firstLimitVelocityLUT = null;
             Texture2D firstInheritVelocityLUT = null;
             Texture2D firstLifetimeByEmitterSpeedLUT = null;
+            Texture2D firstTextureSheetFrameLUT = null;
+            Texture2D firstTextureSheetStartLUT = null;
             Texture2D firstRotationLUT = null;
             Texture2D firstRotationBySpeedLUT = null;
             Texture2D firstColorLUT = null;
@@ -565,6 +662,10 @@ namespace GPUParticles.Editor
             string secondInheritVelocityAssetPath = null;
             string firstLifetimeByEmitterSpeedAssetPath = null;
             string secondLifetimeByEmitterSpeedAssetPath = null;
+            string firstTextureSheetFrameAssetPath = null;
+            string secondTextureSheetFrameAssetPath = null;
+            string firstTextureSheetStartAssetPath = null;
+            string secondTextureSheetStartAssetPath = null;
             string firstRotationAssetPath = null;
             string secondRotationAssetPath = null;
             string firstRotationBySpeedAssetPath = null;
@@ -678,6 +779,27 @@ namespace GPUParticles.Editor
                         1f,
                         AnimationCurve.Linear(0f, 0.25f, 1f, 0.75f),
                         AnimationCurve.Linear(0f, 1.25f, 1f, 2.25f));
+
+                var textureSheet = shuriken.textureSheetAnimation;
+                textureSheet.enabled = true;
+                textureSheet.mode = ParticleSystemAnimationMode.Grid;
+                textureSheet.numTilesX = 4;
+                textureSheet.numTilesY = 3;
+                textureSheet.animation = ParticleSystemAnimationType.SingleRow;
+                textureSheet.timeMode = ParticleSystemAnimationTimeMode.Speed;
+                textureSheet.rowMode = ParticleSystemAnimationRowMode.Custom;
+                textureSheet.rowIndex = 2;
+                textureSheet.cycleCount = 3;
+                textureSheet.speedRange = new Vector2(2f, 10f);
+                textureSheet.fps = 12f;
+                textureSheet.uvChannelMask =
+                    UVChannelFlags.UV0 | UVChannelFlags.UV2;
+                textureSheet.frameOverTime = new ParticleSystem.MinMaxCurve(
+                    1f,
+                    AnimationCurve.Linear(0f, 0f, 1f, 0.5f),
+                    AnimationCurve.Linear(0f, 0.25f, 1f, 1f));
+                textureSheet.startFrame =
+                    new ParticleSystem.MinMaxCurve(0.125f, 0.375f);
 
                 Gradient minimumGradient = CreateGradient(
                     new Color(0.2f, 0.1f, 0.3f, 0.8f),
@@ -838,6 +960,40 @@ namespace GPUParticles.Editor
                 Require(gpu.lifetimeByEmitterSpeedLUT != null &&
                         gpu.lifetimeByEmitterSpeedLUT.height == 2,
                     "Lifetime by Emitter Speed minimum/maximum LUT rows were not generated.");
+                Require(gpu.textureSheetAnimationEnabled,
+                    "Texture Sheet Animation UV0 Grid state was not mapped.");
+                Require(gpu.textureSheetMode == ParticleSystemAnimationMode.Grid,
+                    "Texture Sheet Animation Grid mode was not mapped.");
+                Require(gpu.textureSheetAnimation ==
+                        ParticleSystemAnimationType.SingleRow,
+                    "Texture Sheet Animation Single Row mode was not mapped.");
+                Require(gpu.textureSheetTimeMode ==
+                        ParticleSystemAnimationTimeMode.Speed,
+                    "Texture Sheet Animation Speed time mode was not mapped.");
+                Require(gpu.textureSheetRowMode ==
+                        ParticleSystemAnimationRowMode.Custom &&
+                        gpu.textureSheetRowIndex == 2,
+                    "Texture Sheet Animation Custom row was not mapped.");
+                Require(gpu.textureSheetTilesX == 4 &&
+                        gpu.textureSheetTilesY == 3,
+                    "Texture Sheet Animation tile grid was not mapped.");
+                Require(gpu.textureSheetCycleCount == 3,
+                    "Texture Sheet Animation Cycle Count was not mapped.");
+                RequireApproximately(gpu.textureSheetFps, 12f,
+                    "Texture Sheet Animation FPS");
+                RequireApproximately(gpu.textureSheetSpeedRange.x, 2f,
+                    "Texture Sheet Animation speed minimum");
+                RequireApproximately(gpu.textureSheetSpeedRange.y, 10f,
+                    "Texture Sheet Animation speed maximum");
+                Require(gpu.textureSheetUVChannelMask ==
+                        (UVChannelFlags.UV0 | UVChannelFlags.UV2),
+                    "Texture Sheet Animation UV channel mask was not preserved.");
+                Require(gpu.textureSheetFrameOverTimeLUT != null &&
+                        gpu.textureSheetFrameOverTimeLUT.height == 2,
+                    "Texture Sheet Animation Frame over Time LUT was not generated.");
+                Require(gpu.textureSheetStartFrameLUT != null &&
+                        gpu.textureSheetStartFrameLUT.height == 2,
+                    "Texture Sheet Animation Start Frame LUT was not generated.");
                 Require(gpu.colorOverLifetimeMode == ParticleSystemGradientMode.TwoGradients,
                     "Color over Lifetime Two Gradients mode was not mapped.");
                 Require(gpu.colorOverLifetimeLUT != null &&
@@ -1067,6 +1223,41 @@ namespace GPUParticles.Editor
                     2.25f,
                     "Lifetime by Emitter Speed maximum end");
 
+                firstTextureSheetFrameLUT =
+                    gpu.textureSheetFrameOverTimeLUT;
+                firstTextureSheetFrameAssetPath =
+                    AssetDatabase.GetAssetPath(firstTextureSheetFrameLUT);
+                RequireApproximately(
+                    firstTextureSheetFrameLUT.GetPixel(0, 0).r,
+                    0f,
+                    "Texture Sheet Frame over Time minimum start");
+                RequireApproximately(
+                    firstTextureSheetFrameLUT.GetPixel(
+                        firstTextureSheetFrameLUT.width - 1, 0).r,
+                    0.5f,
+                    "Texture Sheet Frame over Time minimum end");
+                RequireApproximately(
+                    firstTextureSheetFrameLUT.GetPixel(0, 1).r,
+                    0.25f,
+                    "Texture Sheet Frame over Time maximum start");
+                RequireApproximately(
+                    firstTextureSheetFrameLUT.GetPixel(
+                        firstTextureSheetFrameLUT.width - 1, 1).r,
+                    1f,
+                    "Texture Sheet Frame over Time maximum end");
+
+                firstTextureSheetStartLUT = gpu.textureSheetStartFrameLUT;
+                firstTextureSheetStartAssetPath =
+                    AssetDatabase.GetAssetPath(firstTextureSheetStartLUT);
+                RequireApproximately(
+                    firstTextureSheetStartLUT.GetPixel(0, 0).r,
+                    0.125f,
+                    "Texture Sheet Start Frame minimum at t=0");
+                RequireApproximately(
+                    firstTextureSheetStartLUT.GetPixel(0, 1).r,
+                    0.375f,
+                    "Texture Sheet Start Frame maximum at t=0");
+
                 if (string.IsNullOrEmpty(firstForceAssetPath))
                 {
                     Object.DestroyImmediate(firstForceLUT);
@@ -1103,6 +1294,20 @@ namespace GPUParticles.Editor
                 }
                 firstLifetimeByEmitterSpeedLUT = null;
                 gpu.lifetimeByEmitterSpeedLUT = null;
+
+                if (string.IsNullOrEmpty(firstTextureSheetFrameAssetPath))
+                {
+                    Object.DestroyImmediate(firstTextureSheetFrameLUT);
+                }
+                firstTextureSheetFrameLUT = null;
+                gpu.textureSheetFrameOverTimeLUT = null;
+
+                if (string.IsNullOrEmpty(firstTextureSheetStartAssetPath))
+                {
+                    Object.DestroyImmediate(firstTextureSheetStartLUT);
+                }
+                firstTextureSheetStartLUT = null;
+                gpu.textureSheetStartFrameLUT = null;
 
                 if (string.IsNullOrEmpty(firstRotationAssetPath))
                 {
@@ -1147,6 +1352,7 @@ namespace GPUParticles.Editor
                 gpu.sizeBySpeedLUT = null;
 
                 emission.rateOverTime = new ParticleSystem.MinMaxCurve(4f, 8f);
+                textureSheet.rowMode = ParticleSystemAnimationRowMode.Random;
                 shape.enabled = true;
                 shape.shapeType = ParticleSystemShapeType.Circle;
                 shape.radius = 3f;
@@ -1165,6 +1371,9 @@ namespace GPUParticles.Editor
                     "Emission Rate over Time minimum");
                 RequireApproximately(gpu.emissionRateOverTime, 8f,
                     "Emission Rate over Time maximum");
+                Require(gpu.textureSheetRowMode ==
+                        ParticleSystemAnimationRowMode.Random,
+                    "Texture Sheet Animation Random row mode was not mapped.");
 
                 if (gpu.forceOverLifetimeLUT != null)
                 {
@@ -1223,6 +1432,33 @@ namespace GPUParticles.Editor
                             gpu.lifetimeByEmitterSpeedLUT);
                     }
                     gpu.lifetimeByEmitterSpeedLUT = null;
+                }
+
+                if (gpu.textureSheetFrameOverTimeLUT != null)
+                {
+                    secondTextureSheetFrameAssetPath =
+                        AssetDatabase.GetAssetPath(
+                            gpu.textureSheetFrameOverTimeLUT);
+                    if (string.IsNullOrEmpty(
+                            secondTextureSheetFrameAssetPath))
+                    {
+                        Object.DestroyImmediate(
+                            gpu.textureSheetFrameOverTimeLUT);
+                    }
+                    gpu.textureSheetFrameOverTimeLUT = null;
+                }
+
+                if (gpu.textureSheetStartFrameLUT != null)
+                {
+                    secondTextureSheetStartAssetPath =
+                        AssetDatabase.GetAssetPath(
+                            gpu.textureSheetStartFrameLUT);
+                    if (string.IsNullOrEmpty(
+                            secondTextureSheetStartAssetPath))
+                    {
+                        Object.DestroyImmediate(gpu.textureSheetStartFrameLUT);
+                    }
+                    gpu.textureSheetStartFrameLUT = null;
                 }
 
                 if (gpu.rotationOverLifetimeIntegralLUT != null)
@@ -1321,6 +1557,16 @@ namespace GPUParticles.Editor
                     Object.DestroyImmediate(
                         firstLifetimeByEmitterSpeedLUT);
                 }
+                if (firstTextureSheetFrameLUT != null &&
+                    string.IsNullOrEmpty(firstTextureSheetFrameAssetPath))
+                {
+                    Object.DestroyImmediate(firstTextureSheetFrameLUT);
+                }
+                if (firstTextureSheetStartLUT != null &&
+                    string.IsNullOrEmpty(firstTextureSheetStartAssetPath))
+                {
+                    Object.DestroyImmediate(firstTextureSheetStartLUT);
+                }
                 if (firstRotationLUT != null &&
                     string.IsNullOrEmpty(firstRotationAssetPath))
                 {
@@ -1399,6 +1645,26 @@ namespace GPUParticles.Editor
                 {
                     AssetDatabase.DeleteAsset(
                         secondLifetimeByEmitterSpeedAssetPath);
+                }
+                if (!string.IsNullOrEmpty(firstTextureSheetFrameAssetPath))
+                {
+                    AssetDatabase.DeleteAsset(firstTextureSheetFrameAssetPath);
+                }
+                if (!string.IsNullOrEmpty(secondTextureSheetFrameAssetPath) &&
+                    secondTextureSheetFrameAssetPath !=
+                        firstTextureSheetFrameAssetPath)
+                {
+                    AssetDatabase.DeleteAsset(secondTextureSheetFrameAssetPath);
+                }
+                if (!string.IsNullOrEmpty(firstTextureSheetStartAssetPath))
+                {
+                    AssetDatabase.DeleteAsset(firstTextureSheetStartAssetPath);
+                }
+                if (!string.IsNullOrEmpty(secondTextureSheetStartAssetPath) &&
+                    secondTextureSheetStartAssetPath !=
+                        firstTextureSheetStartAssetPath)
+                {
+                    AssetDatabase.DeleteAsset(secondTextureSheetStartAssetPath);
                 }
                 if (!string.IsNullOrEmpty(firstRotationAssetPath))
                 {

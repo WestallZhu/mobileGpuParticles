@@ -30,6 +30,10 @@ Shader "GPUParticles/UnlitBillboardURP"
             SAMPLER(sampler_RotationOverLifetimeIntegralLUT);
             TEXTURE2D(_LifetimeByEmitterSpeedLUT);
             SAMPLER(sampler_LifetimeByEmitterSpeedLUT);
+            TEXTURE2D(_TextureSheetFrameOverTimeLUT);
+            SAMPLER(sampler_TextureSheetFrameOverTimeLUT);
+            TEXTURE2D(_TextureSheetStartFrameLUT);
+            SAMPLER(sampler_TextureSheetStartFrameLUT);
 
             CBUFFER_START(UnityPerMaterial)
                 int   _GridSize;
@@ -49,6 +53,19 @@ Shader "GPUParticles/UnlitBillboardURP"
                 int   _RandomizeRotationOverLifetime;
                 float _RotationOverLifetimeIntegralLUTInvWidth;
                 int   _UseRotationOverLifetimeIntegralLUT;
+
+                int   _TextureSheetEnabled;
+                int   _TextureSheetTilesX;
+                int   _TextureSheetTilesY;
+                int   _TextureSheetAnimation;
+                int   _TextureSheetTimeMode;
+                int   _TextureSheetRowMode;
+                int   _TextureSheetRowIndex;
+                int   _TextureSheetCycleCount;
+                float _TextureSheetFps;
+                float2 _TextureSheetSpeedRange;
+                float _TextureSheetFrameLUTInvWidth;
+                float _TextureSheetStartLUTInvWidth;
 
                 // emitter transforms (for LS->WS)
                 float4x4 _EmitterLocalToWorld;
@@ -154,6 +171,117 @@ Shader "GPUParticles/UnlitBillboardURP"
                 return max(
                     0.0,
                     lerp(minimum, maximum, Hash01(id ^ 0x94D049BBu)));
+            }
+
+            float SampleTextureSheetFrame(uint id, float normalizedPosition)
+            {
+                float x = LUTCoordinate(
+                    normalizedPosition, _TextureSheetFrameLUTInvWidth);
+                float minimum = SAMPLE_TEXTURE2D_LOD(
+                    _TextureSheetFrameOverTimeLUT,
+                    sampler_TextureSheetFrameOverTimeLUT,
+                    float2(x, 0.25), 0).r;
+                float maximum = SAMPLE_TEXTURE2D_LOD(
+                    _TextureSheetFrameOverTimeLUT,
+                    sampler_TextureSheetFrameOverTimeLUT,
+                    float2(x, 0.75), 0).r;
+                return lerp(minimum, maximum, Hash01(id ^ 0xC2B2AE35u));
+            }
+
+            float SampleTextureSheetStartFrame(uint id)
+            {
+                // Unity 2022.3 samples Start Frame curves at t=0 when the
+                // particle is born; this X coordinate does not advance by age.
+                float x = LUTCoordinate(0.0, _TextureSheetStartLUTInvWidth);
+                float minimum = SAMPLE_TEXTURE2D_LOD(
+                    _TextureSheetStartFrameLUT,
+                    sampler_TextureSheetStartFrameLUT,
+                    float2(x, 0.25), 0).r;
+                float maximum = SAMPLE_TEXTURE2D_LOD(
+                    _TextureSheetStartFrameLUT,
+                    sampler_TextureSheetStartFrameLUT,
+                    float2(x, 0.75), 0).r;
+                return lerp(minimum, maximum, Hash01(id ^ 0x27D4EB2Fu));
+            }
+
+            int TextureSheetSequenceFrame(
+                uint id,
+                float normalizedAge,
+                float particleAge,
+                float particleSpeed)
+            {
+                int columns = max(1, _TextureSheetTilesX);
+                int rows = max(1, _TextureSheetTilesY);
+                int sequenceFrameCount = _TextureSheetAnimation == 0
+                    ? columns * rows
+                    : columns;
+
+                float startPosition = saturate(SampleTextureSheetStartFrame(id));
+                int startFrame = min(
+                    (int)floor(startPosition * sequenceFrameCount),
+                    sequenceFrameCount - 1);
+
+                int animationFrame;
+                if (_TextureSheetTimeMode == 2) // FPS
+                {
+                    animationFrame = (int)floor(
+                        max(0.0, particleAge) * max(0.0, _TextureSheetFps));
+                }
+                else
+                {
+                    float curvePosition = _TextureSheetTimeMode == 1
+                        ? SpeedRangePosition(particleSpeed, _TextureSheetSpeedRange)
+                        : normalizedAge;
+                    float progress = saturate(
+                        SampleTextureSheetFrame(id, curvePosition));
+                    int cycleCount = max(1, _TextureSheetCycleCount);
+                    int cycleFrameCount = sequenceFrameCount * cycleCount;
+                    animationFrame = min(
+                        (int)floor(progress * cycleFrameCount),
+                        cycleFrameCount - 1);
+                }
+
+                return (animationFrame + startFrame) % sequenceFrameCount;
+            }
+
+            float2 TextureSheetUV(
+                uint id,
+                float2 baseUV,
+                float normalizedAge,
+                float particleAge,
+                float particleSpeed)
+            {
+                if (_TextureSheetEnabled == 0)
+                {
+                    return baseUV;
+                }
+
+                int columns = max(1, _TextureSheetTilesX);
+                int rows = max(1, _TextureSheetTilesY);
+                int sequenceFrame = TextureSheetSequenceFrame(
+                    id, normalizedAge, particleAge, particleSpeed);
+                int column = sequenceFrame % columns;
+                int rowFromTop;
+                if (_TextureSheetAnimation == 0) // Whole Sheet
+                {
+                    rowFromTop = sequenceFrame / columns;
+                }
+                else if (_TextureSheetRowMode == 1) // Random
+                {
+                    rowFromTop = min(
+                        (int)floor(Hash01(id ^ 0x9E3779B9u) * rows),
+                        rows - 1);
+                }
+                else
+                {
+                    // MeshIndex uses this Custom fallback because Mesh particle
+                    // rendering is not supported by this renderer.
+                    rowFromTop = clamp(_TextureSheetRowIndex, 0, rows - 1);
+                }
+
+                int rowFromBottom = rows - 1 - rowFromTop;
+                return (baseUV + float2(column, rowFromBottom)) /
+                       float2(columns, rows);
             }
 
             float3 Ortho(float3 v){ return normalize( any(abs(v) > 0.0) ? (abs(v.z)<0.999?cross(v,float3(0,0,1)):cross(v,float3(0,1,0))) : float3(1,0,0) ); }
@@ -285,6 +413,16 @@ Shader "GPUParticles/UnlitBillboardURP"
                     o.uv = 0; o.col = 0; return o;
                 }
 
+                float particleStartLifetime = RandomRange(
+                    quadId, 0x68E31DA4u, _RandomizeStartLifetime,
+                    _StartLifetimeMin, _StartLifetime) *
+                    LifetimeByEmitterSpeedMultiplier(
+                        quadId,
+                        moduleState.gba);
+                float particleAge = max(0.0, particleStartLifetime - posLife.w);
+                float normalizedAge = saturate(
+                    particleAge / max(1e-6, particleStartLifetime));
+
                 // choose basis
                 float3 Right, Up, Normal;
                 if (_RenderMode == 3) // Stretched
@@ -340,24 +478,15 @@ Shader "GPUParticles/UnlitBillboardURP"
 
                 if (_RenderMode != 3)
                 {
-                    float particleStartLifetime = RandomRange(
-                        quadId, 0x68E31DA4u, _RandomizeStartLifetime,
-                        _StartLifetimeMin, _StartLifetime) *
-                        LifetimeByEmitterSpeedMultiplier(
-                            quadId,
-                            moduleState.gba);
                     float particleStartRotation = RandomRange(
                         quadId, 0x165667B1u, _RandomizeStartRotation,
                         _StartRotationMin, _StartRotation);
                     float particleRotationOverLifetime = RandomRange(
                         quadId, 0xD3A2646Cu, _RandomizeRotationOverLifetime,
                         _RotationOverLifetimeMin, _RotationOverLifetime);
-                    float age = max(0.0, particleStartLifetime - posLife.w);
                     float angle;
                     if (_UseRotationOverLifetimeIntegralLUT != 0)
                     {
-                        float normalizedAge = saturate(
-                            age / max(1e-6, particleStartLifetime));
                         angle = particleStartRotation +
                                 SampleRotationIntegral(quadId, normalizedAge) *
                                 particleStartLifetime;
@@ -365,7 +494,7 @@ Shader "GPUParticles/UnlitBillboardURP"
                     else
                     {
                         angle = particleStartRotation +
-                                particleRotationOverLifetime * age;
+                                particleRotationOverLifetime * particleAge;
                     }
                     angle += rotationBySpeedPhase;
                     float s = sin(angle);
@@ -376,7 +505,12 @@ Shader "GPUParticles/UnlitBillboardURP"
                 float3 wpos = posWS + Right*local.x + Up*local.y;
 
                 o.posHCS = TransformWorldToHClip(wpos);
-                o.uv = quadUV[corner];
+                o.uv = TextureSheetUV(
+                    quadId,
+                    quadUV[corner],
+                    normalizedAge,
+                    particleAge,
+                    length(velSize.xyz));
                 o.col = pcol;
                 return o;
             }

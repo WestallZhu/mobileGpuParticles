@@ -119,6 +119,26 @@ namespace GPUParticles
         public Texture2D lifetimeByEmitterSpeedLUT;
         public Vector2 lifetimeByEmitterSpeedRange = new Vector2(0f, 1f);
 
+        [Header("Texture Sheet Animation (Grid / UV0)")]
+        public bool textureSheetAnimationEnabled;
+        public ParticleSystemAnimationMode textureSheetMode =
+            ParticleSystemAnimationMode.Grid;
+        public ParticleSystemAnimationType textureSheetAnimation =
+            ParticleSystemAnimationType.WholeSheet;
+        public ParticleSystemAnimationTimeMode textureSheetTimeMode =
+            ParticleSystemAnimationTimeMode.Lifetime;
+        public ParticleSystemAnimationRowMode textureSheetRowMode =
+            ParticleSystemAnimationRowMode.Custom;
+        public UVChannelFlags textureSheetUVChannelMask = UVChannelFlags.UV0;
+        [Min(1)] public int textureSheetTilesX = 1;
+        [Min(1)] public int textureSheetTilesY = 1;
+        [Min(0)] public int textureSheetRowIndex;
+        [Min(1)] public int textureSheetCycleCount = 1;
+        [Min(0f)] public float textureSheetFps = 30f;
+        public Vector2 textureSheetSpeedRange = new Vector2(0f, 1f);
+        public Texture2D textureSheetFrameOverTimeLUT;
+        public Texture2D textureSheetStartFrameLUT;
+
         [Header("Rendering")]
         public Texture2D baseMap;
         [Range(0,1)] public float minAlphaCull = 0.001f;
@@ -379,6 +399,34 @@ namespace GPUParticles
         static readonly int _CamVelScale = Shader.PropertyToID("_CamVelScale");
         static readonly int _Freeform = Shader.PropertyToID("_Freeform");
         static readonly int _RotateWithStretch = Shader.PropertyToID("_RotateWithStretch");
+        static readonly int _TextureSheetEnabled =
+            Shader.PropertyToID("_TextureSheetEnabled");
+        static readonly int _TextureSheetTilesX =
+            Shader.PropertyToID("_TextureSheetTilesX");
+        static readonly int _TextureSheetTilesY =
+            Shader.PropertyToID("_TextureSheetTilesY");
+        static readonly int _TextureSheetAnimation =
+            Shader.PropertyToID("_TextureSheetAnimation");
+        static readonly int _TextureSheetTimeMode =
+            Shader.PropertyToID("_TextureSheetTimeMode");
+        static readonly int _TextureSheetRowMode =
+            Shader.PropertyToID("_TextureSheetRowMode");
+        static readonly int _TextureSheetRowIndex =
+            Shader.PropertyToID("_TextureSheetRowIndex");
+        static readonly int _TextureSheetCycleCount =
+            Shader.PropertyToID("_TextureSheetCycleCount");
+        static readonly int _TextureSheetFps =
+            Shader.PropertyToID("_TextureSheetFps");
+        static readonly int _TextureSheetSpeedRange =
+            Shader.PropertyToID("_TextureSheetSpeedRange");
+        static readonly int _TextureSheetFrameOverTimeLUT =
+            Shader.PropertyToID("_TextureSheetFrameOverTimeLUT");
+        static readonly int _TextureSheetStartFrameLUT =
+            Shader.PropertyToID("_TextureSheetStartFrameLUT");
+        static readonly int _TextureSheetFrameLUTInvWidth =
+            Shader.PropertyToID("_TextureSheetFrameLUTInvWidth");
+        static readonly int _TextureSheetStartLUTInvWidth =
+            Shader.PropertyToID("_TextureSheetStartLUTInvWidth");
 
         internal RenderTexture CurrentPositionLifetimeTexture => posLife[ping];
         internal RenderTexture CurrentVelocitySizeTexture => velSize[ping];
@@ -421,6 +469,13 @@ namespace GPUParticles
             rotationBySpeedRange = OrderedRange(rotationBySpeedRange);
             lifetimeByEmitterSpeedRange = OrderedRange(
                 lifetimeByEmitterSpeedRange);
+            textureSheetTilesX = Mathf.Max(1, textureSheetTilesX);
+            textureSheetTilesY = Mathf.Max(1, textureSheetTilesY);
+            textureSheetRowIndex = Mathf.Clamp(
+                textureSheetRowIndex, 0, textureSheetTilesY - 1);
+            textureSheetCycleCount = Mathf.Max(1, textureSheetCycleCount);
+            textureSheetFps = Mathf.Max(0f, textureSheetFps);
+            textureSheetSpeedRange = OrderedRange(textureSheetSpeedRange);
             if (emissionBursts == null) emissionBursts = System.Array.Empty<GPUEmissionBurst>();
             EnsureMaterials();
             RecreateTargetsIfNeeded(false);
@@ -598,6 +653,11 @@ namespace GPUParticles
         public void SetLifetimeByEmitterSpeedRange(Vector2 range)
         {
             lifetimeByEmitterSpeedRange = OrderedRange(range);
+        }
+
+        public void SetTextureSheetSpeedRange(Vector2 range)
+        {
+            textureSheetSpeedRange = OrderedRange(range);
         }
 
         static Vector2 OrderedRange(Vector2 range)
@@ -1640,6 +1700,58 @@ namespace GPUParticles
                     lifetimeByEmitterSpeedRange.y,
                     0f,
                     0f));
+            Texture2D selectedTextureSheetFrameLUT =
+                textureSheetFrameOverTimeLUT != null
+                    ? textureSheetFrameOverTimeLUT
+                    : CurveLUTBuilder.GetDefaultLinear01LUT();
+            Texture2D selectedTextureSheetStartLUT =
+                textureSheetStartFrameLUT != null
+                    ? textureSheetStartFrameLUT
+                    : CurveLUTBuilder.GetDefaultZeroLUT();
+            bool textureSheetAffectsUV0 =
+                (textureSheetUVChannelMask & UVChannelFlags.UV0) != 0;
+            bool useTextureSheet = textureSheetAnimationEnabled &&
+                                   textureSheetMode == ParticleSystemAnimationMode.Grid &&
+                                   textureSheetAffectsUV0;
+            int textureSheetRowCount = Mathf.Max(1, textureSheetTilesY);
+            renderMaterial.SetInt(
+                _TextureSheetEnabled, useTextureSheet ? 1 : 0);
+            renderMaterial.SetInt(
+                _TextureSheetTilesX, Mathf.Max(1, textureSheetTilesX));
+            renderMaterial.SetInt(
+                _TextureSheetTilesY, textureSheetRowCount);
+            renderMaterial.SetInt(
+                _TextureSheetAnimation, (int)textureSheetAnimation);
+            renderMaterial.SetInt(
+                _TextureSheetTimeMode, (int)textureSheetTimeMode);
+            renderMaterial.SetInt(
+                _TextureSheetRowMode, (int)textureSheetRowMode);
+            renderMaterial.SetInt(
+                _TextureSheetRowIndex,
+                Mathf.Clamp(textureSheetRowIndex, 0, textureSheetRowCount - 1));
+            renderMaterial.SetInt(
+                _TextureSheetCycleCount, Mathf.Max(1, textureSheetCycleCount));
+            renderMaterial.SetFloat(
+                _TextureSheetFps, Mathf.Max(0f, textureSheetFps));
+            renderMaterial.SetVector(
+                _TextureSheetSpeedRange,
+                new Vector4(
+                    textureSheetSpeedRange.x,
+                    textureSheetSpeedRange.y,
+                    0f,
+                    0f));
+            renderMaterial.SetTexture(
+                _TextureSheetFrameOverTimeLUT,
+                selectedTextureSheetFrameLUT);
+            renderMaterial.SetTexture(
+                _TextureSheetStartFrameLUT,
+                selectedTextureSheetStartLUT);
+            renderMaterial.SetFloat(
+                _TextureSheetFrameLUTInvWidth,
+                InverseTextureWidth(selectedTextureSheetFrameLUT));
+            renderMaterial.SetFloat(
+                _TextureSheetStartLUTInvWidth,
+                InverseTextureWidth(selectedTextureSheetStartLUT));
             renderMaterial.SetFloat(_StartRotation, startRotation);
             renderMaterial.SetFloat(_StartRotationMin, startRotationMin);
             renderMaterial.SetInt(_RandomizeStartRotation, randomizeStartRotation ? 1 : 0);

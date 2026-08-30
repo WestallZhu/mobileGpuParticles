@@ -31,7 +31,11 @@ namespace GPUParticles
         RotationBySpeedCurvePoint,
         ColorSizeOverLifetimeRandomizedPoint,
         ColorSizeBySpeedRandomizedPoint,
-        LifetimeByEmitterSpeedPoint
+        LifetimeByEmitterSpeedPoint,
+        TextureSheetLifetimePoint,
+        TextureSheetSpeedPoint,
+        TextureSheetFPSPoint,
+        TextureSheetSingleRowPoint
     }
 
     [DisallowMultipleComponent]
@@ -86,11 +90,21 @@ namespace GPUParticles
         float maximumGPULimitVelocityError;
         int maximumShurikenParticleCount;
         int maximumGPUParticleCount;
+        int textureSheetComparableSamples;
+        int textureSheetFrameMismatches;
+        int textureSheetClassificationFailures;
+        int maximumTextureSheetFrameDelta;
+        int shurikenTextureSheetFrameMask;
+        int gpuTextureSheetFrameMask;
         Texture2D profileForceLUT;
         Texture2D profileVelocityLUT;
         Texture2D profileLimitVelocityLUT;
         Texture2D profileInheritVelocityLUT;
         Texture2D profileLifetimeByEmitterSpeedLUT;
+        Texture2D profileTextureSheetFrameLUT;
+        Texture2D profileTextureSheetStartLUT;
+        Texture2D profileTextureSheetAtlas;
+        Material profileTextureSheetMaterial;
         Texture2D profileColorLUT;
         Texture2D profileSizeLUT;
         Texture2D profileRotationLUT;
@@ -104,6 +118,17 @@ namespace GPUParticles
         static readonly Vector3 LimitVelocityAxesAcceleration =
             new Vector3(10f, 4f, -8f);
         const float RotationProfileStartRotation = 0.25f;
+        static readonly Color32[] TextureSheetPalette =
+        {
+            new Color32(242, 31, 31, 255),
+            new Color32(31, 242, 31, 255),
+            new Color32(31, 31, 242, 255),
+            new Color32(242, 242, 31, 255),
+            new Color32(242, 31, 242, 255),
+            new Color32(31, 242, 242, 255),
+            new Color32(242, 112, 31, 255),
+            new Color32(145, 31, 242, 255)
+        };
         Vector3 shurikenBasePositionWS;
         Vector3 gpuBasePositionWS;
         ObservedRange shurikenLifetimeRange;
@@ -196,6 +221,22 @@ namespace GPUParticles
             {
                 Destroy(profileLifetimeByEmitterSpeedLUT);
             }
+            if (profileTextureSheetFrameLUT != null)
+            {
+                Destroy(profileTextureSheetFrameLUT);
+            }
+            if (profileTextureSheetStartLUT != null)
+            {
+                Destroy(profileTextureSheetStartLUT);
+            }
+            if (profileTextureSheetAtlas != null)
+            {
+                Destroy(profileTextureSheetAtlas);
+            }
+            if (profileTextureSheetMaterial != null)
+            {
+                Destroy(profileTextureSheetMaterial);
+            }
             if (profileColorLUT != null) Destroy(profileColorLUT);
             if (profileSizeLUT != null) Destroy(profileSizeLUT);
             if (profileRotationLUT != null) Destroy(profileRotationLUT);
@@ -259,6 +300,39 @@ namespace GPUParticles
             }
 
             ResetBySpeedModules();
+            ResetTextureSheetAnimation();
+
+            if (validationProfile ==
+                ParticleABValidationProfile.TextureSheetLifetimePoint)
+            {
+                ConfigureTextureSheetAnimationProfile(
+                    ParticleSystemAnimationTimeMode.Lifetime);
+                return;
+            }
+
+            if (validationProfile ==
+                ParticleABValidationProfile.TextureSheetSpeedPoint)
+            {
+                ConfigureTextureSheetAnimationProfile(
+                    ParticleSystemAnimationTimeMode.Speed);
+                return;
+            }
+
+            if (validationProfile ==
+                ParticleABValidationProfile.TextureSheetFPSPoint)
+            {
+                ConfigureTextureSheetAnimationProfile(
+                    ParticleSystemAnimationTimeMode.FPS);
+                return;
+            }
+
+            if (validationProfile ==
+                ParticleABValidationProfile.TextureSheetSingleRowPoint)
+            {
+                ConfigureTextureSheetAnimationProfile(
+                    ParticleSystemAnimationTimeMode.Lifetime);
+                return;
+            }
 
             if (validationProfile == ParticleABValidationProfile.RandomizedMainPoint)
             {
@@ -1113,6 +1187,245 @@ namespace GPUParticles
             gpuParticles.sizeBySpeedLUT = profileSizeLUT;
         }
 
+        void ConfigureTextureSheetAnimationProfile(
+            ParticleSystemAnimationTimeMode timeMode)
+        {
+            const float lifetime = 4f;
+            bool singleRow = validationProfile ==
+                ParticleABValidationProfile.TextureSheetSingleRowPoint;
+            ConfigureEmissionPointBase(lifetime, false);
+
+            var main = shuriken.main;
+            main.maxParticles = 1;
+            main.startLifetime = lifetime;
+            main.startSpeed = 0f;
+            main.startSize = 3f;
+            main.startColor = Color.white;
+            main.gravityModifier = 0f;
+
+            var emission = shuriken.emission;
+            emission.enabled = true;
+            emission.rateOverTime = 0f;
+            emission.rateOverDistance = 0f;
+            var burst = new ParticleSystem.Burst(0f, 1)
+            {
+                probability = 1f
+            };
+            emission.SetBursts(new[] { burst });
+
+            gpuParticles.maxParticles = 1;
+            gpuParticles.emissionEnabled = true;
+            gpuParticles.SetEmissionRateOverTime(emission.rateOverTime);
+            gpuParticles.SetEmissionRateOverDistance(emission.rateOverDistance);
+            gpuParticles.SetEmissionBursts(new[] { burst });
+            gpuParticles.SetStartLifetimeRange(lifetime, lifetime);
+            gpuParticles.SetStartSpeedRange(0f, 0f);
+            gpuParticles.SetStartSizeRange(3f, 3f);
+            gpuParticles.SetStartColorRange(Color.white, Color.white, false);
+
+            var force = shuriken.forceOverLifetime;
+            bool animateBySpeed = timeMode == ParticleSystemAnimationTimeMode.Speed;
+            force.enabled = animateBySpeed;
+            force.space = ParticleSystemSimulationSpace.Local;
+            force.randomized = false;
+            force.x = animateBySpeed ? 0.5f : 0f;
+            force.y = 0f;
+            force.z = 0f;
+            gpuParticles.forceOverLifetimeEnabled = animateBySpeed;
+            gpuParticles.forceOverLifetimeSpace = SimulationSpace.Local;
+            gpuParticles.forceOverLifetimeRandomized = false;
+            if (profileForceLUT != null) Destroy(profileForceLUT);
+            profileForceLUT = animateBySpeed
+                ? MinMaxCurveVector3LUTBuilder.Build(force.x, force.y, force.z)
+                : null;
+            gpuParticles.forceOverLifetimeLUT = profileForceLUT != null
+                ? profileForceLUT
+                : MinMaxCurveVector3LUTBuilder.GetDefaultZeroLUT();
+
+            var textureSheet = shuriken.textureSheetAnimation;
+            textureSheet.enabled = true;
+            textureSheet.mode = ParticleSystemAnimationMode.Grid;
+            textureSheet.numTilesX = 4;
+            textureSheet.numTilesY = 2;
+            textureSheet.animation = singleRow
+                ? ParticleSystemAnimationType.SingleRow
+                : ParticleSystemAnimationType.WholeSheet;
+            textureSheet.timeMode = timeMode;
+            textureSheet.rowMode = ParticleSystemAnimationRowMode.Custom;
+            textureSheet.rowIndex = singleRow ? 1 : 0;
+            textureSheet.cycleCount = timeMode ==
+                ParticleSystemAnimationTimeMode.Lifetime ? 2 : 1;
+            textureSheet.speedRange = new Vector2(0f, 2f);
+            textureSheet.fps = 2f;
+            textureSheet.uvChannelMask = UVChannelFlags.UV0;
+            textureSheet.frameOverTime = new ParticleSystem.MinMaxCurve(
+                1f, AnimationCurve.Linear(0f, 0f, 1f, 1f));
+            textureSheet.startFrame = new ParticleSystem.MinMaxCurve(
+                singleRow ? 0.25f : 0.125f);
+
+            if (profileTextureSheetFrameLUT != null)
+            {
+                Destroy(profileTextureSheetFrameLUT);
+            }
+            if (profileTextureSheetStartLUT != null)
+            {
+                Destroy(profileTextureSheetStartLUT);
+            }
+            profileTextureSheetFrameLUT = CurveLUTBuilder.BuildSigned(
+                textureSheet.frameOverTime,
+                assetName: "TextureSheetFrame_Profile_LUT");
+            profileTextureSheetStartLUT = CurveLUTBuilder.BuildSigned(
+                textureSheet.startFrame,
+                resolution: 2,
+                assetName: "TextureSheetStart_Profile_LUT");
+            gpuParticles.textureSheetAnimationEnabled = true;
+            gpuParticles.textureSheetMode = ParticleSystemAnimationMode.Grid;
+            gpuParticles.textureSheetAnimation = textureSheet.animation;
+            gpuParticles.textureSheetTimeMode = timeMode;
+            gpuParticles.textureSheetRowMode =
+                ParticleSystemAnimationRowMode.Custom;
+            gpuParticles.textureSheetUVChannelMask = UVChannelFlags.UV0;
+            gpuParticles.textureSheetTilesX = 4;
+            gpuParticles.textureSheetTilesY = 2;
+            gpuParticles.textureSheetRowIndex = textureSheet.rowIndex;
+            gpuParticles.textureSheetCycleCount = textureSheet.cycleCount;
+            gpuParticles.textureSheetFps = textureSheet.fps;
+            gpuParticles.SetTextureSheetSpeedRange(textureSheet.speedRange);
+            gpuParticles.textureSheetFrameOverTimeLUT =
+                profileTextureSheetFrameLUT;
+            gpuParticles.textureSheetStartFrameLUT =
+                profileTextureSheetStartLUT;
+
+            if (profileTextureSheetAtlas != null)
+            {
+                Destroy(profileTextureSheetAtlas);
+            }
+            profileTextureSheetAtlas = CreateTextureSheetAtlas();
+            gpuParticles.baseMap = profileTextureSheetAtlas;
+
+            if (profileTextureSheetMaterial != null)
+            {
+                Destroy(profileTextureSheetMaterial);
+            }
+            Material sourceMaterial = shurikenRenderer != null
+                ? shurikenRenderer.sharedMaterial
+                : null;
+            if (sourceMaterial == null)
+            {
+                Shader shader = Shader.Find(
+                    "Universal Render Pipeline/Particles/Unlit");
+                if (shader == null)
+                {
+                    throw new InvalidOperationException(
+                        "URP particle shader was not found for Texture Sheet validation.");
+                }
+                profileTextureSheetMaterial = new Material(shader);
+            }
+            else
+            {
+                profileTextureSheetMaterial = new Material(sourceMaterial);
+            }
+            profileTextureSheetMaterial.name = "TextureSheetAB_Profile_Material";
+            profileTextureSheetMaterial.hideFlags = HideFlags.HideAndDontSave;
+            if (profileTextureSheetMaterial.HasProperty("_BaseMap"))
+            {
+                profileTextureSheetMaterial.SetTexture(
+                    "_BaseMap", profileTextureSheetAtlas);
+            }
+            if (profileTextureSheetMaterial.HasProperty("_MainTex"))
+            {
+                profileTextureSheetMaterial.SetTexture(
+                    "_MainTex", profileTextureSheetAtlas);
+            }
+            if (profileTextureSheetMaterial.HasProperty("_BaseColor"))
+            {
+                profileTextureSheetMaterial.SetColor("_BaseColor", Color.white);
+            }
+            if (profileTextureSheetMaterial.HasProperty("_Color"))
+            {
+                profileTextureSheetMaterial.SetColor("_Color", Color.white);
+            }
+            if (shurikenRenderer != null)
+            {
+                shurikenRenderer.sharedMaterial = profileTextureSheetMaterial;
+                shurikenRenderer.renderMode = ParticleSystemRenderMode.Billboard;
+                shurikenRenderer.alignment = ParticleSystemRenderSpace.View;
+            }
+            gpuParticles.renderMode = GPURenderMode.Billboard;
+            gpuParticles.renderAlignment = GPUAlignment.View;
+            gpuParticles.pivot = Vector2.zero;
+        }
+
+        static Texture2D CreateTextureSheetAtlas()
+        {
+            const int tileSize = 16;
+            const int columns = 4;
+            const int rows = 2;
+            int width = columns * tileSize;
+            int height = rows * tileSize;
+            var pixels = new Color32[width * height];
+            for (int frame = 0; frame < TextureSheetPalette.Length; frame++)
+            {
+                int column = frame % columns;
+                int rowFromTop = frame / columns;
+                int rowFromBottom = rows - 1 - rowFromTop;
+                int startX = column * tileSize;
+                int startY = rowFromBottom * tileSize;
+                for (int y = 0; y < tileSize; y++)
+                {
+                    for (int x = 0; x < tileSize; x++)
+                    {
+                        pixels[(startY + y) * width + startX + x] =
+                            TextureSheetPalette[frame];
+                    }
+                }
+            }
+
+            var atlas = new Texture2D(
+                width, height, TextureFormat.RGBA32, false, false)
+            {
+                name = "TextureSheetAB_Profile_Atlas",
+                filterMode = FilterMode.Point,
+                wrapMode = TextureWrapMode.Clamp,
+                hideFlags = HideFlags.HideAndDontSave
+            };
+            atlas.SetPixels32(pixels);
+            atlas.Apply(false, false);
+            return atlas;
+        }
+
+        void ResetTextureSheetAnimation()
+        {
+            var textureSheet = shuriken.textureSheetAnimation;
+            textureSheet.enabled = false;
+            gpuParticles.textureSheetAnimationEnabled = false;
+            gpuParticles.textureSheetMode = ParticleSystemAnimationMode.Grid;
+            gpuParticles.textureSheetAnimation =
+                ParticleSystemAnimationType.WholeSheet;
+            gpuParticles.textureSheetTimeMode =
+                ParticleSystemAnimationTimeMode.Lifetime;
+            gpuParticles.textureSheetUVChannelMask = UVChannelFlags.UV0;
+            gpuParticles.textureSheetTilesX = 1;
+            gpuParticles.textureSheetTilesY = 1;
+            gpuParticles.textureSheetCycleCount = 1;
+            gpuParticles.textureSheetFrameOverTimeLUT =
+                CurveLUTBuilder.GetDefaultLinear01LUT();
+            gpuParticles.textureSheetStartFrameLUT =
+                CurveLUTBuilder.GetDefaultZeroLUT();
+        }
+
+        bool IsTextureSheetProfile()
+        {
+            return validationProfile ==
+                       ParticleABValidationProfile.TextureSheetLifetimePoint ||
+                   validationProfile ==
+                       ParticleABValidationProfile.TextureSheetSpeedPoint ||
+                   validationProfile ==
+                       ParticleABValidationProfile.TextureSheetFPSPoint ||
+                   validationProfile ==
+                       ParticleABValidationProfile.TextureSheetSingleRowPoint;
+        }
+
         void ResetBySpeedModules()
         {
             var lifetimeByEmitterSpeed = shuriken.lifetimeByEmitterSpeed;
@@ -1375,6 +1688,12 @@ namespace GPUParticles
             maximumGPULimitVelocityError = 0f;
             maximumShurikenParticleCount = 0;
             maximumGPUParticleCount = 0;
+            textureSheetComparableSamples = 0;
+            textureSheetFrameMismatches = 0;
+            textureSheetClassificationFailures = 0;
+            maximumTextureSheetFrameDelta = 0;
+            shurikenTextureSheetFrameMask = 0;
+            gpuTextureSheetFrameMask = 0;
             shurikenLifetimeRange.Reset();
             gpuLifetimeRange.Reset();
             shurikenSpeedRange.Reset();
@@ -1411,9 +1730,16 @@ namespace GPUParticles
             string prefix = $"{captureIndex:D4}-t{elapsed:F3}";
             ParticleABDisplayMode previousMode = displayMode;
             CaptureCameraImage(prefix + "-both.png", ParticleABDisplayMode.Both);
-            CaptureCameraImage(prefix + "-shuriken.png", ParticleABDisplayMode.ShurikenOnly);
-            CaptureCameraImage(prefix + "-gpu.png", ParticleABDisplayMode.GPUOnly);
+            int shurikenTextureSheetFrame = CaptureCameraImage(
+                prefix + "-shuriken.png",
+                ParticleABDisplayMode.ShurikenOnly);
+            int gpuTextureSheetFrame = CaptureCameraImage(
+                prefix + "-gpu.png",
+                ParticleABDisplayMode.GPUOnly);
             SetDisplayMode(previousMode);
+            ObserveTextureSheetFrames(
+                shurikenTextureSheetFrame,
+                gpuTextureSheetFrame);
 
             Texture2D posLife = ReadRenderTexture(gpuParticles.CurrentPositionLifetimeTexture, TextureFormat.RGBAFloat, true);
             Texture2D velSize = ReadRenderTexture(gpuParticles.CurrentVelocitySizeTexture, TextureFormat.RGBAFloat, true);
@@ -1448,7 +1774,7 @@ namespace GPUParticles
             Destroy(rotationPhases);
         }
 
-        void CaptureCameraImage(string fileName, ParticleABDisplayMode mode)
+        int CaptureCameraImage(string fileName, ParticleABDisplayMode mode)
         {
             SetDisplayMode(mode);
             RenderTexture previousTarget = captureCamera.targetTexture;
@@ -1458,7 +1784,74 @@ namespace GPUParticles
 
             Texture2D cameraImage = ReadRenderTexture(cameraCaptureRT, TextureFormat.RGBA32, false);
             File.WriteAllBytes(Path.Combine(sessionFolder, fileName), cameraImage.EncodeToPNG());
+            int textureSheetFrame = IsTextureSheetProfile()
+                ? ClassifyTextureSheetFrame(cameraImage)
+                : -1;
             Destroy(cameraImage);
+            return textureSheetFrame;
+        }
+
+        static int ClassifyTextureSheetFrame(Texture2D image)
+        {
+            Color32[] pixels = image.GetPixels32();
+            var counts = new int[TextureSheetPalette.Length];
+            const int maximumDistanceSquared = 55 * 55 * 3;
+            for (int pixelIndex = 0; pixelIndex < pixels.Length; pixelIndex++)
+            {
+                Color32 pixel = pixels[pixelIndex];
+                int closestFrame = -1;
+                int closestDistance = int.MaxValue;
+                for (int frame = 0; frame < TextureSheetPalette.Length; frame++)
+                {
+                    Color32 target = TextureSheetPalette[frame];
+                    int red = pixel.r - target.r;
+                    int green = pixel.g - target.g;
+                    int blue = pixel.b - target.b;
+                    int distance = red * red + green * green + blue * blue;
+                    if (distance < closestDistance)
+                    {
+                        closestDistance = distance;
+                        closestFrame = frame;
+                    }
+                }
+
+                if (closestDistance <= maximumDistanceSquared)
+                {
+                    counts[closestFrame]++;
+                }
+            }
+
+            int dominantFrame = -1;
+            int dominantCount = 0;
+            for (int frame = 0; frame < counts.Length; frame++)
+            {
+                if (counts[frame] <= dominantCount) continue;
+                dominantCount = counts[frame];
+                dominantFrame = frame;
+            }
+            return dominantCount >= 32 ? dominantFrame : -1;
+        }
+
+        void ObserveTextureSheetFrames(int shurikenFrame, int gpuFrame)
+        {
+            if (!IsTextureSheetProfile()) return;
+            if (shurikenFrame < 0 || gpuFrame < 0)
+            {
+                textureSheetClassificationFailures++;
+                return;
+            }
+
+            textureSheetComparableSamples++;
+            shurikenTextureSheetFrameMask |= 1 << shurikenFrame;
+            gpuTextureSheetFrameMask |= 1 << gpuFrame;
+            int frameDelta = Mathf.Abs(shurikenFrame - gpuFrame);
+            frameDelta = Mathf.Min(frameDelta, TextureSheetPalette.Length - frameDelta);
+            maximumTextureSheetFrameDelta = Mathf.Max(
+                maximumTextureSheetFrameDelta, frameDelta);
+            if (shurikenFrame != gpuFrame)
+            {
+                textureSheetFrameMismatches++;
+            }
         }
 
         void WriteParticleState(
@@ -2318,6 +2711,33 @@ namespace GPUParticles
                                             maximumGPURotationError <= 0.01f;
                     break;
 
+                case ParticleABValidationProfile.TextureSheetLifetimePoint:
+                case ParticleABValidationProfile.TextureSheetSpeedPoint:
+                case ParticleABValidationProfile.TextureSheetFPSPoint:
+                case ParticleABValidationProfile.TextureSheetSingleRowPoint:
+                {
+                    int allowedFrameMismatches = Mathf.Max(
+                        1, textureSheetComparableSamples / 20);
+                    int expectedFrameMask = validationProfile ==
+                            ParticleABValidationProfile.TextureSheetSingleRowPoint
+                        ? 0xF0
+                        : 0xFF;
+                    profileSpecificPassed = maximumMeanSpeedError <= 0.01f &&
+                                            maximumMeanPositionError <= 0.04f &&
+                                            maximumShurikenParticleCount == 1 &&
+                                            maximumGPUParticleCount == 1 &&
+                                            textureSheetComparableSamples >= 20 &&
+                                            textureSheetClassificationFailures == 0 &&
+                                            textureSheetFrameMismatches <=
+                                                allowedFrameMismatches &&
+                                            maximumTextureSheetFrameDelta <= 1 &&
+                                            shurikenTextureSheetFrameMask ==
+                                                expectedFrameMask &&
+                                            gpuTextureSheetFrameMask ==
+                                                expectedFrameMask;
+                    break;
+                }
+
                 case ParticleABValidationProfile.RotationOverLifetimeCurvePoint:
                     profileSpecificPassed = maximumMeanSpeedError <= 0.001f &&
                                             maximumShurikenParticleCount > 0 &&
@@ -2396,6 +2816,12 @@ namespace GPUParticles
                 $"maxGPULimitVelocityError={maximumGPULimitVelocityError:R}; " +
                 $"maxShurikenCount={maximumShurikenParticleCount}; " +
                 $"maxGPUCount={maximumGPUParticleCount}; " +
+                $"textureSheetComparableSamples={textureSheetComparableSamples}; " +
+                $"textureSheetFrameMismatches={textureSheetFrameMismatches}; " +
+                $"textureSheetClassificationFailures={textureSheetClassificationFailures}; " +
+                $"maxTextureSheetFrameDelta={maximumTextureSheetFrameDelta}; " +
+                $"shurikenTextureSheetFrameMask=0x{shurikenTextureSheetFrameMask:X2}; " +
+                $"gpuTextureSheetFrameMask=0x{gpuTextureSheetFrameMask:X2}; " +
                 $"shurikenLifetimeRange={FormatRange(shurikenLifetimeRange)}; " +
                 $"gpuLifetimeRange={FormatRange(gpuLifetimeRange)}; " +
                 $"shurikenSpeedRange={FormatRange(shurikenSpeedRange)}; " +

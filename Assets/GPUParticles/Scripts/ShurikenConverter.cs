@@ -1,4 +1,5 @@
 using UnityEngine;
+using UnityEngine.Rendering;
 
 namespace GPUParticles
 {
@@ -37,6 +38,7 @@ namespace GPUParticles
             ApplyLimitVelocityOverLifetime(ps, gpu);
             ApplyInheritVelocity(ps, gpu, owner);
             ApplyLifetimeByEmitterSpeed(ps, gpu, owner);
+            ApplyTextureSheetAnimation(ps, gpu, owner);
 
             ApplyEmission(ps, gpu, owner);
             ApplyColorAndSizeOverLifetime(ps, gpu, owner);
@@ -275,6 +277,7 @@ namespace GPUParticles
             ApplyLimitVelocityOverLifetime(particleSystem, gpu);
             ApplyInheritVelocity(particleSystem, gpu, gpuChild);
             ApplyLifetimeByEmitterSpeed(particleSystem, gpu, gpuChild);
+            ApplyTextureSheetAnimation(particleSystem, gpu, gpuChild);
 
             ApplyEmission(particleSystem, gpu, gpuChild);
             ApplyColorAndSizeOverLifetime(particleSystem, gpu, gpuChild);
@@ -820,6 +823,105 @@ namespace GPUParticles
                     "from Transform movement; Rigidbody and Custom modes are not supported.",
                     context);
             }
+        }
+
+        static void ApplyTextureSheetAnimation(
+            ParticleSystem particleSystem,
+            GPUParticleSystem gpu,
+            Object context)
+        {
+            var textureSheet = particleSystem.textureSheetAnimation;
+            gpu.textureSheetMode = textureSheet.mode;
+            gpu.textureSheetAnimation = textureSheet.animation;
+            gpu.textureSheetTimeMode = textureSheet.timeMode;
+            gpu.textureSheetRowMode = textureSheet.rowMode;
+            gpu.textureSheetUVChannelMask = textureSheet.uvChannelMask;
+            gpu.textureSheetTilesX = Mathf.Max(1, textureSheet.numTilesX);
+            gpu.textureSheetTilesY = Mathf.Max(1, textureSheet.numTilesY);
+            gpu.textureSheetRowIndex = Mathf.Clamp(
+                textureSheet.rowIndex, 0, gpu.textureSheetTilesY - 1);
+            gpu.textureSheetCycleCount = Mathf.Max(1, textureSheet.cycleCount);
+            gpu.textureSheetFps = Mathf.Max(0f, textureSheet.fps);
+            gpu.SetTextureSheetSpeedRange(textureSheet.speedRange);
+
+            if (!textureSheet.enabled)
+            {
+                gpu.textureSheetAnimationEnabled = false;
+                gpu.textureSheetFrameOverTimeLUT =
+                    CurveLUTBuilder.GetDefaultLinear01LUT();
+                gpu.textureSheetStartFrameLUT =
+                    CurveLUTBuilder.GetDefaultZeroLUT();
+                return;
+            }
+
+            if (textureSheet.mode != ParticleSystemAnimationMode.Grid)
+            {
+                gpu.textureSheetAnimationEnabled = false;
+                gpu.textureSheetFrameOverTimeLUT =
+                    CurveLUTBuilder.GetDefaultLinear01LUT();
+                gpu.textureSheetStartFrameLUT =
+                    CurveLUTBuilder.GetDefaultZeroLUT();
+                Debug.LogWarning(
+                    "Texture Sheet Animation Sprites mode is not supported; " +
+                    "the GPU renderer currently supports Grid mode.",
+                    context);
+                return;
+            }
+
+            bool affectsUV0 =
+                (textureSheet.uvChannelMask & UVChannelFlags.UV0) != 0;
+            gpu.textureSheetAnimationEnabled = affectsUV0;
+            if (!affectsUV0)
+            {
+                Debug.LogWarning(
+                    "Texture Sheet Animation does not target UV0, so it does not " +
+                    "affect the GPU renderer's Base Map. UV1-UV3 are not emitted.",
+                    context);
+            }
+            else if ((textureSheet.uvChannelMask & ~UVChannelFlags.UV0) != 0)
+            {
+                Debug.LogWarning(
+                    "Texture Sheet Animation UV1-UV3 channels are not emitted by " +
+                    "the GPU billboard renderer; UV0 was mapped.",
+                    context);
+            }
+
+            if (textureSheet.animation == ParticleSystemAnimationType.SingleRow &&
+                textureSheet.rowMode == ParticleSystemAnimationRowMode.MeshIndex)
+            {
+                gpu.textureSheetRowMode = ParticleSystemAnimationRowMode.Custom;
+                Debug.LogWarning(
+                    "Texture Sheet Animation MeshIndex row selection requires Mesh " +
+                    "particle rendering; using the configured Custom row instead.",
+                    context);
+            }
+
+            var particleRenderer =
+                particleSystem.GetComponent<ParticleSystemRenderer>();
+            Material particleMaterial = particleRenderer != null
+                ? particleRenderer.sharedMaterial
+                : null;
+            bool usesFrameBlending = particleMaterial != null &&
+                ((particleMaterial.HasProperty("_FlipbookBlending") &&
+                  particleMaterial.GetFloat("_FlipbookBlending") > 0.5f) ||
+                 particleMaterial.IsKeywordEnabled("_FLIPBOOKBLENDING_ON"));
+            if (usesFrameBlending)
+            {
+                Debug.LogWarning(
+                    "Texture Sheet flipbook frame blending is not supported; " +
+                    "the GPU renderer uses Shuriken's discrete current frame.",
+                    context);
+            }
+
+            gpu.textureSheetFrameOverTimeLUT = CurveLUTBuilder.BuildSigned(
+                textureSheet.frameOverTime,
+                saveAsAsset: true,
+                assetName: "TextureSheetFrameOverTime_LUT");
+            gpu.textureSheetStartFrameLUT = CurveLUTBuilder.BuildSigned(
+                textureSheet.startFrame,
+                resolution: 2,
+                saveAsAsset: true,
+                assetName: "TextureSheetStartFrame_LUT");
         }
 
         static void ApplyEmission(

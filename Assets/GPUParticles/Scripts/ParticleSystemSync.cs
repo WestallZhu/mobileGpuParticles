@@ -1,4 +1,5 @@
 using UnityEngine;
+using UnityEngine.Rendering;
 
 namespace GPUParticles
 {
@@ -50,6 +51,7 @@ namespace GPUParticles
         private float lastLimitVelocityLUTUpdate = 0f;
         private float lastInheritVelocityLUTUpdate = 0f;
         private float lastLifetimeByEmitterSpeedLUTUpdate = 0f;
+        private float lastTextureSheetLUTUpdate = 0f;
         private float lastColorBySpeedLUTUpdate = 0f;
         private float lastSizeBySpeedLUTUpdate = 0f;
         private float lastRotationLUTUpdate = 0f;
@@ -60,6 +62,8 @@ namespace GPUParticles
         private Texture2D generatedLimitVelocityLUT;
         private Texture2D generatedInheritVelocityLUT;
         private Texture2D generatedLifetimeByEmitterSpeedLUT;
+        private Texture2D generatedTextureSheetFrameLUT;
+        private Texture2D generatedTextureSheetStartLUT;
         private Texture2D generatedColorLUT;
         private Texture2D generatedSizeLUT;
         private Texture2D generatedColorBySpeedLUT;
@@ -109,6 +113,7 @@ namespace GPUParticles
             SyncLimitVelocityOverLifetime(true);
             SyncInheritVelocity(true);
             SyncLifetimeByEmitterSpeed(true);
+            SyncTextureSheetAnimation(true);
             SyncRendererParameters(true);
             SyncRotationParameters(true);
             SyncMaterialParameters(true);
@@ -178,6 +183,7 @@ namespace GPUParticles
             SyncLimitVelocityOverLifetime();
             SyncInheritVelocity();
             SyncLifetimeByEmitterSpeed();
+            SyncTextureSheetAnimation();
             SyncRendererParameters();
             SyncRotationParameters();
             SyncMaterialParameters();
@@ -614,6 +620,74 @@ namespace GPUParticles
                 Time.realtimeSinceStartup;
         }
 
+        void SyncTextureSheetAnimation(bool forceUpdate = false)
+        {
+            var textureSheet = sourceParticleSystem.textureSheetAnimation;
+            bool timeToUpdate =
+                Time.realtimeSinceStartup - lastTextureSheetLUTUpdate >
+                LUT_UPDATE_INTERVAL;
+            if (!forceUpdate && !timeToUpdate) return;
+
+            targetGPUParticleSystem.textureSheetMode = textureSheet.mode;
+            targetGPUParticleSystem.textureSheetAnimation =
+                textureSheet.animation;
+            targetGPUParticleSystem.textureSheetTimeMode = textureSheet.timeMode;
+            targetGPUParticleSystem.textureSheetRowMode = textureSheet.rowMode;
+            targetGPUParticleSystem.textureSheetUVChannelMask =
+                textureSheet.uvChannelMask;
+            targetGPUParticleSystem.textureSheetTilesX =
+                Mathf.Max(1, textureSheet.numTilesX);
+            targetGPUParticleSystem.textureSheetTilesY =
+                Mathf.Max(1, textureSheet.numTilesY);
+            targetGPUParticleSystem.textureSheetRowIndex = Mathf.Clamp(
+                textureSheet.rowIndex,
+                0,
+                targetGPUParticleSystem.textureSheetTilesY - 1);
+            targetGPUParticleSystem.textureSheetCycleCount =
+                Mathf.Max(1, textureSheet.cycleCount);
+            targetGPUParticleSystem.textureSheetFps =
+                Mathf.Max(0f, textureSheet.fps);
+            targetGPUParticleSystem.SetTextureSheetSpeedRange(
+                textureSheet.speedRange);
+
+            bool gridMode = textureSheet.mode == ParticleSystemAnimationMode.Grid;
+            bool affectsUV0 =
+                (textureSheet.uvChannelMask & UVChannelFlags.UV0) != 0;
+            targetGPUParticleSystem.textureSheetAnimationEnabled =
+                textureSheet.enabled && gridMode && affectsUV0;
+            if (textureSheet.animation == ParticleSystemAnimationType.SingleRow &&
+                textureSheet.rowMode == ParticleSystemAnimationRowMode.MeshIndex)
+            {
+                targetGPUParticleSystem.textureSheetRowMode =
+                    ParticleSystemAnimationRowMode.Custom;
+            }
+
+            DestroyGeneratedTextureSheetLUTs();
+            if (textureSheet.enabled && gridMode)
+            {
+                generatedTextureSheetFrameLUT = CurveLUTBuilder.BuildSigned(
+                    textureSheet.frameOverTime,
+                    assetName: "TextureSheetFrameOverTime_LUT");
+                generatedTextureSheetStartLUT = CurveLUTBuilder.BuildSigned(
+                    textureSheet.startFrame,
+                    resolution: 2,
+                    assetName: "TextureSheetStartFrame_LUT");
+                targetGPUParticleSystem.textureSheetFrameOverTimeLUT =
+                    generatedTextureSheetFrameLUT;
+                targetGPUParticleSystem.textureSheetStartFrameLUT =
+                    generatedTextureSheetStartLUT;
+            }
+            else
+            {
+                targetGPUParticleSystem.textureSheetFrameOverTimeLUT =
+                    CurveLUTBuilder.GetDefaultLinear01LUT();
+                targetGPUParticleSystem.textureSheetStartFrameLUT =
+                    CurveLUTBuilder.GetDefaultZeroLUT();
+            }
+
+            lastTextureSheetLUTUpdate = Time.realtimeSinceStartup;
+        }
+
         void OnDestroy()
         {
             DestroyGeneratedForceLUT();
@@ -621,6 +695,7 @@ namespace GPUParticles
             DestroyGeneratedLimitVelocityLUT();
             DestroyGeneratedInheritVelocityLUT();
             DestroyGeneratedLifetimeByEmitterSpeedLUT();
+            DestroyGeneratedTextureSheetLUTs();
             DestroyGeneratedColorLUT();
             DestroyGeneratedSizeLUT();
             DestroyGeneratedColorBySpeedLUT();
@@ -678,6 +753,23 @@ namespace GPUParticles
                 DestroyImmediate(generatedLifetimeByEmitterSpeedLUT);
             }
             generatedLifetimeByEmitterSpeedLUT = null;
+        }
+
+        void DestroyGeneratedTextureSheetLUTs()
+        {
+            DestroyGeneratedTexture(
+                ref generatedTextureSheetFrameLUT);
+            DestroyGeneratedTexture(
+                ref generatedTextureSheetStartLUT);
+        }
+
+        void DestroyGeneratedTexture(ref Texture2D texture)
+        {
+            if (texture == null) return;
+
+            if (Application.isPlaying) Destroy(texture);
+            else DestroyImmediate(texture);
+            texture = null;
         }
 
         void DestroyGeneratedColorLUT()
