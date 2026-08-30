@@ -100,10 +100,11 @@ namespace GPUParticles
         public SimulationSpace forceOverLifetimeSpace = SimulationSpace.Local;
         public bool forceOverLifetimeRandomized;
 
-        [Header("Velocity Over Lifetime (Linear XYZ)")]
+        [Header("Velocity Over Lifetime (Linear XYZ + Speed Modifier)")]
         public bool velocityOverLifetimeEnabled;
         public Texture2D velocityOverLifetimeLUT;
         public SimulationSpace velocityOverLifetimeSpace = SimulationSpace.Local;
+        public bool velocityOverLifetimeSpeedModifierEnabled;
 
         [Header("Limit Velocity Over Lifetime")]
         public bool limitVelocityOverLifetimeEnabled;
@@ -299,6 +300,8 @@ namespace GPUParticles
         static readonly int _VelocityOverLifetimeLUT = Shader.PropertyToID("_VelocityOverLifetimeLUT");
         static readonly int _VelocityOverLifetimeEnabled = Shader.PropertyToID("_VelocityOverLifetimeEnabled");
         static readonly int _VelocityOverLifetimeSpace = Shader.PropertyToID("_VelocityOverLifetimeSpace");
+        static readonly int _VelocityOverLifetimeSpeedModifierEnabled =
+            Shader.PropertyToID("_VelocityOverLifetimeSpeedModifierEnabled");
         static readonly int _LimitVelocityLUT =
             Shader.PropertyToID("_LimitVelocityLUT");
         static readonly int _LimitVelocityLUTInvWidth =
@@ -1402,7 +1405,7 @@ namespace GPUParticles
                 : MinMaxCurveVector3LUTBuilder.GetDefaultZeroLUT();
             Texture2D selectedVelocityOverLifetimeLUT = velocityOverLifetimeLUT != null
                 ? velocityOverLifetimeLUT
-                : MinMaxCurveVector3LUTBuilder.GetDefaultZeroLUT();
+                : MinMaxCurveVector3LUTBuilder.GetDefaultVelocityLUT();
             Texture2D selectedLimitVelocityLUT = limitVelocityOverLifetimeLUT != null
                 ? limitVelocityOverLifetimeLUT
                 : LimitVelocityLUTBuilder.GetDefaultZeroLUT();
@@ -1509,6 +1512,9 @@ namespace GPUParticles
                 _VelocityOverLifetimeEnabled, velocityOverLifetimeEnabled ? 1 : 0);
             simulateMaterial.SetInt(
                 _VelocityOverLifetimeSpace, (int)velocityOverLifetimeSpace);
+            simulateMaterial.SetInt(
+                _VelocityOverLifetimeSpeedModifierEnabled,
+                velocityOverLifetimeSpeedModifierEnabled ? 1 : 0);
             simulateMaterial.SetInt(
                 _LimitVelocityEnabled,
                 limitVelocityOverLifetimeEnabled ? 1 : 0);

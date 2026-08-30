@@ -714,6 +714,7 @@ namespace GPUParticles
         {
             var velocity = particleSystem.velocityOverLifetime;
             gpu.velocityOverLifetimeEnabled = velocity.enabled;
+            gpu.velocityOverLifetimeSpeedModifierEnabled = velocity.enabled;
             gpu.velocityOverLifetimeSpace =
                 velocity.space == ParticleSystemSimulationSpace.World
                     ? SimulationSpace.World
@@ -728,9 +729,13 @@ namespace GPUParticles
 
             gpu.velocityOverLifetimeLUT = velocity.enabled
                 ? MinMaxCurveVector3LUTBuilder.Build(
-                    velocity.x, velocity.y, velocity.z, saveAsAsset: true,
+                    velocity.x,
+                    velocity.y,
+                    velocity.z,
+                    velocity.speedModifier,
+                    saveAsAsset: true,
                     assetName: "VelocityOverLife_LUT")
-                : MinMaxCurveVector3LUTBuilder.GetDefaultZeroLUT();
+                : MinMaxCurveVector3LUTBuilder.GetDefaultVelocityLUT();
 
             if (!velocity.enabled) return;
 
@@ -748,13 +753,6 @@ namespace GPUParticles
                 Debug.LogWarning(
                     "Velocity over Lifetime Orbital, Offset and Radial channels are not supported yet; " +
                     "Linear XYZ was mapped.",
-                    context);
-            }
-
-            if (CurveDiffersFrom(velocity.speedModifier, 1f))
-            {
-                Debug.LogWarning(
-                    "Velocity over Lifetime Speed Modifier is not supported yet; Linear XYZ was mapped.",
                     context);
             }
         }
@@ -977,20 +975,6 @@ namespace GPUParticles
                     "Rigidbody and Custom emitter velocity modes are not supported.",
                     context);
             }
-        }
-
-        static bool CurveDiffersFrom(ParticleSystem.MinMaxCurve curve, float expected)
-        {
-            for (int i = 0; i <= 4; i++)
-            {
-                float time = i * 0.25f;
-                if (Mathf.Abs(curve.Evaluate(time, 0f) - expected) > 1e-5f ||
-                    Mathf.Abs(curve.Evaluate(time, 1f) - expected) > 1e-5f)
-                {
-                    return true;
-                }
-            }
-            return false;
         }
 
         static bool HasNonZeroRate(ParticleSystem.MinMaxCurve curve)

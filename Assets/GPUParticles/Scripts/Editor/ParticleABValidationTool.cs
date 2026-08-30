@@ -119,6 +119,21 @@ namespace GPUParticles.Editor
             StartCapture(false, ParticleABValidationProfile.VelocityOverLifetimePoint);
         }
 
+        [MenuItem("Tools/GPU Particles/Run Velocity Speed Modifier A-B RT Capture")]
+        public static void RunVelocitySpeedModifierCaptureMenu()
+        {
+            if (EditorApplication.isPlaying)
+            {
+                Debug.LogWarning("Stop Play Mode before starting a deterministic A/B capture.");
+                return;
+            }
+
+            if (!EditorSceneManager.SaveCurrentModifiedScenesIfUserWantsTo()) return;
+            StartCapture(
+                false,
+                ParticleABValidationProfile.VelocitySpeedModifierPoint);
+        }
+
         [MenuItem("Tools/GPU Particles/Run Limit Velocity over Lifetime A-B RT Capture")]
         public static void RunLimitVelocityOverLifetimeCaptureMenu()
         {
@@ -403,6 +418,14 @@ namespace GPUParticles.Editor
             StartCapture(true, ParticleABValidationProfile.VelocityOverLifetimePoint);
         }
 
+        public static void RunBatchVelocitySpeedModifierCapture()
+        {
+            ValidateCommonFeatureMapping();
+            StartCapture(
+                true,
+                ParticleABValidationProfile.VelocitySpeedModifierPoint);
+        }
+
         public static void RunBatchLimitVelocityOverLifetimeCapture()
         {
             ValidateCommonFeatureMapping();
@@ -641,6 +664,7 @@ namespace GPUParticles.Editor
                 case ParticleABValidationProfile.EmissionRateCurvePoint: return 2.2f;
                 case ParticleABValidationProfile.EmissionRateDistancePoint: return 2.2f;
                 case ParticleABValidationProfile.VelocityOverLifetimePoint: return 3f;
+                case ParticleABValidationProfile.VelocitySpeedModifierPoint: return 3f;
                 case ParticleABValidationProfile.LimitVelocityOverLifetimePoint: return 3.5f;
                 case ParticleABValidationProfile.LimitVelocityOverLifetimeAxesPoint: return 2.5f;
                 case ParticleABValidationProfile.InheritVelocityInitialPoint: return 3.2f;
@@ -671,6 +695,7 @@ namespace GPUParticles.Editor
             return profile == ParticleABValidationProfile.EmissionBurstPoint ||
                    profile == ParticleABValidationProfile.EmissionRateCurvePoint ||
                    profile == ParticleABValidationProfile.EmissionRateDistancePoint ||
+                   profile == ParticleABValidationProfile.VelocitySpeedModifierPoint ||
                    profile == ParticleABValidationProfile.InheritVelocityInitialPoint ||
                    profile == ParticleABValidationProfile.InheritVelocityCurrentPoint ||
                    profile == ParticleABValidationProfile.LifetimeByEmitterSpeedPoint ||
@@ -700,6 +725,8 @@ namespace GPUParticles.Editor
                     return "TestResults/ParticleEmissionRateDistance";
                 case ParticleABValidationProfile.VelocityOverLifetimePoint:
                     return "TestResults/ParticleVelocityOverLifetime";
+                case ParticleABValidationProfile.VelocitySpeedModifierPoint:
+                    return "TestResults/ParticleVelocitySpeedModifier";
                 case ParticleABValidationProfile.LimitVelocityOverLifetimePoint:
                     return "TestResults/ParticleLimitVelocityOverLifetime";
                 case ParticleABValidationProfile.LimitVelocityOverLifetimeAxesPoint:
@@ -850,7 +877,10 @@ namespace GPUParticles.Editor
                 velocity.x = new ParticleSystem.MinMaxCurve(-3f, 3f);
                 velocity.y = new ParticleSystem.MinMaxCurve(2f, 2f);
                 velocity.z = new ParticleSystem.MinMaxCurve(-1f, 4f);
-                velocity.speedModifier = 1f;
+                velocity.speedModifier = new ParticleSystem.MinMaxCurve(
+                    1f,
+                    AnimationCurve.Linear(0f, -0.5f, 1f, 0.25f),
+                    AnimationCurve.Linear(0f, 0.5f, 1f, 1.5f));
 
                 var limitVelocity = shuriken.limitVelocityOverLifetime;
                 limitVelocity.enabled = true;
@@ -1030,6 +1060,8 @@ namespace GPUParticles.Editor
                     "Velocity over Lifetime space was not mapped.");
                 Require(gpu.velocityOverLifetimeLUT != null,
                     "Velocity over Lifetime Linear XYZ LUT was not generated.");
+                Require(gpu.velocityOverLifetimeSpeedModifierEnabled,
+                    "Velocity over Lifetime Speed Modifier state was not mapped.");
                 Require(gpu.limitVelocityOverLifetimeEnabled,
                     "Limit Velocity over Lifetime enabled state was not mapped.");
                 Require(gpu.limitVelocityOverLifetimeSeparateAxes,
@@ -1256,6 +1288,18 @@ namespace GPUParticles.Editor
                 RequireApproximately(maximum.r, 3f, "Velocity maximum X");
                 RequireApproximately(maximum.g, 2f, "Velocity maximum Y");
                 RequireApproximately(maximum.b, 4f, "Velocity maximum Z");
+                RequireApproximately(minimum.a, -0.5f,
+                    "Velocity Speed Modifier minimum start");
+                RequireApproximately(maximum.a, 0.5f,
+                    "Velocity Speed Modifier maximum start");
+                minimum = firstVelocityLUT.GetPixel(
+                    firstVelocityLUT.width - 1, 0);
+                maximum = firstVelocityLUT.GetPixel(
+                    firstVelocityLUT.width - 1, 1);
+                RequireApproximately(minimum.a, 0.25f,
+                    "Velocity Speed Modifier minimum end");
+                RequireApproximately(maximum.a, 1.5f,
+                    "Velocity Speed Modifier maximum end");
 
                 firstLimitVelocityLUT = gpu.limitVelocityOverLifetimeLUT;
                 firstLimitVelocityAssetPath =

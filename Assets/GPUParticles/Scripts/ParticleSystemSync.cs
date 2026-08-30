@@ -542,6 +542,8 @@ namespace GPUParticles
             if (!forceUpdate && !timeToUpdate) return;
 
             targetGPUParticleSystem.velocityOverLifetimeEnabled = velocity.enabled;
+            targetGPUParticleSystem.velocityOverLifetimeSpeedModifierEnabled =
+                velocity.enabled;
             targetGPUParticleSystem.velocityOverLifetimeSpace =
                 velocity.space == ParticleSystemSimulationSpace.World
                     ? SimulationSpace.World
@@ -551,13 +553,16 @@ namespace GPUParticles
             if (velocity.enabled)
             {
                 generatedVelocityLUT = MinMaxCurveVector3LUTBuilder.Build(
-                    velocity.x, velocity.y, velocity.z);
+                    velocity.x,
+                    velocity.y,
+                    velocity.z,
+                    velocity.speedModifier);
                 targetGPUParticleSystem.velocityOverLifetimeLUT = generatedVelocityLUT;
             }
             else
             {
                 targetGPUParticleSystem.velocityOverLifetimeLUT =
-                    MinMaxCurveVector3LUTBuilder.GetDefaultZeroLUT();
+                    MinMaxCurveVector3LUTBuilder.GetDefaultVelocityLUT();
             }
 
             lastVelocityLUTUpdate = Time.realtimeSinceStartup;

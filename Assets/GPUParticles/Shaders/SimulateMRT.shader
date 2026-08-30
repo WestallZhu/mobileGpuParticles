@@ -82,6 +82,7 @@ Shader "Hidden/GPUParticles/SimulateMRT"
                 int     _ForceOverLifetimeRandomized;
                 int     _VelocityOverLifetimeEnabled;
                 int     _VelocityOverLifetimeSpace;    // 0 Local, 1 World
+                int     _VelocityOverLifetimeSpeedModifierEnabled;
                 int     _LimitVelocityEnabled;
                 int     _LimitVelocitySeparateAxes;
                 int     _LimitVelocitySpace;            // 0 Local, 1 World
@@ -527,20 +528,25 @@ Shader "Hidden/GPUParticles/SimulateMRT"
                 return ModuleVectorToSimSpace(lerp(minimum, maximum, randomValue), _ForceOverLifetimeSpace);
             }
 
-            float3 VelocityOverLifetime(uint id, float normalizedAge)
+            float4 VelocityOverLifetimeParameters(uint id, float normalizedAge)
             {
                 float lutPosition = LUTPosition(
                     normalizedAge, _VelocityOverLifetimeLUTInvWidth);
-                float3 minimum = SAMPLE_TEXTURE2D_LOD(
+                float4 minimum = SAMPLE_TEXTURE2D_LOD(
                     _VelocityOverLifetimeLUT, sampler_VelocityOverLifetimeLUT,
-                    float2(lutPosition, 0.25), 0).rgb;
-                float3 maximum = SAMPLE_TEXTURE2D_LOD(
+                    float2(lutPosition, 0.25), 0);
+                float4 maximum = SAMPLE_TEXTURE2D_LOD(
                     _VelocityOverLifetimeLUT, sampler_VelocityOverLifetimeLUT,
-                    float2(lutPosition, 0.75), 0).rgb;
+                    float2(lutPosition, 0.75), 0);
                 float3 randomValue = Hash03(id * 2246822519u + 0x9E3779B9u);
-                return ModuleVectorToSimSpace(
-                    lerp(minimum, maximum, randomValue),
+                float3 linearVelocity = ModuleVectorToSimSpace(
+                    lerp(minimum.rgb, maximum.rgb, randomValue),
                     _VelocityOverLifetimeSpace);
+                float speedModifier = lerp(
+                    minimum.a,
+                    maximum.a,
+                    Hash01(id ^ 0xD1B54A35u));
+                return float4(linearVelocity, speedModifier);
             }
 
             float InheritVelocityMultiplier(uint id, float normalizedAge)
@@ -1230,18 +1236,27 @@ Shader "Hidden/GPUParticles/SimulateMRT"
                     }
                     vel += acceleration * stepDt;
 
+                    float movementSpeedModifier = 1.0;
                     if (_VelocityOverLifetimeEnabled != 0)
                     {
-                        float3 velocityAfterStep = VelocityOverLifetime(
-                            id, normalizedAgeAfterStep);
+                        float4 velocityBeforeStep =
+                            VelocityOverLifetimeParameters(
+                                id, normalizedAgeBeforeStep);
+                        float4 velocityAfterStep =
+                            VelocityOverLifetimeParameters(
+                                id, normalizedAgeAfterStep);
+                        if (_VelocityOverLifetimeSpeedModifierEnabled != 0)
+                        {
+                            movementSpeedModifier = velocityBeforeStep.a;
+                        }
                         if (spawn)
                         {
-                            vel += velocityAfterStep;
+                            vel += velocityAfterStep.rgb;
                         }
                         else
                         {
-                            vel += velocityAfterStep - VelocityOverLifetime(
-                                id, normalizedAgeBeforeStep);
+                            vel += velocityAfterStep.rgb -
+                                   velocityBeforeStep.rgb;
                         }
                     }
                     if (_LimitVelocityEnabled != 0)
@@ -1258,7 +1273,7 @@ Shader "Hidden/GPUParticles/SimulateMRT"
                         normalizedAgeAfterStep,
                         birthEmitterVelocityWS,
                         _EmitterVelocityWS);
-                    pos += vel * stepDt;
+                    pos += vel * movementSpeedModifier * stepDt;
 
                     // lifetime normalized 0..1 (0 birth, 1 death)
                     float t = normalizedAgeAfterStep;
