@@ -33,6 +33,7 @@ Shader "Hidden/GPUParticles/SimulateMRT"
             TEXTURE2D(_CurColor);        SAMPLER(sampler_CurColor);
             TEXTURE2D(_CurRotationPhase); SAMPLER(sampler_CurRotationPhase);
             TEXTURE2D(_StartSpeedLUT);
+            TEXTURE2D(_StartSizeLUT);
             TEXTURE2D(_StartColorLUT);
             TEXTURE2D(_GradLUT);         SAMPLER(sampler_GradLUT);
             TEXTURE2D(_SizeLUT);         SAMPLER(sampler_SizeLUT);
@@ -62,6 +63,8 @@ Shader "Hidden/GPUParticles/SimulateMRT"
                 float   _StartSize;
                 float   _StartSizeMin;
                 int     _RandomizeStartSize;
+                int     _StartSizeMode;
+                float   _StartSizeLUTInvWidth;
                 float4  _StartColor;
                 float4  _StartColorMin;
                 int     _RandomizeStartColor;
@@ -798,6 +801,39 @@ Shader "Hidden/GPUParticles/SimulateMRT"
                 return lerp(minimum, maximum, randomValue);
             }
 
+            float StartSizeAtBirth(uint id, float particleAge)
+            {
+                if (_StartSizeMode == 0) // Constant
+                {
+                    return _StartSize;
+                }
+
+                float randomValue = Hash01(id ^ 0x1B56C4E9u);
+                if (_StartSizeMode == 3) // TwoConstants
+                {
+                    return lerp(
+                        _StartSizeMin,
+                        _StartSize,
+                        randomValue);
+                }
+
+                float lutPosition = LUTPosition(
+                    BirthSystemTime(particleAge),
+                    _StartSizeLUTInvWidth);
+                float maximum = SAMPLE_TEXTURE2D_LOD(
+                    _StartSizeLUT, sampler_SizeLUT,
+                    float2(lutPosition, 0.75), 0).r;
+                if (_StartSizeMode != 2) // Curve
+                {
+                    return maximum;
+                }
+
+                float minimum = SAMPLE_TEXTURE2D_LOD(
+                    _StartSizeLUT, sampler_SizeLUT,
+                    float2(lutPosition, 0.25), 0).r;
+                return lerp(minimum, maximum, randomValue);
+            }
+
             float SizeOverLifetime(uint id, float normalizedAge)
             {
                 float lutPosition = LUTPosition(normalizedAge, _SizeLUTInvWidth);
@@ -959,6 +995,7 @@ Shader "Hidden/GPUParticles/SimulateMRT"
                         id, _EmitStart, (uint)_MaxParticles);
                     stepDt = SpawnAgeThisFrame(emitOrdinal);
                     particleStartSpeed = StartSpeedAtBirth(id, stepDt);
+                    particleStartSize = StartSizeAtBirth(id, stepDt);
                     float3 urnd = Hash03(id * 9781u + 0x9E3779B9u);
                     float2 u2a = urnd.xy;
                     float2 u2b = float2(urnd.y, urnd.z);
@@ -1316,6 +1353,8 @@ Shader "Hidden/GPUParticles/SimulateMRT"
                     float particleAgeAfterStep = max(
                         0.0, particleStartLifetime - life);
                     particleStartColor = StartColorAtBirth(
+                        id, particleAgeAfterStep);
+                    particleStartSize = StartSizeAtBirth(
                         id, particleAgeAfterStep);
                     float speedBeforeStep = length(vel);
 

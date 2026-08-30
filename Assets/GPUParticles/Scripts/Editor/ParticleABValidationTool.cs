@@ -136,6 +136,37 @@ namespace GPUParticles.Editor
             StartCapture(false, profile);
         }
 
+        [MenuItem("Tools/GPU Particles/Run Start Size Curve A-B RT Capture")]
+        public static void RunStartSizeCurveCaptureMenu()
+        {
+            StartStartSizeCapture(
+                ParticleABValidationProfile.StartSizeCurvePoint);
+        }
+
+        [MenuItem("Tools/GPU Particles/Run Start Size Two Curves A-B RT Capture")]
+        public static void RunStartSizeTwoCurvesCaptureMenu()
+        {
+            StartStartSizeCapture(
+                ParticleABValidationProfile.StartSizeTwoCurvesPoint);
+        }
+
+        static void StartStartSizeCapture(
+            ParticleABValidationProfile profile)
+        {
+            if (EditorApplication.isPlaying)
+            {
+                Debug.LogWarning(
+                    "Stop Play Mode before starting a deterministic A/B capture.");
+                return;
+            }
+
+            if (!EditorSceneManager.SaveCurrentModifiedScenesIfUserWantsTo())
+            {
+                return;
+            }
+            StartCapture(false, profile);
+        }
+
         [MenuItem("Tools/GPU Particles/Run Emission Burst A-B RT Capture")]
         public static void RunEmissionBurstCaptureMenu()
         {
@@ -503,6 +534,22 @@ namespace GPUParticles.Editor
                 ParticleABValidationProfile.StartSpeedTwoCurvesPoint);
         }
 
+        public static void RunBatchStartSizeCurveCapture()
+        {
+            ValidateCommonFeatureMapping();
+            StartCapture(
+                true,
+                ParticleABValidationProfile.StartSizeCurvePoint);
+        }
+
+        public static void RunBatchStartSizeTwoCurvesCapture()
+        {
+            ValidateCommonFeatureMapping();
+            StartCapture(
+                true,
+                ParticleABValidationProfile.StartSizeTwoCurvesPoint);
+        }
+
         public static void RunBatchEmissionBurstCapture()
         {
             ValidateCommonFeatureMapping();
@@ -774,6 +821,8 @@ namespace GPUParticles.Editor
                 case ParticleABValidationProfile.StartColorRandomColorPoint:
                 case ParticleABValidationProfile.StartSpeedCurvePoint:
                 case ParticleABValidationProfile.StartSpeedTwoCurvesPoint:
+                case ParticleABValidationProfile.StartSizeCurvePoint:
+                case ParticleABValidationProfile.StartSizeTwoCurvesPoint:
                     return 2.5f;
                 case ParticleABValidationProfile.EmissionBurstPoint: return 2.7f;
                 case ParticleABValidationProfile.EmissionRateCurvePoint: return 2.2f;
@@ -813,6 +862,8 @@ namespace GPUParticles.Editor
                    profile == ParticleABValidationProfile.StartColorRandomColorPoint ||
                    profile == ParticleABValidationProfile.StartSpeedCurvePoint ||
                    profile == ParticleABValidationProfile.StartSpeedTwoCurvesPoint ||
+                   profile == ParticleABValidationProfile.StartSizeCurvePoint ||
+                   profile == ParticleABValidationProfile.StartSizeTwoCurvesPoint ||
                    profile == ParticleABValidationProfile.EmissionRateCurvePoint ||
                    profile == ParticleABValidationProfile.EmissionRateDistancePoint ||
                    profile == ParticleABValidationProfile.VelocitySpeedModifierPoint ||
@@ -847,6 +898,10 @@ namespace GPUParticles.Editor
                     return "TestResults/ParticleStartSpeedCurve";
                 case ParticleABValidationProfile.StartSpeedTwoCurvesPoint:
                     return "TestResults/ParticleStartSpeedTwoCurves";
+                case ParticleABValidationProfile.StartSizeCurvePoint:
+                    return "TestResults/ParticleStartSizeCurve";
+                case ParticleABValidationProfile.StartSizeTwoCurvesPoint:
+                    return "TestResults/ParticleStartSizeTwoCurves";
                 case ParticleABValidationProfile.EmissionBurstPoint:
                     return "TestResults/ParticleEmissionBurst";
                 case ParticleABValidationProfile.EmissionRateCurvePoint:
@@ -914,6 +969,7 @@ namespace GPUParticles.Editor
             Texture2D firstRotationLUT = null;
             Texture2D firstRotationBySpeedLUT = null;
             Texture2D firstStartSpeedLUT = null;
+            Texture2D firstStartSizeLUT = null;
             Texture2D firstStartColorLUT = null;
             Texture2D firstColorLUT = null;
             Texture2D firstSizeLUT = null;
@@ -938,6 +994,7 @@ namespace GPUParticles.Editor
             string firstRotationBySpeedAssetPath = null;
             string secondRotationBySpeedAssetPath = null;
             string firstStartSpeedAssetPath = null;
+            string firstStartSizeAssetPath = null;
             string firstStartColorAssetPath = null;
             string secondStartColorAssetPath = null;
             string firstColorAssetPath = null;
@@ -962,7 +1019,14 @@ namespace GPUParticles.Editor
                     1f,
                     startSpeedMinimumCurve,
                     startSpeedMaximumCurve);
-                main.startSize = new ParticleSystem.MinMaxCurve(0.5f, 1.5f);
+                AnimationCurve startSizeMinimumCurve =
+                    AnimationCurve.Linear(0f, 0.5f, 1f, 1f);
+                AnimationCurve startSizeMaximumCurve =
+                    AnimationCurve.Linear(0f, 1.5f, 1f, 2.5f);
+                main.startSize = new ParticleSystem.MinMaxCurve(
+                    1f,
+                    startSizeMinimumCurve,
+                    startSizeMaximumCurve);
                 Gradient startColorMinimumGradient = CreateGradient(
                     new Color(0.1f, 0.2f, 0.3f, 0.4f),
                     new Color(0.4f, 0.5f, 0.6f, 0.7f));
@@ -1163,9 +1227,32 @@ namespace GPUParticles.Editor
                         firstStartSpeedLUT.width - 1, 1).r,
                     6f,
                     "Start Speed maximum Curve end");
-                Require(gpu.randomizeStartSize, "Start Size Two Constants was not mapped.");
-                RequireApproximately(gpu.startSizeMin, 0.5f, "Start Size minimum");
-                RequireApproximately(gpu.startSize, 1.5f, "Start Size maximum");
+                Require(gpu.startSizeMode == ParticleSystemCurveMode.TwoCurves,
+                    "Start Size Two Curves mode was not mapped.");
+                Require(gpu.startSizeLUT != null &&
+                        gpu.startSizeLUT.height == 2,
+                    "Start Size minimum/maximum Curve LUT rows were not generated.");
+                firstStartSizeLUT = gpu.startSizeLUT;
+                firstStartSizeAssetPath =
+                    AssetDatabase.GetAssetPath(firstStartSizeLUT);
+                RequireApproximately(
+                    firstStartSizeLUT.GetPixel(0, 0).r,
+                    0.5f,
+                    "Start Size minimum Curve start");
+                RequireApproximately(
+                    firstStartSizeLUT.GetPixel(
+                        firstStartSizeLUT.width - 1, 0).r,
+                    1f,
+                    "Start Size minimum Curve end");
+                RequireApproximately(
+                    firstStartSizeLUT.GetPixel(0, 1).r,
+                    1.5f,
+                    "Start Size maximum Curve start");
+                RequireApproximately(
+                    firstStartSizeLUT.GetPixel(
+                        firstStartSizeLUT.width - 1, 1).r,
+                    2.5f,
+                    "Start Size maximum Curve end");
                 Require(gpu.startColorMode ==
                         ParticleSystemGradientMode.TwoGradients,
                     "Start Color Two Gradients mode was not mapped.");
@@ -1614,6 +1701,13 @@ namespace GPUParticles.Editor
                 firstStartSpeedLUT = null;
                 gpu.startSpeedLUT = null;
 
+                if (string.IsNullOrEmpty(firstStartSizeAssetPath))
+                {
+                    Object.DestroyImmediate(firstStartSizeLUT);
+                }
+                firstStartSizeLUT = null;
+                gpu.startSizeLUT = null;
+
                 if (string.IsNullOrEmpty(firstStartColorAssetPath))
                 {
                     Object.DestroyImmediate(firstStartColorLUT);
@@ -1715,6 +1809,7 @@ namespace GPUParticles.Editor
                 gpu.sizeBySpeedLUT = null;
 
                 main.startSpeed = new ParticleSystem.MinMaxCurve(1f, 3f);
+                main.startSize = new ParticleSystem.MinMaxCurve(0.5f, 1.5f);
                 emission.rateOverTime = new ParticleSystem.MinMaxCurve(4f, 8f);
                 textureSheet.rowMode = ParticleSystemAnimationRowMode.Random;
                 shape.enabled = true;
@@ -1743,11 +1838,20 @@ namespace GPUParticles.Editor
                     "Start Speed Two Constants minimum");
                 RequireApproximately(gpu.startSpeed, 3f,
                     "Start Speed Two Constants maximum");
+                Require(gpu.startSizeMode ==
+                        ParticleSystemCurveMode.TwoConstants &&
+                        gpu.randomizeStartSize,
+                    "Start Size Two Constants mode was not preserved.");
+                RequireApproximately(gpu.startSizeMin, 0.5f,
+                    "Start Size Two Constants minimum");
+                RequireApproximately(gpu.startSize, 1.5f,
+                    "Start Size Two Constants maximum");
                 Require(gpu.textureSheetRowMode ==
                         ParticleSystemAnimationRowMode.Random,
                     "Texture Sheet Animation Random row mode was not mapped.");
 
                 gpu.startSpeedLUT = null;
+                gpu.startSizeLUT = null;
 
                 if (gpu.startColorLUT != null)
                 {
@@ -1922,6 +2026,11 @@ namespace GPUParticles.Editor
                 {
                     Object.DestroyImmediate(firstStartSpeedLUT);
                 }
+                if (firstStartSizeLUT != null &&
+                    string.IsNullOrEmpty(firstStartSizeAssetPath))
+                {
+                    Object.DestroyImmediate(firstStartSizeLUT);
+                }
                 if (firstStartColorLUT != null &&
                     string.IsNullOrEmpty(firstStartColorAssetPath))
                 {
@@ -1995,6 +2104,10 @@ namespace GPUParticles.Editor
                 if (!string.IsNullOrEmpty(firstStartSpeedAssetPath))
                 {
                     AssetDatabase.DeleteAsset(firstStartSpeedAssetPath);
+                }
+                if (!string.IsNullOrEmpty(firstStartSizeAssetPath))
+                {
+                    AssetDatabase.DeleteAsset(firstStartSizeAssetPath);
                 }
                 if (!string.IsNullOrEmpty(firstStartColorAssetPath))
                 {

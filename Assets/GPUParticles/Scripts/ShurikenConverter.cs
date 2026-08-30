@@ -525,8 +525,16 @@ namespace GPUParticles
                     "Start Size 3D is reduced to the X size for GPU billboards.",
                     context);
             }
-            GetCurveRange(startSize, "Start Size", context, out minimum, out maximum);
+            ShurikenMinMaxUtility.TryGetConstantRange(
+                startSize, out minimum, out maximum);
             gpu.SetStartSizeRange(minimum, maximum);
+            gpu.startSizeMode = startSize.mode;
+            gpu.startSizeLUT = IsCurveMode(startSize.mode)
+                ? CurveLUTBuilder.Build(
+                    startSize,
+                    saveAsAsset: true,
+                    assetName: "StartSize_LUT")
+                : CurveLUTBuilder.GetDefaultUnitLUT();
 
             ShurikenMinMaxUtility.TryGetColorRange(
                 main.startColor, out Color minimumColor, out Color maximumColor);
