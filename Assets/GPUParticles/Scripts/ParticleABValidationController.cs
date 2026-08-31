@@ -103,7 +103,8 @@ namespace GPUParticles
         StartDelayCurvePoint,
         StartDelayTwoCurvesPoint,
         RendererHorizontalBillboardPoint,
-        RendererVerticalBillboardPoint
+        RendererVerticalBillboardPoint,
+        RendererMeshPoint
     }
 
     [DisallowMultipleComponent]
@@ -384,6 +385,7 @@ namespace GPUParticles
         Material profileTextureSheetMaterial;
         Texture2D profileMaterialColorTexture;
         Material profileMaterialColorMaterial;
+        Mesh profileRendererMesh;
         Texture2D profileColorLUT;
         Texture2D profileStartColorLUT;
         Texture2D profileStartLifetimeLUT;
@@ -393,6 +395,7 @@ namespace GPUParticles
         Texture2D profileStartRotationLUT;
         Texture2D profileSizeLUT;
         Texture2D profileSizeYLUT;
+        Texture2D profileSizeZLUT;
         Texture2D profileSizeBySpeedXLUT;
         Texture2D profileSizeBySpeedYLUT;
         Texture2D profileRotationLUT;
@@ -790,6 +793,10 @@ namespace GPUParticles
             {
                 Destroy(profileMaterialColorMaterial);
             }
+            if (profileRendererMesh != null)
+            {
+                Destroy(profileRendererMesh);
+            }
             if (profileColorLUT != null) Destroy(profileColorLUT);
             if (profileStartColorLUT != null) Destroy(profileStartColorLUT);
             if (profileStartLifetimeLUT != null) Destroy(profileStartLifetimeLUT);
@@ -799,6 +806,7 @@ namespace GPUParticles
             if (profileStartRotationLUT != null) Destroy(profileStartRotationLUT);
             if (profileSizeLUT != null) Destroy(profileSizeLUT);
             if (profileSizeYLUT != null) Destroy(profileSizeYLUT);
+            if (profileSizeZLUT != null) Destroy(profileSizeZLUT);
             if (profileSizeBySpeedXLUT != null)
             {
                 Destroy(profileSizeBySpeedXLUT);
@@ -1131,6 +1139,15 @@ namespace GPUParticles
                 bool horizontal = validationProfile ==
                     ParticleABValidationProfile.RendererHorizontalBillboardPoint;
                 ConfigureFixedBillboardProfile(horizontal);
+                return;
+            }
+
+            if (IsMeshRendererProfile())
+            {
+                ConfigureTextureSheetAnimationProfile(
+                    ParticleSystemAnimationTimeMode.Lifetime);
+                ConfigureRendererTextureUVFlipProfile();
+                ConfigureMeshRendererProfile();
                 return;
             }
 
@@ -4023,6 +4040,21 @@ namespace GPUParticles
             }
             gpuParticles.pivot = new Vector2(pivot.x, pivot.y);
             gpuParticles.pivotDepth = pivot.z;
+
+            if (IsMeshRendererProfile())
+            {
+                bool localAligned = state != 1;
+                if (shurikenRenderer != null)
+                {
+                    shurikenRenderer.alignment = localAligned
+                        ? ParticleSystemRenderSpace.Local
+                        : ParticleSystemRenderSpace.World;
+                }
+                gpuParticles.renderAlignment = localAligned
+                    ? GPUAlignment.Local
+                    : GPUAlignment.World;
+            }
+
             activeRendererGeometryState = state;
         }
 
@@ -4092,6 +4124,146 @@ namespace GPUParticles
             }
 
             UpdateRendererPivotState(0f);
+        }
+
+        void ConfigureMeshRendererProfile()
+        {
+            const float lifetime = 4f;
+            const float startSizeX = 2.7f;
+            const float startSizeY = 1.8f;
+            const float startSizeZ = 1.2f;
+            const float startRotationX = 17f * Mathf.Deg2Rad;
+            const float startRotationY = -23f * Mathf.Deg2Rad;
+            const float startRotationZ = 27f * Mathf.Deg2Rad;
+            Quaternion emitterRotation = Quaternion.Euler(11f, -18f, 24f);
+
+            if (profileRendererMesh != null)
+            {
+                Destroy(profileRendererMesh);
+            }
+            profileRendererMesh = CreateRendererValidationMesh();
+
+            ParticleSystem.MainModule main = shuriken.main;
+            main.startLifetime = lifetime;
+            main.startSpeed = 0f;
+            main.startSize3D = true;
+            main.startSizeX = startSizeX;
+            main.startSizeY = startSizeY;
+            main.startSizeZ = startSizeZ;
+            main.startRotation3D = true;
+            main.startRotationX = startRotationX;
+            main.startRotationY = startRotationY;
+            main.startRotationZ = startRotationZ;
+            main.flipRotation = 1f;
+            main.simulationSpace = ParticleSystemSimulationSpace.World;
+
+            ParticleSystem.SizeOverLifetimeModule sizeOverLifetime =
+                shuriken.sizeOverLifetime;
+            sizeOverLifetime.enabled = true;
+            sizeOverLifetime.separateAxes = true;
+            sizeOverLifetime.x = new ParticleSystem.MinMaxCurve(
+                1f,
+                AnimationCurve.Linear(0f, 0.8f, 1f, 1.15f));
+            sizeOverLifetime.y = new ParticleSystem.MinMaxCurve(
+                1f,
+                AnimationCurve.Linear(0f, 1.1f, 1f, 0.7f));
+            sizeOverLifetime.z = new ParticleSystem.MinMaxCurve(
+                1f,
+                AnimationCurve.Linear(0f, 0.65f, 1f, 1.35f));
+
+            ParticleSystem.TextureSheetAnimationModule textureSheet =
+                shuriken.textureSheetAnimation;
+            textureSheet.enabled = false;
+            textureSheet.flipU = 0f;
+            textureSheet.flipV = 0f;
+
+            shuriken.transform.rotation = emitterRotation;
+            gpuParticles.transform.rotation = emitterRotation;
+            if (shurikenRenderer != null)
+            {
+                shurikenRenderer.renderMode = ParticleSystemRenderMode.Mesh;
+                shurikenRenderer.mesh = profileRendererMesh;
+                shurikenRenderer.alignment = ParticleSystemRenderSpace.Local;
+                shurikenRenderer.flip = Vector3.zero;
+                shurikenRenderer.pivot = Vector3.zero;
+            }
+
+            gpuParticles.SetStartLifetimeRange(lifetime, lifetime);
+            gpuParticles.SetStartSpeedRange(0f, 0f);
+            gpuParticles.SetStartSizeRange(startSizeX, startSizeX);
+            gpuParticles.SetStartSizeYRange(startSizeY, startSizeY);
+            gpuParticles.SetStartSizeZRange(startSizeZ, startSizeZ);
+            gpuParticles.startSize3D = true;
+            gpuParticles.SetStartRotationXRange(
+                startRotationX,
+                startRotationX);
+            gpuParticles.SetStartRotationYRange(
+                startRotationY,
+                startRotationY);
+            gpuParticles.SetStartRotationRange(
+                startRotationZ,
+                startRotationZ);
+            gpuParticles.startRotation3D = true;
+            gpuParticles.flipRotation = 1f;
+            if (profileSizeLUT != null) Destroy(profileSizeLUT);
+            if (profileSizeYLUT != null) Destroy(profileSizeYLUT);
+            if (profileSizeZLUT != null) Destroy(profileSizeZLUT);
+            profileSizeLUT = CurveLUTBuilder.Build(sizeOverLifetime.x);
+            profileSizeYLUT = CurveLUTBuilder.Build(sizeOverLifetime.y);
+            profileSizeZLUT = CurveLUTBuilder.Build(sizeOverLifetime.z);
+            gpuParticles.sizeOverLifetimeSeparateAxes = true;
+            gpuParticles.sizeOverLifetimeLUT = profileSizeLUT;
+            gpuParticles.sizeOverLifetimeYLUT = profileSizeYLUT;
+            gpuParticles.sizeOverLifetimeZLUT = profileSizeZLUT;
+            gpuParticles.simulationSpace = SimulationSpace.World;
+            gpuParticles.textureSheetAnimationEnabled = false;
+            gpuParticles.rendererFlip = Vector3.zero;
+            gpuParticles.renderMode = GPURenderMode.Mesh;
+            gpuParticles.renderMesh = profileRendererMesh;
+            gpuParticles.renderAlignment = GPUAlignment.Local;
+            gpuParticles.pivot = Vector2.zero;
+            gpuParticles.pivotDepth = 0f;
+
+            if (captureCamera != null)
+            {
+                Vector3 center = 0.5f *
+                    (shuriken.transform.position +
+                     gpuParticles.transform.position);
+                captureCamera.transform.position =
+                    center + new Vector3(0f, 2.8f, -12f);
+                captureCamera.transform.LookAt(center, Vector3.up);
+                captureCamera.fieldOfView = 42f;
+                captureCameraBasePositionWS =
+                    captureCamera.transform.position;
+            }
+
+            UpdateRendererPivotState(0f);
+        }
+
+        static Mesh CreateRendererValidationMesh()
+        {
+            var mesh = new Mesh
+            {
+                name = "ParticleABRendererMesh",
+                vertices = new[]
+                {
+                    new Vector3(-0.7f, -0.5f, -0.3f),
+                    new Vector3(0.9f, -0.45f, 0.2f),
+                    new Vector3(0.65f, 0.8f, 0.4f),
+                    new Vector3(-0.5f, 0.65f, -0.25f)
+                },
+                uv = new[]
+                {
+                    new Vector2(0f, 0f),
+                    new Vector2(1f, 0f),
+                    new Vector2(1f, 1f),
+                    new Vector2(0f, 1f)
+                },
+                triangles = new[] { 0, 1, 2, 0, 2, 3 }
+            };
+            mesh.RecalculateNormals();
+            mesh.RecalculateBounds();
+            return mesh;
         }
 
         void ConfigureMaterialColorProfile()
@@ -5603,9 +5775,17 @@ namespace GPUParticles
                        ParticleABValidationProfile.RendererVerticalBillboardPoint;
         }
 
+        bool IsMeshRendererProfile()
+        {
+            return validationProfile ==
+                ParticleABValidationProfile.RendererMeshPoint;
+        }
+
         bool UsesRendererPivotStateProfile()
         {
-            return IsRendererPivotProfile() || IsFixedBillboardProfile();
+            return IsRendererPivotProfile() ||
+                   IsFixedBillboardProfile() ||
+                   IsMeshRendererProfile();
         }
 
         bool UsesRendererGeometrySignatureProfile()
@@ -11891,6 +12071,29 @@ namespace GPUParticles
                         RendererGeometryStateSeparation(
                             gpuRendererGeometryStateSignatureSums,
                             gpuRendererGeometryStateSignatureSamples) >= 0.08f;
+                    break;
+
+                case ParticleABValidationProfile.RendererMeshPoint:
+                    profileSpecificPassed =
+                        maximumMeanSpeedError <= 0.01f &&
+                        maximumMeanPositionError <= 0.04f &&
+                        maximumMeanSizeError <= 0.01f &&
+                        maximumMeanSizeYError <= 0.01f &&
+                        maximumShurikenParticleCount == 1 &&
+                        maximumGPUParticleCount == 1 &&
+                        rendererGeometryComparableSamples >= 60 &&
+                        rendererGeometryClassificationFailures == 0 &&
+                        shurikenRendererGeometryStateMask == 0x07 &&
+                        gpuRendererGeometryStateMask == 0x07 &&
+                        maximumRendererGeometryCentroidError <= 0.01f &&
+                        maximumRendererGeometryAspectError <= 0.015f &&
+                        RendererGeometryStateSeparation(
+                            shurikenRendererGeometryStateSignatureSums,
+                            shurikenRendererGeometryStateSignatureSamples) >=
+                                0.04f &&
+                        RendererGeometryStateSeparation(
+                            gpuRendererGeometryStateSignatureSums,
+                            gpuRendererGeometryStateSignatureSamples) >= 0.04f;
                     break;
 
                 case ParticleABValidationProfile.RendererHorizontalBillboardPoint:

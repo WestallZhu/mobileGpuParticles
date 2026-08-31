@@ -205,8 +205,19 @@ namespace GPUParticles
                     case ParticleSystemRenderMode.HorizontalBillboard: gpu.renderMode = GPURenderMode.HorizontalBillboard; break;
                     case ParticleSystemRenderMode.VerticalBillboard:   gpu.renderMode = GPURenderMode.VerticalBillboard; break;
                     case ParticleSystemRenderMode.Mesh:
-                        Debug.LogWarning("RendererMode=Mesh is not supported in MVP (ignored).", owner);
+                        gpu.renderMode = GPURenderMode.Mesh;
                         break;
+                }
+                gpu.renderMesh = psr.renderMode == ParticleSystemRenderMode.Mesh
+                    ? psr.mesh
+                    : null;
+                if (psr.renderMode == ParticleSystemRenderMode.Mesh &&
+                    psr.meshCount > 1)
+                {
+                    Debug.LogWarning(
+                        "GPU Mesh rendering currently maps the first renderer " +
+                        "mesh; additional weighted meshes are not yet supported.",
+                        owner);
                 }
 
                 // Alignment（Stretched 内部忽略，但保留字段）
@@ -455,8 +466,19 @@ namespace GPUParticles
                     case ParticleSystemRenderMode.HorizontalBillboard: gpu.renderMode = GPURenderMode.HorizontalBillboard; break;
                     case ParticleSystemRenderMode.VerticalBillboard:   gpu.renderMode = GPURenderMode.VerticalBillboard; break;
                     case ParticleSystemRenderMode.Mesh:
-                        Debug.LogWarning("RendererMode=Mesh is not supported in MVP (ignored).", gpuChild);
+                        gpu.renderMode = GPURenderMode.Mesh;
                         break;
+                }
+                gpu.renderMesh = psr.renderMode == ParticleSystemRenderMode.Mesh
+                    ? psr.mesh
+                    : null;
+                if (psr.renderMode == ParticleSystemRenderMode.Mesh &&
+                    psr.meshCount > 1)
+                {
+                    Debug.LogWarning(
+                        "GPU Mesh rendering currently maps the first renderer " +
+                        "mesh; additional weighted meshes are not yet supported.",
+                        gpuChild);
                 }
 
                 switch (psr.alignment)
@@ -771,6 +793,20 @@ namespace GPUParticles
                     saveAsAsset: true,
                     assetName: "StartSizeY_LUT")
                 : CurveLUTBuilder.GetDefaultUnitLUT();
+            ParticleSystem.MinMaxCurve startSizeZ = main.startSize3D
+                ? main.startSizeZ
+                : main.startSize;
+            ShurikenMinMaxUtility.TryGetConstantRange(
+                startSizeZ, out minimum, out maximum);
+            gpu.SetStartSizeZRange(minimum, maximum);
+            gpu.startSizeZMode = startSizeZ.mode;
+            gpu.startSizeZLUT = main.startSize3D &&
+                                IsCurveMode(startSizeZ.mode)
+                ? CurveLUTBuilder.Build(
+                    startSizeZ,
+                    saveAsAsset: true,
+                    assetName: "StartSizeZ_LUT")
+                : CurveLUTBuilder.GetDefaultUnitLUT();
 
             ShurikenMinMaxUtility.TryGetColorRange(
                 main.startColor, out Color minimumColor, out Color maximumColor);
@@ -800,12 +836,6 @@ namespace GPUParticles
             ParticleSystem.MinMaxCurve startRotation = main.startRotation3D
                 ? main.startRotationZ
                 : main.startRotation;
-            if (main.startRotation3D)
-            {
-                Debug.LogWarning(
-                    "Start Rotation 3D X/Y axes are ignored for GPU billboards; mapping Z roll.",
-                    context);
-            }
             ShurikenMinMaxUtility.TryGetConstantRange(
                 startRotation, out minimum, out maximum);
             gpu.SetStartRotationRange(minimum, maximum);
@@ -815,6 +845,35 @@ namespace GPUParticles
                     startRotation,
                     saveAsAsset: true,
                     assetName: "StartRotation_LUT")
+                : CurveLUTBuilder.GetDefaultZeroLUT();
+            gpu.startRotation3D = main.startRotation3D;
+            ParticleSystem.MinMaxCurve startRotationX = main.startRotation3D
+                ? main.startRotationX
+                : new ParticleSystem.MinMaxCurve(0f);
+            ShurikenMinMaxUtility.TryGetConstantRange(
+                startRotationX, out minimum, out maximum);
+            gpu.SetStartRotationXRange(minimum, maximum);
+            gpu.startRotationXMode = startRotationX.mode;
+            gpu.startRotationXLUT = main.startRotation3D &&
+                                    IsCurveMode(startRotationX.mode)
+                ? CurveLUTBuilder.BuildSigned(
+                    startRotationX,
+                    saveAsAsset: true,
+                    assetName: "StartRotationX_LUT")
+                : CurveLUTBuilder.GetDefaultZeroLUT();
+            ParticleSystem.MinMaxCurve startRotationY = main.startRotation3D
+                ? main.startRotationY
+                : new ParticleSystem.MinMaxCurve(0f);
+            ShurikenMinMaxUtility.TryGetConstantRange(
+                startRotationY, out minimum, out maximum);
+            gpu.SetStartRotationYRange(minimum, maximum);
+            gpu.startRotationYMode = startRotationY.mode;
+            gpu.startRotationYLUT = main.startRotation3D &&
+                                    IsCurveMode(startRotationY.mode)
+                ? CurveLUTBuilder.BuildSigned(
+                    startRotationY,
+                    saveAsAsset: true,
+                    assetName: "StartRotationY_LUT")
                 : CurveLUTBuilder.GetDefaultZeroLUT();
             gpu.flipRotation = Mathf.Clamp01(main.flipRotation);
 
@@ -830,7 +889,8 @@ namespace GPUParticles
                 if (rotationOverLifetime.separateAxes)
                 {
                     Debug.LogWarning(
-                        "Rotation over Lifetime X/Y axes are ignored for GPU billboards; mapping Z roll.",
+                        "GPU Rotation over Lifetime currently maps Z roll; " +
+                        "X/Y axes are not yet supported.",
                         context);
                 }
                 ParticleSystem.MinMaxCurve rotationCurve = rotationOverLifetime.z;
@@ -914,6 +974,13 @@ namespace GPUParticles
                         saveAsAsset: true,
                         assetName: "SizeOverLifetimeY_LUT")
                     : CurveLUTBuilder.GetDefaultUnitLUT();
+            gpu.sizeOverLifetimeZLUT =
+                size.enabled && size.separateAxes
+                    ? CurveLUTBuilder.Build(
+                        size.z,
+                        saveAsAsset: true,
+                        assetName: "SizeOverLifetimeZ_LUT")
+                    : CurveLUTBuilder.GetDefaultUnitLUT();
         }
 
         static void ApplyColorAndSizeBySpeed(
@@ -954,6 +1021,12 @@ namespace GPUParticles
                     saveAsAsset: true,
                     assetName: "SizeBySpeedY_LUT")
                 : CurveLUTBuilder.GetDefaultUnitLUT();
+            gpu.sizeBySpeedZLUT = size.enabled && size.separateAxes
+                ? CurveLUTBuilder.Build(
+                    size.z,
+                    saveAsAsset: true,
+                    assetName: "SizeBySpeedZ_LUT")
+                : CurveLUTBuilder.GetDefaultUnitLUT();
         }
 
         static void ApplyRotationBySpeed(
@@ -968,7 +1041,8 @@ namespace GPUParticles
             if (rotation.enabled && rotation.separateAxes)
             {
                 Debug.LogWarning(
-                    "Rotation by Speed X/Y axes are ignored for GPU billboards; mapping Z roll.",
+                    "GPU Rotation by Speed currently maps Z roll; X/Y axes " +
+                    "are not yet supported.",
                     context);
             }
 

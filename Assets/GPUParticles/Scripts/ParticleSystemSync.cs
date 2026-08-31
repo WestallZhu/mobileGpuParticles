@@ -89,6 +89,7 @@ namespace GPUParticles
 
         // Renderer缓存
         private ParticleSystemRenderMode cachedRenderMode;
+        private Mesh cachedRenderMesh;
         private ParticleSystemRenderSpace cachedAlignment;
         private bool cachedAllowRoll;
         private Vector3 cachedPivot;
@@ -145,13 +146,18 @@ namespace GPUParticles
         private Texture2D generatedStartSpeedLUT;
         private Texture2D generatedStartSizeLUT;
         private Texture2D generatedStartSizeYLUT;
+        private Texture2D generatedStartSizeZLUT;
         private Texture2D generatedGravityModifierLUT;
         private Texture2D generatedStartRotationLUT;
+        private Texture2D generatedStartRotationXLUT;
+        private Texture2D generatedStartRotationYLUT;
         private Texture2D generatedSizeLUT;
         private Texture2D generatedSizeYLUT;
+        private Texture2D generatedSizeZLUT;
         private Texture2D generatedColorBySpeedLUT;
         private Texture2D generatedSizeBySpeedLUT;
         private Texture2D generatedSizeBySpeedYLUT;
+        private Texture2D generatedSizeBySpeedZLUT;
         private Texture2D generatedRotationLUT;
         private Texture2D generatedRotationBySpeedLUT;
         private Texture2D generatedShapeArcSpeedLUT;
@@ -282,6 +288,10 @@ namespace GPUParticles
             if (sourceRenderer != null)
             {
                 cachedRenderMode = sourceRenderer.renderMode;
+                cachedRenderMesh = sourceRenderer.renderMode ==
+                        ParticleSystemRenderMode.Mesh
+                    ? sourceRenderer.mesh
+                    : null;
                 cachedAlignment = sourceRenderer.alignment;
                 CacheRendererValues();
             }
@@ -495,6 +505,13 @@ namespace GPUParticles
                 startSizeY, out minimum, out maximum);
             targetGPUParticleSystem.SetStartSizeYRange(minimum, maximum);
             targetGPUParticleSystem.startSizeYMode = startSizeY.mode;
+            ParticleSystem.MinMaxCurve startSizeZ = main.startSize3D
+                ? main.startSizeZ
+                : main.startSize;
+            ShurikenMinMaxUtility.TryGetConstantRange(
+                startSizeZ, out minimum, out maximum);
+            targetGPUParticleSystem.SetStartSizeZRange(minimum, maximum);
+            targetGPUParticleSystem.startSizeZMode = startSizeZ.mode;
             bool updateStartSizeLUT = force ||
                 Time.realtimeSinceStartup - lastStartSizeLUTUpdate >
                 LUT_UPDATE_INTERVAL;
@@ -502,6 +519,7 @@ namespace GPUParticles
             {
                 DestroyGeneratedTexture(ref generatedStartSizeLUT);
                 DestroyGeneratedTexture(ref generatedStartSizeYLUT);
+                DestroyGeneratedTexture(ref generatedStartSizeZLUT);
                 if (IsCurveMode(startSize.mode))
                 {
                     generatedStartSizeLUT = CurveLUTBuilder.Build(
@@ -526,6 +544,19 @@ namespace GPUParticles
                 else
                 {
                     targetGPUParticleSystem.startSizeYLUT =
+                        CurveLUTBuilder.GetDefaultUnitLUT();
+                }
+                if (main.startSize3D && IsCurveMode(startSizeZ.mode))
+                {
+                    generatedStartSizeZLUT = CurveLUTBuilder.Build(
+                        startSizeZ,
+                        assetName: "StartSizeZ_LUT");
+                    targetGPUParticleSystem.startSizeZLUT =
+                        generatedStartSizeZLUT;
+                }
+                else
+                {
+                    targetGPUParticleSystem.startSizeZLUT =
                         CurveLUTBuilder.GetDefaultUnitLUT();
                 }
                 lastStartSizeLUTUpdate = Time.realtimeSinceStartup;
@@ -611,12 +642,29 @@ namespace GPUParticles
             ShurikenMinMaxUtility.TryGetConstantRange(startRotation, out minimum, out maximum);
             targetGPUParticleSystem.SetStartRotationRange(minimum, maximum);
             targetGPUParticleSystem.startRotationMode = startRotation.mode;
+            targetGPUParticleSystem.startRotation3D = main.startRotation3D;
+            ParticleSystem.MinMaxCurve startRotationX = main.startRotation3D
+                ? main.startRotationX
+                : new ParticleSystem.MinMaxCurve(0f);
+            ShurikenMinMaxUtility.TryGetConstantRange(
+                startRotationX, out minimum, out maximum);
+            targetGPUParticleSystem.SetStartRotationXRange(minimum, maximum);
+            targetGPUParticleSystem.startRotationXMode = startRotationX.mode;
+            ParticleSystem.MinMaxCurve startRotationY = main.startRotation3D
+                ? main.startRotationY
+                : new ParticleSystem.MinMaxCurve(0f);
+            ShurikenMinMaxUtility.TryGetConstantRange(
+                startRotationY, out minimum, out maximum);
+            targetGPUParticleSystem.SetStartRotationYRange(minimum, maximum);
+            targetGPUParticleSystem.startRotationYMode = startRotationY.mode;
             bool updateStartRotationLUT = force ||
                 Time.realtimeSinceStartup - lastStartRotationLUTUpdate >
                 LUT_UPDATE_INTERVAL;
             if (updateStartRotationLUT)
             {
                 DestroyGeneratedTexture(ref generatedStartRotationLUT);
+                DestroyGeneratedTexture(ref generatedStartRotationXLUT);
+                DestroyGeneratedTexture(ref generatedStartRotationYLUT);
                 if (IsCurveMode(startRotation.mode))
                 {
                     generatedStartRotationLUT = CurveLUTBuilder.BuildSigned(
@@ -628,6 +676,34 @@ namespace GPUParticles
                 else
                 {
                     targetGPUParticleSystem.startRotationLUT =
+                        CurveLUTBuilder.GetDefaultZeroLUT();
+                }
+                if (main.startRotation3D &&
+                    IsCurveMode(startRotationX.mode))
+                {
+                    generatedStartRotationXLUT = CurveLUTBuilder.BuildSigned(
+                        startRotationX,
+                        assetName: "StartRotationX_LUT");
+                    targetGPUParticleSystem.startRotationXLUT =
+                        generatedStartRotationXLUT;
+                }
+                else
+                {
+                    targetGPUParticleSystem.startRotationXLUT =
+                        CurveLUTBuilder.GetDefaultZeroLUT();
+                }
+                if (main.startRotation3D &&
+                    IsCurveMode(startRotationY.mode))
+                {
+                    generatedStartRotationYLUT = CurveLUTBuilder.BuildSigned(
+                        startRotationY,
+                        assetName: "StartRotationY_LUT");
+                    targetGPUParticleSystem.startRotationYLUT =
+                        generatedStartRotationYLUT;
+                }
+                else
+                {
+                    targetGPUParticleSystem.startRotationYLUT =
                         CurveLUTBuilder.GetDefaultZeroLUT();
                 }
                 lastStartRotationLUTUpdate = Time.realtimeSinceStartup;
@@ -1505,8 +1581,11 @@ namespace GPUParticles
             DestroyGeneratedTexture(ref generatedStartSpeedLUT);
             DestroyGeneratedTexture(ref generatedStartSizeLUT);
             DestroyGeneratedTexture(ref generatedStartSizeYLUT);
+            DestroyGeneratedTexture(ref generatedStartSizeZLUT);
             DestroyGeneratedTexture(ref generatedGravityModifierLUT);
             DestroyGeneratedTexture(ref generatedStartRotationLUT);
+            DestroyGeneratedTexture(ref generatedStartRotationXLUT);
+            DestroyGeneratedTexture(ref generatedStartRotationYLUT);
             DestroyGeneratedColorLUT();
             DestroyGeneratedSizeLUT();
             DestroyGeneratedColorBySpeedLUT();
@@ -1624,6 +1703,7 @@ namespace GPUParticles
         {
             DestroyGeneratedTexture(ref generatedSizeLUT);
             DestroyGeneratedTexture(ref generatedSizeYLUT);
+            DestroyGeneratedTexture(ref generatedSizeZLUT);
         }
 
         void DestroyGeneratedColorBySpeedLUT()
@@ -1639,6 +1719,7 @@ namespace GPUParticles
         {
             DestroyGeneratedTexture(ref generatedSizeBySpeedLUT);
             DestroyGeneratedTexture(ref generatedSizeBySpeedYLUT);
+            DestroyGeneratedTexture(ref generatedSizeBySpeedZLUT);
         }
 
         void DestroyGeneratedRotationLUT()
@@ -1709,6 +1790,9 @@ namespace GPUParticles
                     case ParticleSystemRenderMode.VerticalBillboard:
                         targetGPUParticleSystem.renderMode = GPURenderMode.VerticalBillboard;
                         break;
+                    case ParticleSystemRenderMode.Mesh:
+                        targetGPUParticleSystem.renderMode = GPURenderMode.Mesh;
+                        break;
                 }
                 cachedRenderMode = sourceRenderer.renderMode;
                 rendererChanged = true;
@@ -1736,6 +1820,17 @@ namespace GPUParticles
                         break;
                 }
                 cachedAlignment = sourceRenderer.alignment;
+                rendererChanged = true;
+            }
+
+            Mesh renderMesh = sourceRenderer.renderMode ==
+                    ParticleSystemRenderMode.Mesh
+                ? sourceRenderer.mesh
+                : null;
+            if (force || rendererChanged || renderMesh != cachedRenderMesh)
+            {
+                targetGPUParticleSystem.renderMesh = renderMesh;
+                cachedRenderMesh = renderMesh;
                 rendererChanged = true;
             }
 
@@ -2051,10 +2146,17 @@ namespace GPUParticles
                         assetName: "SizeOverLifetimeY_LUT");
                     targetGPUParticleSystem.sizeOverLifetimeYLUT =
                         generatedSizeYLUT;
+                    generatedSizeZLUT = CurveLUTBuilder.Build(
+                        size.z,
+                        assetName: "SizeOverLifetimeZ_LUT");
+                    targetGPUParticleSystem.sizeOverLifetimeZLUT =
+                        generatedSizeZLUT;
                 }
                 else
                 {
                     targetGPUParticleSystem.sizeOverLifetimeYLUT =
+                        CurveLUTBuilder.GetDefaultUnitLUT();
+                    targetGPUParticleSystem.sizeOverLifetimeZLUT =
                         CurveLUTBuilder.GetDefaultUnitLUT();
                 }
             }
@@ -2063,6 +2165,8 @@ namespace GPUParticles
                 targetGPUParticleSystem.sizeOverLifetimeLUT =
                     CurveLUTBuilder.GetDefaultUnitLUT();
                 targetGPUParticleSystem.sizeOverLifetimeYLUT =
+                    CurveLUTBuilder.GetDefaultUnitLUT();
+                targetGPUParticleSystem.sizeOverLifetimeZLUT =
                     CurveLUTBuilder.GetDefaultUnitLUT();
             }
 
@@ -2126,10 +2230,17 @@ namespace GPUParticles
                         assetName: "SizeBySpeedY_LUT");
                     targetGPUParticleSystem.sizeBySpeedYLUT =
                         generatedSizeBySpeedYLUT;
+                    generatedSizeBySpeedZLUT = CurveLUTBuilder.Build(
+                        size.z,
+                        assetName: "SizeBySpeedZ_LUT");
+                    targetGPUParticleSystem.sizeBySpeedZLUT =
+                        generatedSizeBySpeedZLUT;
                 }
                 else
                 {
                     targetGPUParticleSystem.sizeBySpeedYLUT =
+                        CurveLUTBuilder.GetDefaultUnitLUT();
+                    targetGPUParticleSystem.sizeBySpeedZLUT =
                         CurveLUTBuilder.GetDefaultUnitLUT();
                 }
             }
@@ -2138,6 +2249,8 @@ namespace GPUParticles
                 targetGPUParticleSystem.sizeBySpeedLUT =
                     CurveLUTBuilder.GetDefaultUnitLUT();
                 targetGPUParticleSystem.sizeBySpeedYLUT =
+                    CurveLUTBuilder.GetDefaultUnitLUT();
+                targetGPUParticleSystem.sizeBySpeedZLUT =
                     CurveLUTBuilder.GetDefaultUnitLUT();
             }
 

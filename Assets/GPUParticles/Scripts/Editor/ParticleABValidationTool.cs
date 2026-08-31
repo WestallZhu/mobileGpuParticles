@@ -751,6 +751,13 @@ namespace GPUParticles.Editor
                 ParticleABValidationProfile.RendererVerticalBillboardPoint);
         }
 
+        [MenuItem("Tools/GPU Particles/Run Mesh Renderer A-B RT Capture")]
+        public static void RunMeshRendererCaptureMenu()
+        {
+            StartTextureSheetCaptureMenu(
+                ParticleABValidationProfile.RendererMeshPoint);
+        }
+
         [MenuItem("Tools/GPU Particles/Run Texture Sheet Blend Lifetime A-B RT Capture")]
         public static void RunTextureSheetBlendLifetimeCaptureMenu()
         {
@@ -1567,6 +1574,14 @@ namespace GPUParticles.Editor
                 ParticleABValidationProfile.RendererVerticalBillboardPoint);
         }
 
+        public static void RunBatchRendererMeshCapture()
+        {
+            ValidateCommonFeatureMapping();
+            StartCapture(
+                true,
+                ParticleABValidationProfile.RendererMeshPoint);
+        }
+
         public static void RunBatchTextureSheetBlendLifetimeCapture()
         {
             ValidateCommonFeatureMapping();
@@ -1856,6 +1871,7 @@ namespace GPUParticles.Editor
                 case ParticleABValidationProfile.RendererPivotPoint:
                 case ParticleABValidationProfile.RendererHorizontalBillboardPoint:
                 case ParticleABValidationProfile.RendererVerticalBillboardPoint:
+                case ParticleABValidationProfile.RendererMeshPoint:
                 case ParticleABValidationProfile.TextureSheetBlendLifetimePoint:
                 case ParticleABValidationProfile.TextureSheetBlendSpeedPoint:
                 case ParticleABValidationProfile.TextureSheetBlendFPSPoint:
@@ -1985,6 +2001,7 @@ namespace GPUParticles.Editor
                    profile == ParticleABValidationProfile.RendererPivotPoint ||
                    profile == ParticleABValidationProfile.RendererHorizontalBillboardPoint ||
                    profile == ParticleABValidationProfile.RendererVerticalBillboardPoint ||
+                   profile == ParticleABValidationProfile.RendererMeshPoint ||
                    profile == ParticleABValidationProfile.TextureSheetBlendLifetimePoint ||
                    profile == ParticleABValidationProfile.TextureSheetBlendSpeedPoint ||
                    profile == ParticleABValidationProfile.TextureSheetBlendFPSPoint ||
@@ -2153,6 +2170,8 @@ namespace GPUParticles.Editor
                     return "TestResults/ParticleRendererHorizontalBillboard";
                 case ParticleABValidationProfile.RendererVerticalBillboardPoint:
                     return "TestResults/ParticleRendererVerticalBillboard";
+                case ParticleABValidationProfile.RendererMeshPoint:
+                    return "TestResults/ParticleRendererMesh";
                 case ParticleABValidationProfile.TextureSheetBlendLifetimePoint:
                     return "TestResults/ParticleTextureSheetBlendLifetime";
                 case ParticleABValidationProfile.TextureSheetBlendSpeedPoint:
@@ -3741,6 +3760,7 @@ namespace GPUParticles.Editor
                 ValidateStretchedBillboardMapping();
                 ValidateRendererPivotMapping();
                 ValidateFixedBillboardMapping();
+                ValidateMeshRendererMapping();
                 ValidateMaterialColorMapping();
                 ValidateMaterialBlendMapping();
                 ValidateMaterialAlphaClipMapping();
@@ -4049,7 +4069,7 @@ namespace GPUParticles.Editor
         {
             var owner = new GameObject("ParticleSeparateAxisSizeMappingValidation");
             owner.SetActive(false);
-            var generatedTextures = new Texture2D[6];
+            var generatedTextures = new Texture2D[9];
             try
             {
                 var shuriken = owner.AddComponent<ParticleSystem>();
@@ -4063,7 +4083,10 @@ namespace GPUParticles.Editor
                     1f,
                     AnimationCurve.Linear(0f, 0.25f, 1f, 0.75f),
                     AnimationCurve.Linear(0f, 2f, 1f, 3f));
-                main.startSizeZ = 4f;
+                main.startSizeZ = new ParticleSystem.MinMaxCurve(
+                    1f,
+                    AnimationCurve.Linear(0f, 0.4f, 1f, 0.8f),
+                    AnimationCurve.Linear(0f, 1.2f, 1f, 2.2f));
 
                 var sizeOverLifetime = shuriken.sizeOverLifetime;
                 sizeOverLifetime.enabled = true;
@@ -4076,7 +4099,10 @@ namespace GPUParticles.Editor
                     1f,
                     AnimationCurve.Linear(0f, 0.75f, 1f, 0.25f),
                     AnimationCurve.Linear(0f, 2.5f, 1f, 1.5f));
-                sizeOverLifetime.z = 3f;
+                sizeOverLifetime.z = new ParticleSystem.MinMaxCurve(
+                    1f,
+                    AnimationCurve.Linear(0f, 0.6f, 1f, 0.9f),
+                    AnimationCurve.Linear(0f, 1.8f, 1f, 1.1f));
 
                 var sizeBySpeed = shuriken.sizeBySpeed;
                 sizeBySpeed.enabled = true;
@@ -4090,7 +4116,10 @@ namespace GPUParticles.Editor
                     1f,
                     AnimationCurve.Linear(0f, 0.5f, 1f, 1f),
                     AnimationCurve.Linear(0f, 1.5f, 1f, 0.75f));
-                sizeBySpeed.z = 2f;
+                sizeBySpeed.z = new ParticleSystem.MinMaxCurve(
+                    1f,
+                    AnimationCurve.Linear(0f, 0.35f, 1f, 0.65f),
+                    AnimationCurve.Linear(0f, 1.75f, 1f, 1.25f));
 
                 ShurikenConverter.Convert(owner);
                 var gpu = owner.GetComponent<GPUParticleSystem>();
@@ -4099,24 +4128,32 @@ namespace GPUParticles.Editor
 
                 generatedTextures[0] = gpu.startSizeLUT;
                 generatedTextures[1] = gpu.startSizeYLUT;
-                generatedTextures[2] = gpu.sizeOverLifetimeLUT;
-                generatedTextures[3] = gpu.sizeOverLifetimeYLUT;
-                generatedTextures[4] = gpu.sizeBySpeedLUT;
-                generatedTextures[5] = gpu.sizeBySpeedYLUT;
+                generatedTextures[2] = gpu.startSizeZLUT;
+                generatedTextures[3] = gpu.sizeOverLifetimeLUT;
+                generatedTextures[4] = gpu.sizeOverLifetimeYLUT;
+                generatedTextures[5] = gpu.sizeOverLifetimeZLUT;
+                generatedTextures[6] = gpu.sizeBySpeedLUT;
+                generatedTextures[7] = gpu.sizeBySpeedYLUT;
+                generatedTextures[8] = gpu.sizeBySpeedZLUT;
 
                 Require(gpu.startSize3D,
                     "Start Size 3D enabled state was not mapped.");
                 Require(gpu.startSizeMode == ParticleSystemCurveMode.TwoCurves &&
-                        gpu.startSizeYMode == ParticleSystemCurveMode.TwoCurves,
-                    "Start Size 3D X/Y curve modes were not mapped.");
+                        gpu.startSizeYMode == ParticleSystemCurveMode.TwoCurves &&
+                        gpu.startSizeZMode == ParticleSystemCurveMode.TwoCurves,
+                    "Start Size 3D X/Y/Z curve modes were not mapped.");
                 RequireTwoRowLUT(gpu.startSizeLUT, "Start Size 3D X");
                 RequireTwoRowLUT(gpu.startSizeYLUT, "Start Size 3D Y");
+                RequireTwoRowLUT(gpu.startSizeZLUT, "Start Size 3D Z");
                 RequireLUTEndpoints(
                     gpu.startSizeLUT, 0.5f, 1f, 1.5f, 2.5f,
                     "Start Size 3D X");
                 RequireLUTEndpoints(
                     gpu.startSizeYLUT, 0.25f, 0.75f, 2f, 3f,
                     "Start Size 3D Y");
+                RequireLUTEndpoints(
+                    gpu.startSizeZLUT, 0.4f, 0.8f, 1.2f, 2.2f,
+                    "Start Size 3D Z");
 
                 Require(gpu.sizeOverLifetimeSeparateAxes,
                     "Size over Lifetime Separate Axes state was not mapped.");
@@ -4124,12 +4161,17 @@ namespace GPUParticles.Editor
                     gpu.sizeOverLifetimeLUT, "Size over Lifetime X");
                 RequireTwoRowLUT(
                     gpu.sizeOverLifetimeYLUT, "Size over Lifetime Y");
+                RequireTwoRowLUT(
+                    gpu.sizeOverLifetimeZLUT, "Size over Lifetime Z");
                 RequireLUTEndpoints(
                     gpu.sizeOverLifetimeLUT, 0.5f, 1f, 1.5f, 2f,
                     "Size over Lifetime X");
                 RequireLUTEndpoints(
                     gpu.sizeOverLifetimeYLUT, 0.75f, 0.25f, 2.5f, 1.5f,
                     "Size over Lifetime Y");
+                RequireLUTEndpoints(
+                    gpu.sizeOverLifetimeZLUT, 0.6f, 0.9f, 1.8f, 1.1f,
+                    "Size over Lifetime Z");
 
                 Require(gpu.sizeBySpeedEnabled &&
                         gpu.sizeBySpeedSeparateAxes,
@@ -4140,12 +4182,16 @@ namespace GPUParticles.Editor
                     "Size by Speed Separate Axes range maximum");
                 RequireTwoRowLUT(gpu.sizeBySpeedLUT, "Size by Speed X");
                 RequireTwoRowLUT(gpu.sizeBySpeedYLUT, "Size by Speed Y");
+                RequireTwoRowLUT(gpu.sizeBySpeedZLUT, "Size by Speed Z");
                 RequireLUTEndpoints(
                     gpu.sizeBySpeedLUT, 0.25f, 0.75f, 1.25f, 2.25f,
                     "Size by Speed X");
                 RequireLUTEndpoints(
                     gpu.sizeBySpeedYLUT, 0.5f, 1f, 1.5f, 0.75f,
                     "Size by Speed Y");
+                RequireLUTEndpoints(
+                    gpu.sizeBySpeedZLUT, 0.35f, 0.65f, 1.75f, 1.25f,
+                    "Size by Speed Z");
             }
             finally
             {
@@ -4759,6 +4805,119 @@ namespace GPUParticles.Editor
             {
                 Object.DestroyImmediate(owner);
             }
+        }
+
+        static void ValidateMeshRendererMapping()
+        {
+            var owner = new GameObject(
+                "ParticleMeshRendererMappingValidation");
+            owner.SetActive(false);
+            Mesh firstMesh = null;
+            Mesh secondMesh = null;
+            try
+            {
+                var shuriken = owner.AddComponent<ParticleSystem>();
+                ParticleSystem.MainModule main = shuriken.main;
+                main.playOnAwake = false;
+                main.startSize3D = true;
+                main.startSizeX = 1.25f;
+                main.startSizeY = 2.5f;
+                main.startSizeZ = 0.75f;
+                main.startRotation3D = true;
+                main.startRotationX = 0.2f;
+                main.startRotationY = -0.35f;
+                main.startRotationZ = 0.5f;
+
+                firstMesh = CreateMappingValidationTriangle(
+                    "ParticleMeshRendererMappingFirst");
+                secondMesh = CreateMappingValidationTriangle(
+                    "ParticleMeshRendererMappingSecond");
+                ParticleSystemRenderer renderer =
+                    owner.GetComponent<ParticleSystemRenderer>();
+                renderer.renderMode = ParticleSystemRenderMode.Mesh;
+                renderer.mesh = firstMesh;
+                renderer.alignment = ParticleSystemRenderSpace.Local;
+
+                ShurikenConverter.Convert(owner);
+                var gpu = owner.GetComponent<GPUParticleSystem>();
+                Require(gpu != null,
+                    "Mesh Renderer conversion did not create a GPU system.");
+                Require(gpu.renderMode == GPURenderMode.Mesh,
+                    "Mesh Renderer render mode was not mapped.");
+                Require(gpu.renderMesh == firstMesh,
+                    "Mesh Renderer mesh reference was not mapped.");
+                Require(gpu.renderAlignment == GPUAlignment.Local,
+                    "Mesh Renderer Local alignment was not mapped.");
+                Require(gpu.startSize3D,
+                    "Mesh Start Size 3D state was not mapped.");
+                RequireApproximately(gpu.startSize, 1.25f,
+                    "Mesh Start Size X");
+                RequireApproximately(gpu.startSizeY, 2.5f,
+                    "Mesh Start Size Y");
+                RequireApproximately(gpu.startSizeZ, 0.75f,
+                    "Mesh Start Size Z");
+                Require(gpu.startRotation3D,
+                    "Mesh Start Rotation 3D state was not mapped.");
+                RequireApproximately(gpu.startRotationX, 0.2f,
+                    "Mesh Start Rotation X");
+                RequireApproximately(gpu.startRotationY, -0.35f,
+                    "Mesh Start Rotation Y");
+                RequireApproximately(gpu.startRotation, 0.5f,
+                    "Mesh Start Rotation Z");
+
+                renderer.mesh = secondMesh;
+                renderer.alignment = ParticleSystemRenderSpace.World;
+                main.startSizeZ = 1.5f;
+                main.startRotationX = -0.4f;
+                main.startRotationY = 0.65f;
+                ShurikenConverter.Convert(owner);
+                Require(gpu.renderMesh == secondMesh,
+                    "Changed Mesh Renderer mesh was not remapped.");
+                Require(gpu.renderAlignment == GPUAlignment.World,
+                    "Changed Mesh Renderer World alignment was not remapped.");
+                RequireApproximately(gpu.startSizeZ, 1.5f,
+                    "Changed Mesh Start Size Z was not remapped.");
+                RequireApproximately(gpu.startRotationX, -0.4f,
+                    "Changed Mesh Start Rotation X was not remapped.");
+                RequireApproximately(gpu.startRotationY, 0.65f,
+                    "Changed Mesh Start Rotation Y was not remapped.");
+
+                renderer.renderMode = ParticleSystemRenderMode.Billboard;
+                ShurikenConverter.Convert(owner);
+                Require(gpu.renderMode == GPURenderMode.Billboard,
+                    "Changed Billboard render mode was not remapped.");
+                Require(gpu.renderMesh == null,
+                    "Mesh reference was not cleared outside Mesh mode.");
+            }
+            finally
+            {
+                Object.DestroyImmediate(owner);
+                Object.DestroyImmediate(firstMesh);
+                Object.DestroyImmediate(secondMesh);
+            }
+        }
+
+        static Mesh CreateMappingValidationTriangle(string meshName)
+        {
+            var mesh = new Mesh
+            {
+                name = meshName,
+                vertices = new[]
+                {
+                    new Vector3(-0.5f, -0.5f, 0f),
+                    new Vector3(0.5f, -0.5f, 0f),
+                    new Vector3(0f, 0.5f, 0f)
+                },
+                uv = new[]
+                {
+                    Vector2.zero,
+                    Vector2.right,
+                    Vector2.up
+                },
+                triangles = new[] { 0, 1, 2 }
+            };
+            mesh.RecalculateBounds();
+            return mesh;
         }
 
         static void ValidateMaterialColorMapping()

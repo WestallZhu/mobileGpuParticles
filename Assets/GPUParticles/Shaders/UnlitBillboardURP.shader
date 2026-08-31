@@ -34,6 +34,8 @@ Shader "GPUParticles/UnlitBillboardURP"
             HLSLPROGRAM
             #pragma vertex Vert
             #pragma fragment Frag
+            #pragma target 4.5
+            #pragma multi_compile_instancing
             #include "Packages/com.unity.render-pipelines.universal/ShaderLibrary/Core.hlsl"
             #include "Packages/com.unity.render-pipelines.core/ShaderLibrary/Color.hlsl"
             #include_with_pragmas "Packages/com.unity.render-pipelines.core/ShaderLibrary/FoveatedRenderingKeywords.hlsl"
@@ -49,11 +51,16 @@ Shader "GPUParticles/UnlitBillboardURP"
             TEXTURE2D(_StartLifetimeLUT);
             TEXTURE2D(_StartSizeLUT); SAMPLER(sampler_StartSizeLUT);
             TEXTURE2D(_StartSizeYLUT); SAMPLER(sampler_StartSizeYLUT);
+            TEXTURE2D(_StartSizeZLUT);
             TEXTURE2D(_SizeLUT); SAMPLER(sampler_SizeLUT);
             TEXTURE2D(_SizeYLUT); SAMPLER(sampler_SizeYLUT);
+            TEXTURE2D(_SizeZLUT);
             TEXTURE2D(_SizeBySpeedLUT); SAMPLER(sampler_SizeBySpeedLUT);
             TEXTURE2D(_SizeBySpeedYLUT); SAMPLER(sampler_SizeBySpeedYLUT);
+            TEXTURE2D(_SizeBySpeedZLUT);
             TEXTURE2D(_StartRotationLUT);
+            TEXTURE2D(_StartRotationXLUT);
+            TEXTURE2D(_StartRotationYLUT);
             TEXTURE2D(_RotationOverLifetimeIntegralLUT);
             SAMPLER(sampler_RotationOverLifetimeIntegralLUT);
             TEXTURE2D(_LifetimeByEmitterSpeedLUT);
@@ -96,12 +103,18 @@ Shader "GPUParticles/UnlitBillboardURP"
                 float _StartSizeYMin;
                 int   _StartSizeYMode;
                 float _StartSizeYLUTInvWidth;
+                float _StartSizeZ;
+                float _StartSizeZMin;
+                int   _StartSizeZMode;
+                float _StartSizeZLUTInvWidth;
                 float _SizeLUTInvWidth;
                 float _SizeYLUTInvWidth;
+                float _SizeZLUTInvWidth;
                 int   _SizeBySpeedEnabled;
                 float2 _SizeBySpeedRange;
                 float _SizeBySpeedLUTInvWidth;
                 float _SizeBySpeedYLUTInvWidth;
+                float _SizeBySpeedZLUTInvWidth;
                 int   _LifetimeByEmitterSpeedEnabled;
                 float2 _LifetimeByEmitterSpeedRange;
                 float _LifetimeByEmitterSpeedLUTInvWidth;
@@ -110,6 +123,15 @@ Shader "GPUParticles/UnlitBillboardURP"
                 int   _RandomizeStartRotation;
                 int   _StartRotationMode;
                 float _StartRotationLUTInvWidth;
+                int   _StartRotation3D;
+                float _StartRotationX;
+                float _StartRotationXMin;
+                int   _StartRotationXMode;
+                float _StartRotationXLUTInvWidth;
+                float _StartRotationY;
+                float _StartRotationYMin;
+                int   _StartRotationYMode;
+                float _StartRotationYLUTInvWidth;
                 float _FlipRotation;
                 float _RotationOverLifetime;
                 float _RotationOverLifetimeMin;
@@ -156,13 +178,14 @@ Shader "GPUParticles/UnlitBillboardURP"
                 float3 _CameraUpWS;    float _pad3;
 
                 // renderer params
-                int   _RenderMode;          // 0 Billbd, 1 Horiz, 2 Vert, 3 Stretch
+                int   _RenderMode;          // 0 Billbd, 1 Horiz, 2 Vert, 3 Stretch, 4 Mesh
                 int   _RenderAlignment;     // 0 View,1 Facing,2 World,3 Local,4 Velocity
                 int   _AllowRoll;
                 float _NormalDirection;     // 0..1
 
                 float3 _Pivot;
                 float3 _RendererFlip;
+                float3 _MeshBoundsSize;
                 float  _LenScale;
                 float  _VelScale;
                 float  _CamVelScale;
@@ -187,6 +210,14 @@ Shader "GPUParticles/UnlitBillboardURP"
                 float frameBlend : TEXCOORD2;
                 float4 projectedPosition : TEXCOORD3;
                 float4 col : COLOR;
+            };
+
+            struct VIn
+            {
+                float3 positionOS : POSITION;
+                float2 uv : TEXCOORD0;
+                uint vertexID : SV_VertexID;
+                uint instanceID : SV_InstanceID;
             };
 
             uint HashU32(uint x)
@@ -347,6 +378,76 @@ Shader "GPUParticles/UnlitBillboardURP"
                 return lerp(minimum, maximum, randomValue);
             }
 
+            float StartRotationXAtBirth(uint id, float particleAge)
+            {
+                if (_StartRotation3D == 0 || _StartRotationXMode == 0)
+                {
+                    return _StartRotation3D != 0 ? _StartRotationX : 0.0;
+                }
+
+                float randomValue = Hash01(id ^ 0x9E3779B9u);
+                if (_StartRotationXMode == 3)
+                {
+                    return lerp(
+                        _StartRotationXMin,
+                        _StartRotationX,
+                        randomValue);
+                }
+
+                float x = LUTCoordinate(
+                    BirthSystemTime(particleAge),
+                    _StartRotationXLUTInvWidth);
+                float maximum = SAMPLE_TEXTURE2D_LOD(
+                    _StartRotationXLUT,
+                    sampler_RotationOverLifetimeIntegralLUT,
+                    float2(x, 0.75), 0).r;
+                if (_StartRotationXMode != 2)
+                {
+                    return maximum;
+                }
+
+                float minimum = SAMPLE_TEXTURE2D_LOD(
+                    _StartRotationXLUT,
+                    sampler_RotationOverLifetimeIntegralLUT,
+                    float2(x, 0.25), 0).r;
+                return lerp(minimum, maximum, randomValue);
+            }
+
+            float StartRotationYAtBirth(uint id, float particleAge)
+            {
+                if (_StartRotation3D == 0 || _StartRotationYMode == 0)
+                {
+                    return _StartRotation3D != 0 ? _StartRotationY : 0.0;
+                }
+
+                float randomValue = Hash01(id ^ 0xBB67AE85u);
+                if (_StartRotationYMode == 3)
+                {
+                    return lerp(
+                        _StartRotationYMin,
+                        _StartRotationY,
+                        randomValue);
+                }
+
+                float x = LUTCoordinate(
+                    BirthSystemTime(particleAge),
+                    _StartRotationYLUTInvWidth);
+                float maximum = SAMPLE_TEXTURE2D_LOD(
+                    _StartRotationYLUT,
+                    sampler_RotationOverLifetimeIntegralLUT,
+                    float2(x, 0.75), 0).r;
+                if (_StartRotationYMode != 2)
+                {
+                    return maximum;
+                }
+
+                float minimum = SAMPLE_TEXTURE2D_LOD(
+                    _StartRotationYLUT,
+                    sampler_RotationOverLifetimeIntegralLUT,
+                    float2(x, 0.25), 0).r;
+                return lerp(minimum, maximum, randomValue);
+            }
+
             float StartSizeXAtBirth(uint id, float particleAge)
             {
                 if (_StartSizeMode == 0)
@@ -412,6 +513,40 @@ Shader "GPUParticles/UnlitBillboardURP"
                 return lerp(minimum, maximum, randomValue);
             }
 
+            float StartSizeZAtBirth(uint id, float particleAge)
+            {
+                if (_StartSizeZMode == 0)
+                {
+                    return _StartSizeZ;
+                }
+
+                uint salt = _StartSize3D != 0
+                    ? 0x8CB92BA7u
+                    : 0x1B56C4E9u;
+                float randomValue = Hash01(id ^ salt);
+                if (_StartSizeZMode == 3)
+                {
+                    return lerp(_StartSizeZMin, _StartSizeZ, randomValue);
+                }
+
+                float x = LUTCoordinate(
+                    BirthSystemTime(particleAge),
+                    _StartSizeZLUTInvWidth);
+                float maximum = SAMPLE_TEXTURE2D_LOD(
+                    _StartSizeZLUT,
+                    sampler_StartSizeLUT,
+                    float2(x, 0.75), 0).r;
+                if (_StartSizeZMode != 2)
+                {
+                    return maximum;
+                }
+                float minimum = SAMPLE_TEXTURE2D_LOD(
+                    _StartSizeZLUT,
+                    sampler_StartSizeLUT,
+                    float2(x, 0.25), 0).r;
+                return lerp(minimum, maximum, randomValue);
+            }
+
             float SizeOverLifetimeX(uint id, float normalizedAge)
             {
                 float x = LUTCoordinate(normalizedAge, _SizeLUTInvWidth);
@@ -438,6 +573,21 @@ Shader "GPUParticles/UnlitBillboardURP"
                     float2(x, 0.75), 0).r;
                 uint salt = _SizeOverLifetimeSeparateAxes != 0
                     ? 0xA24BAED4u
+                    : 0x91E10DA5u;
+                return lerp(minimum, maximum, Hash01(id ^ salt));
+            }
+
+            float SizeOverLifetimeZ(uint id, float normalizedAge)
+            {
+                float x = LUTCoordinate(normalizedAge, _SizeZLUTInvWidth);
+                float minimum = SAMPLE_TEXTURE2D_LOD(
+                    _SizeZLUT, sampler_SizeLUT,
+                    float2(x, 0.25), 0).r;
+                float maximum = SAMPLE_TEXTURE2D_LOD(
+                    _SizeZLUT, sampler_SizeLUT,
+                    float2(x, 0.75), 0).r;
+                uint salt = _SizeOverLifetimeSeparateAxes != 0
+                    ? 0x9E3779B9u
                     : 0x91E10DA5u;
                 return lerp(minimum, maximum, Hash01(id ^ salt));
             }
@@ -474,6 +624,22 @@ Shader "GPUParticles/UnlitBillboardURP"
                 return lerp(minimum, maximum, Hash01(id ^ salt));
             }
 
+            float SizeBySpeedZ(uint id, float speedPosition)
+            {
+                float x = LUTCoordinate(
+                    speedPosition, _SizeBySpeedZLUTInvWidth);
+                float minimum = SAMPLE_TEXTURE2D_LOD(
+                    _SizeBySpeedZLUT, sampler_SizeBySpeedLUT,
+                    float2(x, 0.25), 0).r;
+                float maximum = SAMPLE_TEXTURE2D_LOD(
+                    _SizeBySpeedZLUT, sampler_SizeBySpeedLUT,
+                    float2(x, 0.75), 0).r;
+                uint salt = _SizeBySpeedSeparateAxes != 0
+                    ? 0x68E31DA4u
+                    : 0xD192ED03u;
+                return lerp(minimum, maximum, Hash01(id ^ salt));
+            }
+
             float SpeedRangePosition(float speed, float2 speedRange)
             {
                 float width = speedRange.y - speedRange.x;
@@ -484,7 +650,7 @@ Shader "GPUParticles/UnlitBillboardURP"
                 return saturate((speed - speedRange.x) / width);
             }
 
-            float2 BillboardSize(
+            float3 ParticleSize(
                 uint id,
                 float totalParticleAge,
                 float normalizedAge,
@@ -493,13 +659,15 @@ Shader "GPUParticles/UnlitBillboardURP"
             {
                 if (_UseSeparateSizeAxes == 0)
                 {
-                    return currentSizeX.xx;
+                    return currentSizeX.xxx;
                 }
 
                 float sizeX = StartSizeXAtBirth(id, totalParticleAge) *
                     SizeOverLifetimeX(id, normalizedAge);
                 float sizeY = StartSizeYAtBirth(id, totalParticleAge) *
                     SizeOverLifetimeY(id, normalizedAge);
+                float sizeZ = StartSizeZAtBirth(id, totalParticleAge) *
+                    SizeOverLifetimeZ(id, normalizedAge);
                 if (_SizeBySpeedEnabled != 0)
                 {
                     float speedPosition = SpeedRangePosition(
@@ -507,8 +675,9 @@ Shader "GPUParticles/UnlitBillboardURP"
                         _SizeBySpeedRange);
                     sizeX *= SizeBySpeedX(id, speedPosition);
                     sizeY *= SizeBySpeedY(id, speedPosition);
+                    sizeZ *= SizeBySpeedZ(id, speedPosition);
                 }
-                return float2(sizeX, sizeY);
+                return float3(sizeX, sizeY, sizeZ);
             }
 
             float SampleRotationIntegral(uint id, float normalizedAge)
@@ -875,6 +1044,16 @@ Shader "GPUParticles/UnlitBillboardURP"
                        axis * dot(axis, value) * (1.0 - cosine);
             }
 
+            float3 RotateMeshEulerZXY(float3 value, float3 angles)
+            {
+                value = RotateAroundAxis(
+                    value, float3(0.0, 0.0, 1.0), angles.z);
+                value = RotateAroundAxis(
+                    value, float3(1.0, 0.0, 0.0), angles.x);
+                return RotateAroundAxis(
+                    value, float3(0.0, 1.0, 0.0), angles.y);
+            }
+
             float3 Ortho(float3 v){ return normalize( any(abs(v) > 0.0) ? (abs(v.z)<0.999?cross(v,float3(0,0,1)):cross(v,float3(0,1,0))) : float3(1,0,0) ); }
 
             float2 IndexToUV(uint idx, int grid)
@@ -1028,12 +1207,15 @@ Shader "GPUParticles/UnlitBillboardURP"
                        projectedSize;
             }
 
-            VOut Vert(uint vid:SV_VertexID)
+            VOut Vert(VIn input)
             {
                 VOut o;
 
-                uint quadId = vid / 6;
-                uint tv     = vid % 6;
+                bool meshMode = _RenderMode == 4;
+                uint quadId = meshMode
+                    ? input.instanceID
+                    : input.vertexID / 6;
+                uint tv = input.vertexID % 6;
                 int corner  = CornerFromTriVertex(tv);
 
                 if (quadId >= (uint)_MaxParticles)
@@ -1144,14 +1326,14 @@ Shader "GPUParticles/UnlitBillboardURP"
                     float4(Up, 0.0)).xyz;
 
                 // size (W/L) & pivot
-                float2 sizeXY = BillboardSize(
+                float3 sizeXYZ = ParticleSize(
                     quadId,
                     totalParticleAge,
                     normalizedAge,
                     length(velWS),
                     velSize.w);
-                float W = sizeXY.x;
-                float H = sizeXY.y;
+                float W = sizeXYZ.x;
+                float H = sizeXYZ.y;
                 float L = (_RenderMode==3)
                     ? max(
                         1e-4,
@@ -1176,6 +1358,7 @@ Shader "GPUParticles/UnlitBillboardURP"
                 W *= screenSizeScale;
                 H *= screenSizeScale;
                 L *= screenSizeScale;
+                sizeXYZ *= screenSizeScale;
 
                 float2 quadUV[4] = { float2(0,0), float2(1,0), float2(1,1), float2(0,1) };
                 float2 localXY[4]= { float2(-0.5,-0.5), float2(0.5,-0.5), float2(0.5,0.5), float2(-0.5,0.5) };
@@ -1206,6 +1389,46 @@ Shader "GPUParticles/UnlitBillboardURP"
                         ? -1.0
                         : 1.0;
                 particleAngle *= rotationDirection;
+
+                if (meshMode)
+                {
+                    float3 meshPosition = input.positionOS +
+                        _Pivot * _MeshBoundsSize *
+                        float3(1.0, 1.0, -1.0);
+                    meshPosition *= sizeXYZ;
+                    float3 meshEuler = float3(
+                        StartRotationXAtBirth(
+                            quadId,
+                            totalParticleAge),
+                        StartRotationYAtBirth(
+                            quadId,
+                            totalParticleAge),
+                        particleAngle);
+                    meshEuler.xy *= rotationDirection;
+                    meshPosition = RotateMeshEulerZXY(
+                        meshPosition,
+                        meshEuler);
+                    float3 scaledMeshPosition = mul(
+                        _ParticleScaleWorld,
+                        float4(meshPosition, 0.0)).xyz;
+                    float3 meshWorldPosition = posWS + scaledMeshPosition;
+                    o.posHCS = TransformWorldToHClip(meshWorldPosition);
+                    o.projectedPosition = ComputeScreenPos(o.posHCS);
+                    float2 particleUV = ParticleFlippedUV(
+                        quadId,
+                        input.uv);
+                    TextureSheetUVs(
+                        quadId,
+                        particleUV,
+                        normalizedAge,
+                        particleAge,
+                        length(velSize.xyz),
+                        o.uv,
+                        o.uvNext,
+                        o.frameBlend);
+                    o.col = pcol;
+                    return o;
+                }
 
                 float2 local;
                 if (_RenderMode == 1 || _RenderMode == 2)

@@ -23,7 +23,14 @@ namespace GPUParticles
         BurstSpread = 3
     }
 
-    public enum GPURenderMode { Billboard = 0, HorizontalBillboard = 1, VerticalBillboard = 2, StretchedBillboard = 3 }
+    public enum GPURenderMode
+    {
+        Billboard = 0,
+        HorizontalBillboard = 1,
+        VerticalBillboard = 2,
+        StretchedBillboard = 3,
+        Mesh = 4
+    }
     public enum GPUAlignment  { View = 0, Facing = 1, World = 2, Local = 3, Velocity = 4 }
     public enum GPUParticleColorMode
     {
@@ -83,6 +90,10 @@ namespace GPUParticles
         public ParticleSystemCurveMode startSizeYMode =
             ParticleSystemCurveMode.Constant;
         public Texture2D startSizeYLUT;
+        [Min(0.0f)] public float startSizeZ = 0.1f;
+        public ParticleSystemCurveMode startSizeZMode =
+            ParticleSystemCurveMode.Constant;
+        public Texture2D startSizeZLUT;
         public Color startColor = Color.white;
         public ParticleSystemGradientMode startColorMode =
             ParticleSystemGradientMode.Color;
@@ -113,6 +124,15 @@ namespace GPUParticles
         public ParticleSystemCurveMode startRotationMode =
             ParticleSystemCurveMode.Constant;
         public Texture2D startRotationLUT;
+        public bool startRotation3D;
+        public float startRotationX;
+        public ParticleSystemCurveMode startRotationXMode =
+            ParticleSystemCurveMode.Constant;
+        public Texture2D startRotationXLUT;
+        public float startRotationY;
+        public ParticleSystemCurveMode startRotationYMode =
+            ParticleSystemCurveMode.Constant;
+        public Texture2D startRotationYLUT;
         [Range(0f, 1f)] public float flipRotation;
         public float rotationOverLifetime = 0.0f;
         public SimulationSpace simulationSpace = SimulationSpace.Local;
@@ -139,12 +159,18 @@ namespace GPUParticles
         [Min(0.0f)] public float startSizeMin = 0.1f;
         public bool randomizeStartSizeY;
         [Min(0.0f)] public float startSizeYMin = 0.1f;
+        public bool randomizeStartSizeZ;
+        [Min(0.0f)] public float startSizeZMin = 0.1f;
         public bool randomizeStartColor;
         public Color startColorMin = Color.white;
         public bool randomizeGravityModifier;
         public float gravityModifierMin;
         public bool randomizeStartRotation;
         public float startRotationMin;
+        public bool randomizeStartRotationX;
+        public float startRotationXMin;
+        public bool randomizeStartRotationY;
+        public float startRotationYMin;
         public bool randomizeRotationOverLifetime;
         public float rotationOverLifetimeMin;
 
@@ -155,6 +181,7 @@ namespace GPUParticles
         public Texture2D sizeOverLifetimeLUT;
         public bool sizeOverLifetimeSeparateAxes;
         public Texture2D sizeOverLifetimeYLUT;
+        public Texture2D sizeOverLifetimeZLUT;
 
         [Header("By Speed (LUTs)")]
         public bool colorBySpeedEnabled;
@@ -165,6 +192,7 @@ namespace GPUParticles
         public Texture2D sizeBySpeedLUT;
         public bool sizeBySpeedSeparateAxes;
         public Texture2D sizeBySpeedYLUT;
+        public Texture2D sizeBySpeedZLUT;
         public Vector2 sizeBySpeedRange = new Vector2(0f, 1f);
         public bool rotationBySpeedEnabled;
         public Texture2D rotationBySpeedLUT;
@@ -333,6 +361,9 @@ namespace GPUParticles
         // --------- Renderer (Shuriken Renderer Module mapping) ---------
         [Header("Renderer (Shuriken Mapping)")]
         public GPURenderMode renderMode = GPURenderMode.Billboard;
+        [Tooltip("Mesh used when Render Mode is Mesh. The first Shuriken " +
+                 "renderer mesh is mapped.")]
+        public Mesh renderMesh;
         public GPUAlignment  renderAlignment = GPUAlignment.View; // ignored in Stretched per Unity
         public bool allowRoll = true;
         [Range(0,1)] public float normalDirection = 1.0f; // billboard only
@@ -483,6 +514,12 @@ namespace GPUParticles
         static readonly int _StartSizeYLUT = Shader.PropertyToID("_StartSizeYLUT");
         static readonly int _StartSizeYLUTInvWidth =
             Shader.PropertyToID("_StartSizeYLUTInvWidth");
+        static readonly int _StartSizeZ = Shader.PropertyToID("_StartSizeZ");
+        static readonly int _StartSizeZMin = Shader.PropertyToID("_StartSizeZMin");
+        static readonly int _StartSizeZMode = Shader.PropertyToID("_StartSizeZMode");
+        static readonly int _StartSizeZLUT = Shader.PropertyToID("_StartSizeZLUT");
+        static readonly int _StartSizeZLUTInvWidth =
+            Shader.PropertyToID("_StartSizeZLUTInvWidth");
         static readonly int _StartColor = Shader.PropertyToID("_StartColor");
         static readonly int _StartColorMin = Shader.PropertyToID("_StartColorMin");
         static readonly int _RandomizeStartColor = Shader.PropertyToID("_RandomizeStartColor");
@@ -499,6 +536,28 @@ namespace GPUParticles
             Shader.PropertyToID("_StartRotationLUT");
         static readonly int _StartRotationLUTInvWidth =
             Shader.PropertyToID("_StartRotationLUTInvWidth");
+        static readonly int _StartRotation3D =
+            Shader.PropertyToID("_StartRotation3D");
+        static readonly int _StartRotationX =
+            Shader.PropertyToID("_StartRotationX");
+        static readonly int _StartRotationXMin =
+            Shader.PropertyToID("_StartRotationXMin");
+        static readonly int _StartRotationXMode =
+            Shader.PropertyToID("_StartRotationXMode");
+        static readonly int _StartRotationXLUT =
+            Shader.PropertyToID("_StartRotationXLUT");
+        static readonly int _StartRotationXLUTInvWidth =
+            Shader.PropertyToID("_StartRotationXLUTInvWidth");
+        static readonly int _StartRotationY =
+            Shader.PropertyToID("_StartRotationY");
+        static readonly int _StartRotationYMin =
+            Shader.PropertyToID("_StartRotationYMin");
+        static readonly int _StartRotationYMode =
+            Shader.PropertyToID("_StartRotationYMode");
+        static readonly int _StartRotationYLUT =
+            Shader.PropertyToID("_StartRotationYLUT");
+        static readonly int _StartRotationYLUTInvWidth =
+            Shader.PropertyToID("_StartRotationYLUTInvWidth");
         static readonly int _FlipRotation = Shader.PropertyToID("_FlipRotation");
         static readonly int _RotationOverLifetime = Shader.PropertyToID("_RotationOverLifetime");
         static readonly int _RotationOverLifetimeMin = Shader.PropertyToID("_RotationOverLifetimeMin");
@@ -643,6 +702,8 @@ namespace GPUParticles
         static readonly int _SizeLUTInvWidth = Shader.PropertyToID("_SizeLUTInvWidth");
         static readonly int _SizeYLUT = Shader.PropertyToID("_SizeYLUT");
         static readonly int _SizeYLUTInvWidth = Shader.PropertyToID("_SizeYLUTInvWidth");
+        static readonly int _SizeZLUT = Shader.PropertyToID("_SizeZLUT");
+        static readonly int _SizeZLUTInvWidth = Shader.PropertyToID("_SizeZLUTInvWidth");
         static readonly int _ForceOverLifetimeLUTInvWidth =
             Shader.PropertyToID("_ForceOverLifetimeLUTInvWidth");
         static readonly int _VelocityOverLifetimeLUTInvWidth =
@@ -663,6 +724,9 @@ namespace GPUParticles
         static readonly int _SizeBySpeedYLUT = Shader.PropertyToID("_SizeBySpeedYLUT");
         static readonly int _SizeBySpeedYLUTInvWidth =
             Shader.PropertyToID("_SizeBySpeedYLUTInvWidth");
+        static readonly int _SizeBySpeedZLUT = Shader.PropertyToID("_SizeBySpeedZLUT");
+        static readonly int _SizeBySpeedZLUTInvWidth =
+            Shader.PropertyToID("_SizeBySpeedZLUTInvWidth");
         static readonly int _SizeBySpeedEnabled = Shader.PropertyToID("_SizeBySpeedEnabled");
         static readonly int _SizeBySpeedRange = Shader.PropertyToID("_SizeBySpeedRange");
         static readonly int _RotationBySpeedLUT = Shader.PropertyToID("_RotationBySpeedLUT");
@@ -740,6 +804,7 @@ namespace GPUParticles
         static readonly int _AllowRoll = Shader.PropertyToID("_AllowRoll");
         static readonly int _NormalDirection = Shader.PropertyToID("_NormalDirection");
         static readonly int _Pivot = Shader.PropertyToID("_Pivot");
+        static readonly int _MeshBoundsSize = Shader.PropertyToID("_MeshBoundsSize");
         static readonly int _RendererFlip = Shader.PropertyToID("_RendererFlip");
         static readonly int _ScreenSpaceSizeClampEnabled =
             Shader.PropertyToID("_ScreenSpaceSizeClampEnabled");
@@ -1391,6 +1456,16 @@ namespace GPUParticles
                 : ParticleSystemCurveMode.Constant;
         }
 
+        public void SetStartSizeZRange(float minimum, float maximum)
+        {
+            startSizeZMin = Mathf.Max(0f, Mathf.Min(minimum, maximum));
+            startSizeZ = Mathf.Max(0f, Mathf.Max(minimum, maximum));
+            randomizeStartSizeZ = !Mathf.Approximately(startSizeZMin, startSizeZ);
+            startSizeZMode = randomizeStartSizeZ
+                ? ParticleSystemCurveMode.TwoConstants
+                : ParticleSystemCurveMode.Constant;
+        }
+
         public void SetStartColorRange(Color minimum, Color maximum, bool randomized)
         {
             startColorMin = minimum;
@@ -1417,6 +1492,28 @@ namespace GPUParticles
             startRotation = Mathf.Max(minimum, maximum);
             randomizeStartRotation = !Mathf.Approximately(startRotationMin, startRotation);
             startRotationMode = randomizeStartRotation
+                ? ParticleSystemCurveMode.TwoConstants
+                : ParticleSystemCurveMode.Constant;
+        }
+
+        public void SetStartRotationXRange(float minimum, float maximum)
+        {
+            startRotationXMin = Mathf.Min(minimum, maximum);
+            startRotationX = Mathf.Max(minimum, maximum);
+            randomizeStartRotationX =
+                !Mathf.Approximately(startRotationXMin, startRotationX);
+            startRotationXMode = randomizeStartRotationX
+                ? ParticleSystemCurveMode.TwoConstants
+                : ParticleSystemCurveMode.Constant;
+        }
+
+        public void SetStartRotationYRange(float minimum, float maximum)
+        {
+            startRotationYMin = Mathf.Min(minimum, maximum);
+            startRotationY = Mathf.Max(minimum, maximum);
+            randomizeStartRotationY =
+                !Mathf.Approximately(startRotationYMin, startRotationY);
+            startRotationYMode = randomizeStartRotationY
                 ? ParticleSystemCurveMode.TwoConstants
                 : ParticleSystemCurveMode.Constant;
         }
@@ -2087,6 +2184,14 @@ namespace GPUParticles
                 : startSizeYMode;
         }
 
+        ParticleSystemCurveMode EffectiveStartSizeZMode()
+        {
+            return startSizeZMode == ParticleSystemCurveMode.Constant &&
+                   randomizeStartSizeZ
+                ? ParticleSystemCurveMode.TwoConstants
+                : startSizeZMode;
+        }
+
         internal bool IsStartLifetimeCurveMode()
         {
             ParticleSystemCurveMode mode = EffectiveStartLifetimeMode();
@@ -2145,6 +2250,22 @@ namespace GPUParticles
                    randomizeStartRotation
                 ? ParticleSystemCurveMode.TwoConstants
                 : startRotationMode;
+        }
+
+        ParticleSystemCurveMode EffectiveStartRotationXMode()
+        {
+            return startRotationXMode == ParticleSystemCurveMode.Constant &&
+                   randomizeStartRotationX
+                ? ParticleSystemCurveMode.TwoConstants
+                : startRotationXMode;
+        }
+
+        ParticleSystemCurveMode EffectiveStartRotationYMode()
+        {
+            return startRotationYMode == ParticleSystemCurveMode.Constant &&
+                   randomizeStartRotationY
+                ? ParticleSystemCurveMode.TwoConstants
+                : startRotationYMode;
         }
 
         static float SampleLUTRow(Texture2D texture, float normalizedPosition, int row)
@@ -2949,6 +3070,20 @@ namespace GPUParticles
             // so an unscaled rotated emitter does not rotate a view-facing quad.
             return particleLocalToWorld *
                    Matrix4x4.Rotate(Quaternion.Inverse(transform.rotation));
+        }
+
+        Matrix4x4 ParticleRenderWorldMatrix(
+            Matrix4x4 particleLocalToWorld)
+        {
+            if (renderMode != GPURenderMode.Mesh ||
+                renderAlignment != GPUAlignment.Local)
+            {
+                return ParticleScaleWorldMatrix(particleLocalToWorld);
+            }
+
+            // Local-aligned mesh vertices inherit the particle system transform
+            // independently of the simulation space used for particle positions.
+            return particleLocalToWorld;
         }
 
         float CollisionParticleScaleWS(Matrix4x4 particleLocalToWorld)
@@ -3843,6 +3978,10 @@ namespace GPUParticles
                                               startSizeYLUT != null
                 ? startSizeYLUT
                 : selectedStartSizeLUT;
+            Texture2D selectedStartSizeZLUT = startSize3D &&
+                                              startSizeZLUT != null
+                ? startSizeZLUT
+                : selectedStartSizeLUT;
             Texture2D selectedSizeOverLifetimeLUT =
                 sizeOverLifetimeLUT != null
                     ? sizeOverLifetimeLUT
@@ -3852,12 +3991,21 @@ namespace GPUParticles
                 sizeOverLifetimeYLUT != null
                     ? sizeOverLifetimeYLUT
                     : selectedSizeOverLifetimeLUT;
+            Texture2D selectedSizeOverLifetimeZLUT =
+                sizeOverLifetimeSeparateAxes &&
+                sizeOverLifetimeZLUT != null
+                    ? sizeOverLifetimeZLUT
+                    : selectedSizeOverLifetimeLUT;
             Texture2D selectedSizeBySpeedLUT = sizeBySpeedLUT != null
                 ? sizeBySpeedLUT
                 : CurveLUTBuilder.GetDefaultUnitLUT();
             Texture2D selectedSizeBySpeedYLUT =
                 sizeBySpeedSeparateAxes && sizeBySpeedYLUT != null
                     ? sizeBySpeedYLUT
+                    : selectedSizeBySpeedLUT;
+            Texture2D selectedSizeBySpeedZLUT =
+                sizeBySpeedSeparateAxes && sizeBySpeedZLUT != null
+                    ? sizeBySpeedZLUT
                     : selectedSizeBySpeedLUT;
             renderMaterial.SetInt(
                 _UseSeparateSizeAxes,
@@ -3895,6 +4043,23 @@ namespace GPUParticles
             renderMaterial.SetFloat(
                 _StartSizeYLUTInvWidth,
                 InverseTextureWidth(selectedStartSizeYLUT));
+            renderMaterial.SetFloat(
+                _StartSizeZ,
+                startSize3D ? startSizeZ : startSize);
+            renderMaterial.SetFloat(
+                _StartSizeZMin,
+                startSize3D ? startSizeZMin : startSizeMin);
+            renderMaterial.SetInt(
+                _StartSizeZMode,
+                (int)(startSize3D
+                    ? EffectiveStartSizeZMode()
+                    : EffectiveStartSizeMode()));
+            renderMaterial.SetTexture(
+                _StartSizeZLUT,
+                selectedStartSizeZLUT);
+            renderMaterial.SetFloat(
+                _StartSizeZLUTInvWidth,
+                InverseTextureWidth(selectedStartSizeZLUT));
             renderMaterial.SetTexture(
                 "_SizeLUT",
                 selectedSizeOverLifetimeLUT);
@@ -3907,6 +4072,12 @@ namespace GPUParticles
             renderMaterial.SetFloat(
                 _SizeYLUTInvWidth,
                 InverseTextureWidth(selectedSizeOverLifetimeYLUT));
+            renderMaterial.SetTexture(
+                _SizeZLUT,
+                selectedSizeOverLifetimeZLUT);
+            renderMaterial.SetFloat(
+                _SizeZLUTInvWidth,
+                InverseTextureWidth(selectedSizeOverLifetimeZLUT));
             renderMaterial.SetInt(
                 _SizeBySpeedEnabled,
                 sizeBySpeedEnabled ? 1 : 0);
@@ -3929,6 +4100,12 @@ namespace GPUParticles
             renderMaterial.SetFloat(
                 _SizeBySpeedYLUTInvWidth,
                 InverseTextureWidth(selectedSizeBySpeedYLUT));
+            renderMaterial.SetTexture(
+                _SizeBySpeedZLUT,
+                selectedSizeBySpeedZLUT);
+            renderMaterial.SetFloat(
+                _SizeBySpeedZLUTInvWidth,
+                InverseTextureWidth(selectedSizeBySpeedZLUT));
             Texture2D selectedLifetimeByEmitterSpeedLUT =
                 lifetimeByEmitterSpeedLUT != null
                     ? lifetimeByEmitterSpeedLUT
@@ -4024,6 +4201,51 @@ namespace GPUParticles
             renderMaterial.SetInt(
                 _StartRotationMode,
                 (int)EffectiveStartRotationMode());
+            Texture2D selectedStartRotationXLUT = startRotation3D &&
+                                                   startRotationXLUT != null
+                ? startRotationXLUT
+                : CurveLUTBuilder.GetDefaultZeroLUT();
+            Texture2D selectedStartRotationYLUT = startRotation3D &&
+                                                   startRotationYLUT != null
+                ? startRotationYLUT
+                : CurveLUTBuilder.GetDefaultZeroLUT();
+            renderMaterial.SetInt(
+                _StartRotation3D,
+                startRotation3D ? 1 : 0);
+            renderMaterial.SetFloat(
+                _StartRotationX,
+                startRotation3D ? startRotationX : 0f);
+            renderMaterial.SetFloat(
+                _StartRotationXMin,
+                startRotation3D ? startRotationXMin : 0f);
+            renderMaterial.SetInt(
+                _StartRotationXMode,
+                (int)(startRotation3D
+                    ? EffectiveStartRotationXMode()
+                    : ParticleSystemCurveMode.Constant));
+            renderMaterial.SetTexture(
+                _StartRotationXLUT,
+                selectedStartRotationXLUT);
+            renderMaterial.SetFloat(
+                _StartRotationXLUTInvWidth,
+                InverseTextureWidth(selectedStartRotationXLUT));
+            renderMaterial.SetFloat(
+                _StartRotationY,
+                startRotation3D ? startRotationY : 0f);
+            renderMaterial.SetFloat(
+                _StartRotationYMin,
+                startRotation3D ? startRotationYMin : 0f);
+            renderMaterial.SetInt(
+                _StartRotationYMode,
+                (int)(startRotation3D
+                    ? EffectiveStartRotationYMode()
+                    : ParticleSystemCurveMode.Constant));
+            renderMaterial.SetTexture(
+                _StartRotationYLUT,
+                selectedStartRotationYLUT);
+            renderMaterial.SetFloat(
+                _StartRotationYLUTInvWidth,
+                InverseTextureWidth(selectedStartRotationYLUT));
             renderMaterial.SetFloat(_FlipRotation, Mathf.Clamp01(flipRotation));
             renderMaterial.SetFloat(_RotationOverLifetime, rotationOverLifetime);
             renderMaterial.SetFloat(_RotationOverLifetimeMin, rotationOverLifetimeMin);
@@ -4048,7 +4270,7 @@ namespace GPUParticles
                 simulationLocalToWorld);
             renderMaterial.SetMatrix(
                 _ParticleScaleWorld,
-                ParticleScaleWorldMatrix(particleLocalToWorld));
+                ParticleRenderWorldMatrix(particleLocalToWorld));
             renderMaterial.SetVector(_CameraRightWS, camera.transform.right);
             renderMaterial.SetVector(_CameraUpWS, camera.transform.up);
 
@@ -4069,6 +4291,11 @@ namespace GPUParticles
             renderMaterial.SetVector(
                 _Pivot,
                 new Vector4(pivot.x, pivot.y, pivotDepth, 0f));
+            Vector3 meshBoundsSize = renderMode == GPURenderMode.Mesh &&
+                                     renderMesh != null
+                ? renderMesh.bounds.size
+                : Vector3.one;
+            renderMaterial.SetVector(_MeshBoundsSize, meshBoundsSize);
             renderMaterial.SetVector(
                 _RendererFlip,
                 new Vector4(
@@ -4092,9 +4319,33 @@ namespace GPUParticles
             renderMaterial.SetInt(_RotateWithStretch, rotateWithStretchDirection ? 1 : 0);
             renderMaterial.SetFloat(_MinAlphaCull, minAlphaCull);
 
+            if (renderMode == GPURenderMode.Mesh && renderMesh != null)
+            {
+                renderMaterial.enableInstancing = true;
+                int subMeshCount = renderMesh.subMeshCount;
+                for (int subMeshIndex = 0;
+                     subMeshIndex < subMeshCount;
+                     subMeshIndex++)
+                {
+                    cmd.DrawMeshInstancedProcedural(
+                        renderMesh,
+                        subMeshIndex,
+                        renderMaterial,
+                        0,
+                        maxParticles);
+                }
+                return;
+            }
+
             // draw quads: 6 verts per particle
             int vertexCount = maxParticles * 6;
-            cmd.DrawProcedural(Matrix4x4.identity, renderMaterial, 0, MeshTopology.Triangles, vertexCount, 1);
+            cmd.DrawProcedural(
+                Matrix4x4.identity,
+                renderMaterial,
+                0,
+                MeshTopology.Triangles,
+                vertexCount,
+                1);
         }
     }
 }
