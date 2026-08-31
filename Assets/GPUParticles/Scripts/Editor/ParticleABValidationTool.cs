@@ -737,6 +737,20 @@ namespace GPUParticles.Editor
                 ParticleABValidationProfile.RendererPivotPoint);
         }
 
+        [MenuItem("Tools/GPU Particles/Run Horizontal Billboard A-B RT Capture")]
+        public static void RunHorizontalBillboardCaptureMenu()
+        {
+            StartTextureSheetCaptureMenu(
+                ParticleABValidationProfile.RendererHorizontalBillboardPoint);
+        }
+
+        [MenuItem("Tools/GPU Particles/Run Vertical Billboard A-B RT Capture")]
+        public static void RunVerticalBillboardCaptureMenu()
+        {
+            StartTextureSheetCaptureMenu(
+                ParticleABValidationProfile.RendererVerticalBillboardPoint);
+        }
+
         [MenuItem("Tools/GPU Particles/Run Texture Sheet Blend Lifetime A-B RT Capture")]
         public static void RunTextureSheetBlendLifetimeCaptureMenu()
         {
@@ -1537,6 +1551,22 @@ namespace GPUParticles.Editor
                 ParticleABValidationProfile.RendererPivotPoint);
         }
 
+        public static void RunBatchRendererHorizontalBillboardCapture()
+        {
+            ValidateCommonFeatureMapping();
+            StartCapture(
+                true,
+                ParticleABValidationProfile.RendererHorizontalBillboardPoint);
+        }
+
+        public static void RunBatchRendererVerticalBillboardCapture()
+        {
+            ValidateCommonFeatureMapping();
+            StartCapture(
+                true,
+                ParticleABValidationProfile.RendererVerticalBillboardPoint);
+        }
+
         public static void RunBatchTextureSheetBlendLifetimeCapture()
         {
             ValidateCommonFeatureMapping();
@@ -1824,6 +1854,8 @@ namespace GPUParticles.Editor
                 case ParticleABValidationProfile.RendererTextureUVFlipPoint:
                 case ParticleABValidationProfile.StretchedBillboardPoint:
                 case ParticleABValidationProfile.RendererPivotPoint:
+                case ParticleABValidationProfile.RendererHorizontalBillboardPoint:
+                case ParticleABValidationProfile.RendererVerticalBillboardPoint:
                 case ParticleABValidationProfile.TextureSheetBlendLifetimePoint:
                 case ParticleABValidationProfile.TextureSheetBlendSpeedPoint:
                 case ParticleABValidationProfile.TextureSheetBlendFPSPoint:
@@ -1951,6 +1983,8 @@ namespace GPUParticles.Editor
                    profile == ParticleABValidationProfile.RendererTextureUVFlipPoint ||
                    profile == ParticleABValidationProfile.StretchedBillboardPoint ||
                    profile == ParticleABValidationProfile.RendererPivotPoint ||
+                   profile == ParticleABValidationProfile.RendererHorizontalBillboardPoint ||
+                   profile == ParticleABValidationProfile.RendererVerticalBillboardPoint ||
                    profile == ParticleABValidationProfile.TextureSheetBlendLifetimePoint ||
                    profile == ParticleABValidationProfile.TextureSheetBlendSpeedPoint ||
                    profile == ParticleABValidationProfile.TextureSheetBlendFPSPoint ||
@@ -2115,6 +2149,10 @@ namespace GPUParticles.Editor
                     return "TestResults/ParticleStretchedBillboard";
                 case ParticleABValidationProfile.RendererPivotPoint:
                     return "TestResults/ParticleRendererPivot";
+                case ParticleABValidationProfile.RendererHorizontalBillboardPoint:
+                    return "TestResults/ParticleRendererHorizontalBillboard";
+                case ParticleABValidationProfile.RendererVerticalBillboardPoint:
+                    return "TestResults/ParticleRendererVerticalBillboard";
                 case ParticleABValidationProfile.TextureSheetBlendLifetimePoint:
                     return "TestResults/ParticleTextureSheetBlendLifetime";
                 case ParticleABValidationProfile.TextureSheetBlendSpeedPoint:
@@ -3702,6 +3740,7 @@ namespace GPUParticles.Editor
                 ValidateStartDelayMapping();
                 ValidateStretchedBillboardMapping();
                 ValidateRendererPivotMapping();
+                ValidateFixedBillboardMapping();
                 ValidateMaterialColorMapping();
                 ValidateMaterialBlendMapping();
                 ValidateMaterialAlphaClipMapping();
@@ -4668,6 +4707,53 @@ namespace GPUParticles.Editor
                     new Vector3(gpu.pivot.x, gpu.pivot.y, gpu.pivotDepth),
                     renderer.pivot,
                     "Changed Renderer Pivot was not remapped.");
+            }
+            finally
+            {
+                Object.DestroyImmediate(owner);
+            }
+        }
+
+        static void ValidateFixedBillboardMapping()
+        {
+            var owner = new GameObject(
+                "ParticleFixedBillboardMappingValidation");
+            owner.SetActive(false);
+            try
+            {
+                var shuriken = owner.AddComponent<ParticleSystem>();
+                ParticleSystem.MainModule main = shuriken.main;
+                main.playOnAwake = false;
+
+                ParticleSystemRenderer renderer =
+                    owner.GetComponent<ParticleSystemRenderer>();
+                renderer.renderMode =
+                    ParticleSystemRenderMode.HorizontalBillboard;
+                renderer.alignment = ParticleSystemRenderSpace.World;
+                renderer.allowRoll = false;
+
+                ShurikenConverter.Convert(owner);
+                var gpu = owner.GetComponent<GPUParticleSystem>();
+                Require(gpu != null,
+                    "Fixed Billboard conversion did not create a GPU system.");
+                Require(gpu.renderMode == GPURenderMode.HorizontalBillboard,
+                    "Horizontal Billboard render mode was not mapped.");
+                Require(gpu.renderAlignment == GPUAlignment.World,
+                    "Horizontal Billboard alignment was not mapped.");
+                Require(!gpu.allowRoll,
+                    "Horizontal Billboard Allow Roll was not mapped.");
+
+                renderer.renderMode =
+                    ParticleSystemRenderMode.VerticalBillboard;
+                renderer.alignment = ParticleSystemRenderSpace.Local;
+                renderer.allowRoll = true;
+                ShurikenConverter.Convert(owner);
+                Require(gpu.renderMode == GPURenderMode.VerticalBillboard,
+                    "Vertical Billboard render mode was not remapped.");
+                Require(gpu.renderAlignment == GPUAlignment.Local,
+                    "Vertical Billboard alignment was not remapped.");
+                Require(gpu.allowRoll,
+                    "Vertical Billboard Allow Roll was not remapped.");
             }
             finally
             {

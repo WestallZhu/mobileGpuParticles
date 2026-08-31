@@ -1210,9 +1210,10 @@ Shader "GPUParticles/UnlitBillboardURP"
                 float2 local;
                 if (_RenderMode == 1 || _RenderMode == 2)
                 {
-                    float scale = 0.70710678; // 1/sqrt(2)
-                    local = localXY[corner] * float2(W, H) * scale;
-                    local += _Pivot.xy * float2(W, H) * scale;
+                    // Fixed billboards rotate their normalized quad first,
+                    // then apply separate-axis size. This matters whenever W
+                    // and H differ; scaling first produces a different shear.
+                    local = localXY[corner] + _Pivot.xy;
                 }
                 else
                 {
@@ -1231,6 +1232,12 @@ Shader "GPUParticles/UnlitBillboardURP"
                     float s = sin(-particleAngle);
                     float c = cos(particleAngle);
                     local = float2(local.x * c - local.y * s, local.x * s + local.y * c);
+                }
+
+                if (_RenderMode == 1 || _RenderMode == 2)
+                {
+                    const float horizontalVerticalScale = 0.70710678;
+                    local *= float2(W, H) * horizontalVerticalScale;
                 }
 
                 float3 wpos;

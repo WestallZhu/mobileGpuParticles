@@ -101,7 +101,9 @@ namespace GPUParticles
         StretchedBillboardPoint,
         RendererPivotPoint,
         StartDelayCurvePoint,
-        StartDelayTwoCurvesPoint
+        StartDelayTwoCurvesPoint,
+        RendererHorizontalBillboardPoint,
+        RendererVerticalBillboardPoint
     }
 
     [DisallowMultipleComponent]
@@ -891,7 +893,7 @@ namespace GPUParticles
                     (playbackFrame + 1f) / fixedFrameRate;
                 UpdateStretchedBillboardState(nextSimulationTime);
             }
-            if (captureActive && IsRendererPivotProfile())
+            if (captureActive && UsesRendererPivotStateProfile())
             {
                 float nextSimulationTime =
                     (playbackFrame + 1f) / fixedFrameRate;
@@ -1118,6 +1120,17 @@ namespace GPUParticles
                     ParticleSystemAnimationTimeMode.Lifetime);
                 ConfigureRendererTextureUVFlipProfile();
                 ConfigureRendererPivotProfile();
+                return;
+            }
+
+            if (IsFixedBillboardProfile())
+            {
+                ConfigureTextureSheetAnimationProfile(
+                    ParticleSystemAnimationTimeMode.Lifetime);
+                ConfigureRendererTextureUVFlipProfile();
+                bool horizontal = validationProfile ==
+                    ParticleABValidationProfile.RendererHorizontalBillboardPoint;
+                ConfigureFixedBillboardProfile(horizontal);
                 return;
             }
 
@@ -4013,6 +4026,74 @@ namespace GPUParticles
             activeRendererGeometryState = state;
         }
 
+        void ConfigureFixedBillboardProfile(bool horizontal)
+        {
+            const float lifetime = 4f;
+            const float startSizeX = 3.2f;
+            const float startSizeY = 1.8f;
+            const float startRotation = 29f * Mathf.Deg2Rad;
+
+            ParticleSystem.MainModule main = shuriken.main;
+            main.startLifetime = lifetime;
+            main.startSpeed = 0f;
+            main.startSize3D = true;
+            main.startSizeX = startSizeX;
+            main.startSizeY = startSizeY;
+            main.startSizeZ = startSizeY;
+            main.startRotation = startRotation;
+            main.simulationSpace = ParticleSystemSimulationSpace.World;
+
+            shuriken.transform.rotation = Quaternion.identity;
+            gpuParticles.transform.rotation = Quaternion.identity;
+
+            ParticleSystemRenderMode shurikenRenderMode = horizontal
+                ? ParticleSystemRenderMode.HorizontalBillboard
+                : ParticleSystemRenderMode.VerticalBillboard;
+            GPURenderMode gpuRenderMode = horizontal
+                ? GPURenderMode.HorizontalBillboard
+                : GPURenderMode.VerticalBillboard;
+            if (shurikenRenderer != null)
+            {
+                shurikenRenderer.renderMode = shurikenRenderMode;
+                shurikenRenderer.alignment =
+                    ParticleSystemRenderSpace.View;
+                shurikenRenderer.allowRoll = true;
+                shurikenRenderer.pivot = Vector3.zero;
+            }
+
+            gpuParticles.SetStartLifetimeRange(lifetime, lifetime);
+            gpuParticles.SetStartSpeedRange(0f, 0f);
+            gpuParticles.SetStartSizeRange(startSizeX, startSizeX);
+            gpuParticles.SetStartSizeYRange(startSizeY, startSizeY);
+            gpuParticles.startSize3D = true;
+            gpuParticles.SetStartRotationRange(
+                startRotation,
+                startRotation);
+            gpuParticles.simulationSpace = SimulationSpace.World;
+            gpuParticles.renderMode = gpuRenderMode;
+            gpuParticles.renderAlignment = GPUAlignment.View;
+            gpuParticles.allowRoll = true;
+            gpuParticles.pivot = Vector2.zero;
+            gpuParticles.pivotDepth = 0f;
+
+            if (captureCamera != null)
+            {
+                Vector3 center = 0.5f *
+                    (shuriken.transform.position +
+                     gpuParticles.transform.position);
+                Vector3 cameraOffset = horizontal
+                    ? new Vector3(0f, 11f, -16f)
+                    : new Vector3(0f, 5f, -18f);
+                captureCamera.transform.position = center + cameraOffset;
+                captureCamera.transform.LookAt(center, Vector3.up);
+                captureCamera.fieldOfView = 45f;
+                captureCameraBasePositionWS =
+                    captureCamera.transform.position;
+            }
+
+            UpdateRendererPivotState(0f);
+        }
+
         void ConfigureMaterialColorProfile()
         {
             const float lifetime = 4f;
@@ -5514,9 +5595,23 @@ namespace GPUParticles
                 ParticleABValidationProfile.RendererPivotPoint;
         }
 
+        bool IsFixedBillboardProfile()
+        {
+            return validationProfile ==
+                       ParticleABValidationProfile.RendererHorizontalBillboardPoint ||
+                   validationProfile ==
+                       ParticleABValidationProfile.RendererVerticalBillboardPoint;
+        }
+
+        bool UsesRendererPivotStateProfile()
+        {
+            return IsRendererPivotProfile() || IsFixedBillboardProfile();
+        }
+
         bool UsesRendererGeometrySignatureProfile()
         {
-            return IsStretchedBillboardProfile() || IsRendererPivotProfile();
+            return IsStretchedBillboardProfile() ||
+                   UsesRendererPivotStateProfile();
         }
 
         bool IsMaterialBlendProfile()
@@ -8232,7 +8327,7 @@ namespace GPUParticles
                 return;
             }
 
-            Vector2 stateSignature = IsRendererPivotProfile()
+            Vector2 stateSignature = UsesRendererPivotStateProfile()
                 ? signature.CenterOffset
                 : signature.ColorCentroids[0];
 
@@ -11798,6 +11893,8 @@ namespace GPUParticles
                             gpuRendererGeometryStateSignatureSamples) >= 0.08f;
                     break;
 
+                case ParticleABValidationProfile.RendererHorizontalBillboardPoint:
+                case ParticleABValidationProfile.RendererVerticalBillboardPoint:
                 case ParticleABValidationProfile.RendererPivotPoint:
                     profileSpecificPassed =
                         maximumMeanSpeedError <= 0.01f &&
