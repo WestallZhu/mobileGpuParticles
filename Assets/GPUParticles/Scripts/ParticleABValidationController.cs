@@ -99,7 +99,9 @@ namespace GPUParticles
         MaterialCameraFadingPoint,
         RendererTextureUVFlipPoint,
         StretchedBillboardPoint,
-        RendererPivotPoint
+        RendererPivotPoint,
+        StartDelayCurvePoint,
+        StartDelayTwoCurvesPoint
     }
 
     [DisallowMultipleComponent]
@@ -209,6 +211,9 @@ namespace GPUParticles
         MarkerPixelBounds currentShurikenNoiseSizeBounds;
         int maximumShurikenParticleCount;
         int maximumGPUParticleCount;
+        float shurikenFirstEmissionTime;
+        float gpuFirstEmissionTime;
+        bool startDelayEmptyWindowObserved;
         int textureSheetComparableSamples;
         int textureSheetFrameMismatches;
         int textureSheetClassificationFailures;
@@ -496,6 +501,12 @@ namespace GPUParticles
         const float StartLifetimeProfileDuration = 2f;
         const float StartLifetimeCurveTickPhase = 0.2f;
         const float StartSpeedProfileDuration = 2f;
+        const uint StartDelayProfileSeed = 123u;
+        const float StartDelayCurveExpected = 0.2f;
+        const float StartDelayTwoCurvesMinimum = 0.25f;
+        const float StartDelayTwoCurvesMaximum = 0.85f;
+        const float StartDelayTwoCurvesExpected = 0.6098163f;
+        const float StartDelayProfileSystemDuration = 0.8f;
         const float StartSizeProfileDuration = 2f;
         const float GravityModifierProfileDuration = 2f;
         const float StartRotationProfileDuration = 2f;
@@ -1237,6 +1248,20 @@ namespace GPUParticles
             }
 
             if (validationProfile ==
+                ParticleABValidationProfile.StartDelayCurvePoint)
+            {
+                ConfigureStartDelayProfile(false);
+                return;
+            }
+
+            if (validationProfile ==
+                ParticleABValidationProfile.StartDelayTwoCurvesPoint)
+            {
+                ConfigureStartDelayProfile(true);
+                return;
+            }
+
+            if (validationProfile ==
                 ParticleABValidationProfile.StartSizeCurvePoint)
             {
                 ConfigureStartSizeProfile(false);
@@ -1749,6 +1774,70 @@ namespace GPUParticles
                 startSpeed,
                 assetName: "StartSpeed_Profile_LUT");
             gpuParticles.startSpeedLUT = profileStartSpeedLUT;
+        }
+
+        void ConfigureStartDelayProfile(bool twoCurves)
+        {
+            randomSeed = StartDelayProfileSeed;
+            ConfigureEmissionPointBase(
+                StartDelayProfileSystemDuration,
+                false);
+
+            var main = shuriken.main;
+            main.maxParticles = 1;
+            main.startLifetime = 2f;
+            main.startSpeed = 0f;
+            main.startSize = 2.25f;
+            if (twoCurves)
+            {
+                AnimationCurve minimumCurve = AnimationCurve.Linear(
+                    0f,
+                    StartDelayTwoCurvesMinimum,
+                    1f,
+                    0.55f);
+                AnimationCurve maximumCurve = AnimationCurve.Linear(
+                    0f,
+                    StartDelayTwoCurvesMaximum,
+                    1f,
+                    0.95f);
+                main.startDelay = new ParticleSystem.MinMaxCurve(
+                    1f,
+                    minimumCurve,
+                    maximumCurve);
+            }
+            else
+            {
+                main.startDelay = new ParticleSystem.MinMaxCurve(
+                    1f,
+                    AnimationCurve.Linear(
+                        0f,
+                        StartDelayCurveExpected,
+                        1f,
+                        0.8f));
+            }
+
+            var emission = shuriken.emission;
+            emission.rateOverTime = 0f;
+            emission.rateOverDistance = 0f;
+            var bursts = new[] { new ParticleSystem.Burst(0f, 1) };
+            emission.SetBursts(bursts);
+
+            gpuParticles.maxParticles = main.maxParticles;
+            gpuParticles.SetStartLifetimeRange(2f, 2f);
+            gpuParticles.SetStartSpeedRange(0f, 0f);
+            gpuParticles.SetStartSizeRange(2.25f, 2.25f);
+            gpuParticles.emissionRandomSeed = StartDelayProfileSeed;
+            gpuParticles.SetEmissionStartDelayRange(
+                twoCurves
+                    ? StartDelayTwoCurvesMinimum
+                    : StartDelayCurveExpected,
+                twoCurves
+                    ? StartDelayTwoCurvesMaximum
+                    : StartDelayCurveExpected);
+            gpuParticles.SetEmissionRateOverTime(emission.rateOverTime);
+            gpuParticles.SetEmissionRateOverDistance(
+                emission.rateOverDistance);
+            gpuParticles.SetEmissionBursts(bursts);
         }
 
         void ConfigureStartLifetimeProfile(bool twoCurves)
@@ -6695,6 +6784,27 @@ namespace GPUParticles
                        ParticleABValidationProfile.StartSpeedTwoCurvesPoint;
         }
 
+        bool IsStartDelayProfile()
+        {
+            return validationProfile ==
+                       ParticleABValidationProfile.StartDelayCurvePoint ||
+                   validationProfile ==
+                       ParticleABValidationProfile.StartDelayTwoCurvesPoint;
+        }
+
+        float ExpectedStartDelay()
+        {
+            if (validationProfile ==
+                    ParticleABValidationProfile.StartDelayTwoCurvesPoint)
+            {
+                return StartDelayTwoCurvesExpected;
+            }
+            return validationProfile ==
+                    ParticleABValidationProfile.StartDelayCurvePoint
+                ? StartDelayCurveExpected
+                : float.NaN;
+        }
+
         bool IsStartSizeProfile()
         {
             return validationProfile ==
@@ -6828,6 +6938,9 @@ namespace GPUParticles
             gpuShapeArcBinMask = 0;
             maximumShurikenParticleCount = 0;
             maximumGPUParticleCount = 0;
+            shurikenFirstEmissionTime = float.PositiveInfinity;
+            gpuFirstEmissionTime = float.PositiveInfinity;
+            startDelayEmptyWindowObserved = false;
             textureSheetComparableSamples = 0;
             textureSheetFrameMismatches = 0;
             textureSheetClassificationFailures = 0;
@@ -7167,16 +7280,18 @@ namespace GPUParticles
         {
             SetDisplayMode(mode);
             Vector3 captureCameraPosition = captureCamera.transform.position;
-            bool normalizeRendererGeometryView =
-                UsesRendererGeometrySignatureProfile() &&
+            bool normalizeIndividualABView =
+                (UsesRendererGeometrySignatureProfile() ||
+                 IsStartDelayProfile()) &&
                 mode == ParticleABDisplayMode.GPUOnly &&
                 shuriken != null &&
                 gpuParticles != null;
-            if (normalizeRendererGeometryView)
+            if (normalizeIndividualABView)
             {
                 // Keep the side-by-side Both image useful for inspection, but
                 // render the individual A/B images from identical relative
-                // camera positions so perspective does not mask geometry errors.
+                // camera positions so timing or geometry differences remain
+                // directly comparable.
                 captureCamera.transform.position +=
                     gpuParticles.transform.position -
                     shuriken.transform.position;
@@ -7296,7 +7411,7 @@ namespace GPUParticles
                 ? ClassifyMarkerBounds(cameraImage)
                 : default;
             ObserveScalingModeBounds(mode, scalingBounds);
-            if (normalizeRendererGeometryView)
+            if (normalizeIndividualABView)
             {
                 captureCamera.transform.position = captureCameraPosition;
             }
@@ -9431,6 +9546,10 @@ namespace GPUParticles
                 ? gpuStartRotationSum / gpuCount
                 : 0f;
 
+            ObserveStartDelayMetrics(
+                elapsed,
+                shurikenCount,
+                gpuCount);
             maximumCountDelta = Mathf.Max(maximumCountDelta, Mathf.Abs(gpuCount - shurikenCount));
             maximumShurikenParticleCount = Mathf.Max(maximumShurikenParticleCount, shurikenCount);
             maximumGPUParticleCount = Mathf.Max(maximumGPUParticleCount, gpuCount);
@@ -9529,6 +9648,32 @@ namespace GPUParticles
             line.Append(gpuMeanLifetime.ToString("R", CultureInfo.InvariantCulture));
             line.Append('\n');
             File.AppendAllText(metricsPath, line.ToString());
+        }
+
+        void ObserveStartDelayMetrics(
+            float elapsed,
+            int shurikenCount,
+            int gpuCount)
+        {
+            if (!IsStartDelayProfile()) return;
+
+            float halfFrame = 0.5f / Mathf.Max(1, fixedFrameRate);
+            if (shurikenCount == 0 && gpuCount == 0 &&
+                elapsed < ExpectedStartDelay() - halfFrame)
+            {
+                startDelayEmptyWindowObserved = true;
+            }
+
+            if (shurikenCount > 0 &&
+                float.IsPositiveInfinity(shurikenFirstEmissionTime))
+            {
+                shurikenFirstEmissionTime = elapsed;
+            }
+            if (gpuCount > 0 &&
+                float.IsPositiveInfinity(gpuFirstEmissionTime))
+            {
+                gpuFirstEmissionTime = elapsed;
+            }
         }
 
         void ObserveRingBufferMetrics(
@@ -10995,6 +11140,30 @@ namespace GPUParticles
                                             gpuStartSpeedBlendRange.Covers(0f, 1f);
                     break;
 
+                case ParticleABValidationProfile.StartDelayCurvePoint:
+                case ParticleABValidationProfile.StartDelayTwoCurvesPoint:
+                {
+                    float timingTolerance =
+                        1.1f / Mathf.Max(1, fixedFrameRate);
+                    float expectedDelay = ExpectedStartDelay();
+                    profileSpecificPassed =
+                        startDelayEmptyWindowObserved &&
+                        !float.IsPositiveInfinity(
+                            shurikenFirstEmissionTime) &&
+                        !float.IsPositiveInfinity(gpuFirstEmissionTime) &&
+                        Mathf.Abs(
+                            shurikenFirstEmissionTime -
+                            gpuFirstEmissionTime) <= timingTolerance &&
+                        Mathf.Abs(
+                            shurikenFirstEmissionTime - expectedDelay) <=
+                                timingTolerance &&
+                        Mathf.Abs(gpuFirstEmissionTime - expectedDelay) <=
+                            timingTolerance &&
+                        maximumShurikenParticleCount == 1 &&
+                        maximumGPUParticleCount == 1;
+                    break;
+                }
+
                 case ParticleABValidationProfile.StartSizeCurvePoint:
                     profileSpecificPassed = maximumMeanSpeedError <= 0.001f &&
                                             maximumMeanSizeError <= 0.02f &&
@@ -11774,6 +11943,8 @@ namespace GPUParticles
                         ? 0.03f
                     : IsCullingProfile()
                         ? 0.05f
+                    : IsStartDelayProfile()
+                        ? 0.02f
                     : 0.001f;
             bool passed = maximumCountDelta <= allowedCountDelta &&
                           maximumMeanAgeError <= allowedMeanAgeError &&
@@ -11932,6 +12103,12 @@ namespace GPUParticles
                 $"gpuShapeArcAngleRange={FormatRange(gpuShapeArcAngleRange)}; " +
                 $"maxShurikenCount={maximumShurikenParticleCount}; " +
                 $"maxGPUCount={maximumGPUParticleCount}; " +
+                $"startDelayEmptyWindowObserved=" +
+                $"{startDelayEmptyWindowObserved}; " +
+                $"startDelayExpected={ExpectedStartDelay():R}; " +
+                $"shurikenFirstEmissionTime=" +
+                $"{shurikenFirstEmissionTime:R}; " +
+                $"gpuFirstEmissionTime={gpuFirstEmissionTime:R}; " +
                 $"textureSheetComparableSamples={textureSheetComparableSamples}; " +
                 $"textureSheetFrameMismatches={textureSheetFrameMismatches}; " +
                 $"textureSheetClassificationFailures={textureSheetClassificationFailures}; " +

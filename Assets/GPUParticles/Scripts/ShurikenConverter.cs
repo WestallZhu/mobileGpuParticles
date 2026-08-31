@@ -55,7 +55,7 @@ namespace GPUParticles
             ApplyMaterialParameters(psr, gpu);
             ApplyTextureSheetAnimation(ps, gpu, owner);
 
-            ApplyEmission(ps, gpu, owner);
+            ApplyEmission(ps, gpu);
             ApplyColorAndSizeOverLifetime(ps, gpu, owner);
             ApplyColorAndSizeBySpeed(ps, gpu, owner);
             ApplyRotationBySpeed(ps, gpu, owner);
@@ -305,7 +305,7 @@ namespace GPUParticles
             ApplyMaterialParameters(psr, gpu);
             ApplyTextureSheetAnimation(particleSystem, gpu, gpuChild);
 
-            ApplyEmission(particleSystem, gpu, gpuChild);
+            ApplyEmission(particleSystem, gpu);
             ApplyColorAndSizeOverLifetime(particleSystem, gpu, gpuChild);
             ApplyColorAndSizeBySpeed(particleSystem, gpu, gpuChild);
             ApplyRotationBySpeed(particleSystem, gpu, gpuChild);
@@ -1338,8 +1338,7 @@ namespace GPUParticles
 
         static void ApplyEmission(
             ParticleSystem particleSystem,
-            GPUParticleSystem gpu,
-            Object context)
+            GPUParticleSystem gpu)
         {
             var main = particleSystem.main;
             var emission = particleSystem.emission;
@@ -1353,15 +1352,12 @@ namespace GPUParticles
             gpu.SetEmissionRateOverTime(emission.rateOverTime);
             gpu.SetEmissionRateOverDistance(emission.rateOverDistance);
 
-            bool supportedStartDelay = ShurikenMinMaxUtility.TryGetConstantRange(
-                main.startDelay, out float minimumDelay, out float maximumDelay);
+            ShurikenMinMaxUtility.GetRangeAtTime(
+                main.startDelay,
+                0f,
+                out float minimumDelay,
+                out float maximumDelay);
             gpu.SetEmissionStartDelayRange(minimumDelay, maximumDelay);
-            if (!supportedStartDelay)
-            {
-                Debug.LogWarning(
-                    "Start Delay Curve modes currently use the value at t=0.",
-                    context);
-            }
 
             var bursts = new ParticleSystem.Burst[emission.burstCount];
             emission.GetBursts(bursts);

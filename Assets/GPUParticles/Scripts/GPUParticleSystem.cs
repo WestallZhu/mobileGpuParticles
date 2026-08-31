@@ -377,6 +377,11 @@ namespace GPUParticles
         float emissionTime;
         float latestParticleBirthTime;
         bool particleBirthObserved;
+        bool emissionStartDelayCacheValid;
+        float cachedEmissionStartDelayMinimum;
+        float cachedEmissionStartDelayMaximum;
+        uint cachedEmissionStartDelaySeed;
+        float cachedResolvedEmissionStartDelay;
         Vector3 previousEmitterPositionWS;
         bool previousEmitterPositionValid;
         Vector3 previousEmitterVelocityWS;
@@ -2183,12 +2188,32 @@ namespace GPUParticles
 
         float ResolveEmissionStartDelay()
         {
-            return ResolveRandomRange(
-                randomizeEmissionStartDelay,
-                emissionStartDelayMin,
-                emissionStartDelay,
-                emissionRandomSeed,
-                0xA24BAED4u);
+            if (!randomizeEmissionStartDelay)
+            {
+                return emissionStartDelay;
+            }
+
+            if (!emissionStartDelayCacheValid ||
+                !Mathf.Approximately(
+                    cachedEmissionStartDelayMinimum,
+                    emissionStartDelayMin) ||
+                !Mathf.Approximately(
+                    cachedEmissionStartDelayMaximum,
+                    emissionStartDelay) ||
+                cachedEmissionStartDelaySeed != emissionRandomSeed)
+            {
+                cachedResolvedEmissionStartDelay = Mathf.LerpUnclamped(
+                    emissionStartDelayMin,
+                    emissionStartDelay,
+                    ShurikenMinMaxUtility.SampleSystemRandomValue(
+                        emissionRandomSeed));
+                cachedEmissionStartDelayMinimum = emissionStartDelayMin;
+                cachedEmissionStartDelayMaximum = emissionStartDelay;
+                cachedEmissionStartDelaySeed = emissionRandomSeed;
+                emissionStartDelayCacheValid = true;
+            }
+
+            return cachedResolvedEmissionStartDelay;
         }
 
         void CalculateContinuousEmission(

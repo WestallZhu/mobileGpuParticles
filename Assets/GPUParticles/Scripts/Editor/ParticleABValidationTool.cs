@@ -198,6 +198,37 @@ namespace GPUParticles.Editor
             StartCapture(false, profile);
         }
 
+        [MenuItem("Tools/GPU Particles/Run Start Delay Curve A-B RT Capture")]
+        public static void RunStartDelayCurveCaptureMenu()
+        {
+            StartStartDelayCapture(
+                ParticleABValidationProfile.StartDelayCurvePoint);
+        }
+
+        [MenuItem("Tools/GPU Particles/Run Start Delay Two Curves A-B RT Capture")]
+        public static void RunStartDelayTwoCurvesCaptureMenu()
+        {
+            StartStartDelayCapture(
+                ParticleABValidationProfile.StartDelayTwoCurvesPoint);
+        }
+
+        static void StartStartDelayCapture(
+            ParticleABValidationProfile profile)
+        {
+            if (EditorApplication.isPlaying)
+            {
+                Debug.LogWarning(
+                    "Stop Play Mode before starting a deterministic A/B capture.");
+                return;
+            }
+
+            if (!EditorSceneManager.SaveCurrentModifiedScenesIfUserWantsTo())
+            {
+                return;
+            }
+            StartCapture(false, profile);
+        }
+
         [MenuItem("Tools/GPU Particles/Run Start Size Curve A-B RT Capture")]
         public static void RunStartSizeCurveCaptureMenu()
         {
@@ -1036,6 +1067,22 @@ namespace GPUParticles.Editor
                 ParticleABValidationProfile.StartSpeedTwoCurvesPoint);
         }
 
+        public static void RunBatchStartDelayCurveCapture()
+        {
+            ValidateCommonFeatureMapping();
+            StartCapture(
+                true,
+                ParticleABValidationProfile.StartDelayCurvePoint);
+        }
+
+        public static void RunBatchStartDelayTwoCurvesCapture()
+        {
+            ValidateCommonFeatureMapping();
+            StartCapture(
+                true,
+                ParticleABValidationProfile.StartDelayTwoCurvesPoint);
+        }
+
         public static void RunBatchStartSizeCurveCapture()
         {
             ValidateCommonFeatureMapping();
@@ -1694,6 +1741,10 @@ namespace GPUParticles.Editor
                 case ParticleABValidationProfile.BaselineCone: return 10f;
                 case ParticleABValidationProfile.ForceOverLifetimePoint: return 3f;
                 case ParticleABValidationProfile.RandomizedMainPoint: return 2f;
+                case ParticleABValidationProfile.StartDelayCurvePoint:
+                    return 0.9f;
+                case ParticleABValidationProfile.StartDelayTwoCurvesPoint:
+                    return 1.2f;
                 case ParticleABValidationProfile.StartColorGradientPoint:
                 case ParticleABValidationProfile.StartColorTwoGradientsPoint:
                 case ParticleABValidationProfile.StartColorRandomColorPoint:
@@ -1797,6 +1848,12 @@ namespace GPUParticles.Editor
 
         static float CaptureFrequency(ParticleABValidationProfile profile)
         {
+            if (profile == ParticleABValidationProfile.StartDelayCurvePoint ||
+                profile ==
+                    ParticleABValidationProfile.StartDelayTwoCurvesPoint)
+            {
+                return 60f;
+            }
             if (profile ==
                 ParticleABValidationProfile.CollisionPlaneBouncePoint)
             {
@@ -1916,6 +1973,10 @@ namespace GPUParticles.Editor
                     return "TestResults/ParticleCommonFeatures";
                 case ParticleABValidationProfile.RandomizedMainPoint:
                     return "TestResults/ParticleRandomizedMain";
+                case ParticleABValidationProfile.StartDelayCurvePoint:
+                    return "TestResults/ParticleStartDelayCurve";
+                case ParticleABValidationProfile.StartDelayTwoCurvesPoint:
+                    return "TestResults/ParticleStartDelayTwoCurves";
                 case ParticleABValidationProfile.StartColorGradientPoint:
                     return "TestResults/ParticleStartColorGradient";
                 case ParticleABValidationProfile.StartColorTwoGradientsPoint:
@@ -3638,6 +3699,7 @@ namespace GPUParticles.Editor
                 ValidateCollisionMapping();
                 ValidateTextureSheetFrameBlendingMapping();
                 ValidateRendererTextureUVFlipMapping();
+                ValidateStartDelayMapping();
                 ValidateStretchedBillboardMapping();
                 ValidateRendererPivotMapping();
                 ValidateMaterialColorMapping();
@@ -4425,6 +4487,90 @@ namespace GPUParticles.Editor
                 {
                     CleanupGeneratedValidationTexture(generatedTextures[i]);
                 }
+            }
+        }
+
+        static void ValidateStartDelayMapping()
+        {
+            var owner = new GameObject(
+                "ParticleStartDelayMappingValidation");
+            owner.SetActive(false);
+            try
+            {
+                var shuriken = owner.AddComponent<ParticleSystem>();
+                shuriken.useAutoRandomSeed = false;
+                shuriken.randomSeed = 123u;
+                ParticleSystem.MainModule main = shuriken.main;
+                main.playOnAwake = false;
+                main.startDelay = new ParticleSystem.MinMaxCurve(
+                    2f,
+                    AnimationCurve.Linear(0f, 0.125f, 1f, 0.3f),
+                    AnimationCurve.Linear(0f, 0.425f, 1f, 0.5f));
+
+                ShurikenConverter.Convert(owner);
+                var gpu = owner.GetComponent<GPUParticleSystem>();
+                Require(gpu != null,
+                    "Start Delay conversion did not create a GPU system.");
+                Require(gpu.randomizeEmissionStartDelay,
+                    "Start Delay Two Curves randomization was not mapped.");
+                RequireApproximately(
+                    gpu.emissionStartDelayMin,
+                    0.25f,
+                    "Start Delay Two Curves minimum at t=0");
+                RequireApproximately(
+                    gpu.emissionStartDelay,
+                    0.85f,
+                    "Start Delay Two Curves maximum at t=0");
+                Require(gpu.emissionRandomSeed == 123u,
+                    "Start Delay random seed was not mapped.");
+
+                UnityEngine.Random.State savedRandomState =
+                    UnityEngine.Random.state;
+                try
+                {
+                    UnityEngine.Random.InitState(24680);
+                    _ = UnityEngine.Random.value;
+                    UnityEngine.Random.State stateBeforeSampling =
+                        UnityEngine.Random.state;
+                    float delayBlend =
+                        ShurikenMinMaxUtility.SampleSystemRandomValue(123u);
+                    float actualNextValue = UnityEngine.Random.value;
+                    UnityEngine.Random.state = stateBeforeSampling;
+                    float expectedNextValue = UnityEngine.Random.value;
+
+                    Require(
+                        Mathf.Abs(delayBlend - 0.59969384f) <= 1e-6f,
+                        "Start Delay did not reproduce Shuriken's seeded " +
+                        "system-level random sample.");
+                    Require(
+                        Mathf.Abs(actualNextValue - expectedNextValue) <=
+                            1e-7f,
+                        "Start Delay sampling changed Unity's global Random " +
+                        "sequence.");
+                }
+                finally
+                {
+                    UnityEngine.Random.state = savedRandomState;
+                }
+
+                main.startDelay = new ParticleSystem.MinMaxCurve(
+                    2f,
+                    AnimationCurve.Linear(0f, 0.1f, 1f, 0.4f));
+                ShurikenConverter.Convert(owner);
+                Require(!gpu.randomizeEmissionStartDelay,
+                    "Start Delay Curve was incorrectly randomized.");
+                RequireApproximately(
+                    gpu.emissionStartDelayMin,
+                    0.2f,
+                    "Start Delay Curve minimum at t=0");
+                RequireApproximately(
+                    gpu.emissionStartDelay,
+                    0.2f,
+                    "Start Delay Curve value at t=0");
+            }
+            finally
+            {
+                Object.DestroyImmediate(owner);
             }
         }
 

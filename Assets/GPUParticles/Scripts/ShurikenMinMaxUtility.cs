@@ -28,6 +28,53 @@ namespace GPUParticles
             }
         }
 
+        public static void GetRangeAtTime(
+            ParticleSystem.MinMaxCurve curve,
+            float time,
+            out float minimum,
+            out float maximum)
+        {
+            switch (curve.mode)
+            {
+                case ParticleSystemCurveMode.Constant:
+                    minimum = curve.constant;
+                    maximum = curve.constant;
+                    return;
+
+                case ParticleSystemCurveMode.TwoConstants:
+                    minimum = curve.constantMin;
+                    maximum = curve.constantMax;
+                    return;
+
+                case ParticleSystemCurveMode.TwoCurves:
+                    minimum = curve.Evaluate(time, 0f);
+                    maximum = curve.Evaluate(time, 1f);
+                    return;
+
+                default:
+                    maximum = curve.Evaluate(time, 1f);
+                    minimum = maximum;
+                    return;
+            }
+        }
+
+        public static float SampleSystemRandomValue(uint randomSeed)
+        {
+            // Shuriken resolves a randomized Main/Start Delay once per system
+            // from the first scripting Random sample for the system seed.
+            // Preserve the caller's global Random sequence while reproducing it.
+            Random.State savedState = Random.state;
+            try
+            {
+                Random.InitState(unchecked((int)randomSeed));
+                return Random.value;
+            }
+            finally
+            {
+                Random.state = savedState;
+            }
+        }
+
         public static bool TryGetColorRange(
             ParticleSystem.MinMaxGradient gradient,
             out Color minimum,

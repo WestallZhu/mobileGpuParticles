@@ -703,8 +703,15 @@ namespace GPUParticles
             var main = sourceParticleSystem.main;
             if (main.loop) return true;
 
+            ShurikenMinMaxUtility.GetRangeAtTime(
+                main.startDelay,
+                0f,
+                out float minimumStartDelay,
+                out float maximumStartDelay);
             float naturalEmissionEnd =
-                Mathf.Max(0f, main.startDelay.constantMax) +
+                Mathf.Max(
+                    0f,
+                    Mathf.Max(minimumStartDelay, maximumStartDelay)) +
                 Mathf.Max(0.05f, main.duration);
             return sourceParticleSystem.time < naturalEmissionEnd - 1e-4f;
         }
@@ -731,8 +738,11 @@ namespace GPUParticles
             targetGPUParticleSystem.SetEmissionRateOverTime(emission.rateOverTime);
             targetGPUParticleSystem.SetEmissionRateOverDistance(emission.rateOverDistance);
 
-            ShurikenMinMaxUtility.TryGetConstantRange(
-                main.startDelay, out float minimumDelay, out float maximumDelay);
+            ShurikenMinMaxUtility.GetRangeAtTime(
+                main.startDelay,
+                0f,
+                out float minimumDelay,
+                out float maximumDelay);
             targetGPUParticleSystem.SetEmissionStartDelayRange(minimumDelay, maximumDelay);
 
             var bursts = new ParticleSystem.Burst[emission.burstCount];
