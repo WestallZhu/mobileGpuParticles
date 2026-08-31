@@ -58,7 +58,7 @@ namespace GPUParticles
             ApplyEmission(ps, gpu);
             ApplyColorAndSizeOverLifetime(ps, gpu, owner);
             ApplyColorAndSizeBySpeed(ps, gpu, owner);
-            ApplyRotationBySpeed(ps, gpu, owner);
+            ApplyRotationBySpeed(ps, gpu);
 
             // ---- Shape TRS ----
             gpu.shapeLocalPosition = shape.position;
@@ -319,7 +319,7 @@ namespace GPUParticles
             ApplyEmission(particleSystem, gpu);
             ApplyColorAndSizeOverLifetime(particleSystem, gpu, gpuChild);
             ApplyColorAndSizeBySpeed(particleSystem, gpu, gpuChild);
-            ApplyRotationBySpeed(particleSystem, gpu, gpuChild);
+            ApplyRotationBySpeed(particleSystem, gpu);
 
             // ---- Shape TRS ----
             gpu.shapeLocalPosition = shape.position;
@@ -878,21 +878,21 @@ namespace GPUParticles
             gpu.flipRotation = Mathf.Clamp01(main.flipRotation);
 
             var rotationOverLifetime = particleSystem.rotationOverLifetime;
+            gpu.rotationOverLifetimeSeparateAxes =
+                rotationOverLifetime.enabled &&
+                rotationOverLifetime.separateAxes;
             if (!rotationOverLifetime.enabled)
             {
                 gpu.SetRotationOverLifetimeRange(0f, 0f);
                 gpu.rotationOverLifetimeIntegralLUT =
                     CurveLUTBuilder.GetDefaultZeroLUT();
+                gpu.rotationOverLifetimeXIntegralLUT =
+                    CurveLUTBuilder.GetDefaultZeroLUT();
+                gpu.rotationOverLifetimeYIntegralLUT =
+                    CurveLUTBuilder.GetDefaultZeroLUT();
             }
             else
             {
-                if (rotationOverLifetime.separateAxes)
-                {
-                    Debug.LogWarning(
-                        "GPU Rotation over Lifetime currently maps Z roll; " +
-                        "X/Y axes are not yet supported.",
-                        context);
-                }
                 ParticleSystem.MinMaxCurve rotationCurve = rotationOverLifetime.z;
                 gpu.SetRotationOverLifetimeRange(
                     rotationCurve.Evaluate(1f, 0f),
@@ -901,6 +901,22 @@ namespace GPUParticles
                     rotationCurve,
                     saveAsAsset: true,
                     assetName: "RotationOverLife_IntegralLUT");
+                gpu.rotationOverLifetimeXIntegralLUT =
+                    rotationOverLifetime.separateAxes
+                        ? CurveLUTBuilder.BuildIntegral(
+                            rotationOverLifetime.x,
+                            saveAsAsset: true,
+                            assetName:
+                                "RotationOverLifeX_IntegralLUT")
+                        : CurveLUTBuilder.GetDefaultZeroLUT();
+                gpu.rotationOverLifetimeYIntegralLUT =
+                    rotationOverLifetime.separateAxes
+                        ? CurveLUTBuilder.BuildIntegral(
+                            rotationOverLifetime.y,
+                            saveAsAsset: true,
+                            assetName:
+                                "RotationOverLifeY_IntegralLUT")
+                        : CurveLUTBuilder.GetDefaultZeroLUT();
             }
         }
 
@@ -1031,20 +1047,13 @@ namespace GPUParticles
 
         static void ApplyRotationBySpeed(
             ParticleSystem particleSystem,
-            GPUParticleSystem gpu,
-            Object context)
+            GPUParticleSystem gpu)
         {
             var rotation = particleSystem.rotationBySpeed;
             gpu.rotationBySpeedEnabled = rotation.enabled;
+            gpu.rotationBySpeedSeparateAxes =
+                rotation.enabled && rotation.separateAxes;
             gpu.SetRotationBySpeedRange(rotation.range);
-
-            if (rotation.enabled && rotation.separateAxes)
-            {
-                Debug.LogWarning(
-                    "GPU Rotation by Speed currently maps Z roll; X/Y axes " +
-                    "are not yet supported.",
-                    context);
-            }
 
             gpu.rotationBySpeedLUT = rotation.enabled
                 ? CurveLUTBuilder.BuildSigned(
@@ -1052,6 +1061,20 @@ namespace GPUParticles
                     saveAsAsset: true,
                     assetName: "RotationBySpeed_LUT")
                 : CurveLUTBuilder.GetDefaultZeroLUT();
+            gpu.rotationBySpeedXLUT =
+                rotation.enabled && rotation.separateAxes
+                    ? CurveLUTBuilder.BuildSigned(
+                        rotation.x,
+                        saveAsAsset: true,
+                        assetName: "RotationBySpeedX_LUT")
+                    : CurveLUTBuilder.GetDefaultZeroLUT();
+            gpu.rotationBySpeedYLUT =
+                rotation.enabled && rotation.separateAxes
+                    ? CurveLUTBuilder.BuildSigned(
+                        rotation.y,
+                        saveAsAsset: true,
+                        assetName: "RotationBySpeedY_LUT")
+                    : CurveLUTBuilder.GetDefaultZeroLUT();
         }
 
         static void ApplyVelocityOverLifetime(

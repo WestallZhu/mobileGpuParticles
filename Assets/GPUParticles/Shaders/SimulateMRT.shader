@@ -2387,7 +2387,6 @@ Shader "Hidden/GPUParticles/SimulateMRT"
                     particleStartSize = StartSizeAtBirth(
                         id, totalParticleAgeAfterStep);
                     float3 positionBeforeStep = pos;
-                    float speedBeforeStep = length(vel);
                     float3 particleNoiseValue = 0.0;
                     float4 particleNoiseAmounts = 0.0;
 
@@ -2599,16 +2598,13 @@ Shader "Hidden/GPUParticles/SimulateMRT"
                     float currentSpeed = length(vel);
                     if (_RotationBySpeedEnabled != 0)
                     {
-                        float rotationSpeedPositionBefore = SpeedRangePosition(
-                            speedBeforeStep, _RotationBySpeedRange);
                         float rotationSpeedPositionAfter = SpeedRangePosition(
                             currentSpeed, _RotationBySpeedRange);
-                        float angularVelocityBefore = RotationBySpeed(
-                            id, rotationSpeedPositionBefore);
                         float angularVelocityAfter = RotationBySpeed(
                             id, rotationSpeedPositionAfter);
-                        rotationPhase += (angularVelocityBefore + angularVelocityAfter) *
-                                         (0.5 * stepDt);
+                        // Shuriken applies Rotation by Speed after velocity
+                        // modules, using the updated speed for the whole step.
+                        rotationPhase += angularVelocityAfter * stepDt;
                     }
                     if (_NoiseEnabled != 0)
                     {
@@ -2662,6 +2658,302 @@ Shader "Hidden/GPUParticles/SimulateMRT"
                 o.Color   = col;
                 o.ModuleState = float4(rotationPhase, birthEmitterVelocityWS);
                 return o;
+            }
+            ENDHLSL
+        }
+
+        Pass
+        {
+            Name "RotationXYPhase"
+            ZTest Always ZWrite Off Cull Off
+            HLSLPROGRAM
+            #pragma vertex VertRotationXY
+            #pragma fragment FragRotationXY
+            #include "Packages/com.unity.render-pipelines.universal/ShaderLibrary/Core.hlsl"
+
+            struct RotationXYVaryings
+            {
+                float4 positionHCS : SV_POSITION;
+                float2 uv : TEXCOORD0;
+            };
+
+            RotationXYVaryings VertRotationXY(uint vertexId : SV_VertexID)
+            {
+                RotationXYVaryings output;
+                float2 uv = float2((vertexId << 1) & 2, vertexId & 2);
+                output.positionHCS = float4(uv * 2.0 - 1.0, 0.0, 1.0);
+                output.uv = uv;
+                return output;
+            }
+
+            TEXTURE2D(_CurPosLife); SAMPLER(sampler_CurPosLife);
+            TEXTURE2D(_NextPosLife); SAMPLER(sampler_NextPosLife);
+            TEXTURE2D(_NextVelSize); SAMPLER(sampler_NextVelSize);
+            TEXTURE2D(_CurRotationXYPhase);
+            SAMPLER(sampler_CurRotationXYPhase);
+            TEXTURE2D(_RotationBySpeedXLUT);
+            SAMPLER(sampler_RotationBySpeedXLUT);
+            TEXTURE2D(_RotationBySpeedYLUT);
+            SAMPLER(sampler_RotationBySpeedYLUT);
+
+            int _GridSize;
+            int _MaxParticles;
+            float _DeltaTime;
+            uint _EmitStart;
+            uint _EmitCount;
+            float _EmitCarryPrev;
+            float _EmissionRate;
+            uint _ContinuousEmitCount;
+            float _ContinuousEmissionWindowStart;
+            uint _DistanceEmitCount;
+            float4 _BurstCounts0;
+            float4 _BurstCounts1;
+            float4 _BurstAges0;
+            float4 _BurstAges1;
+            int _RotationBySpeedEnabled;
+            int _RotationBySpeedSeparateAxes;
+            float2 _RotationBySpeedRange;
+            float _RotationBySpeedXLUTInvWidth;
+            float _RotationBySpeedYLUTInvWidth;
+
+            uint RotationXYHashU32(uint value)
+            {
+                value += value << 10u;
+                value ^= value >> 6u;
+                value += value << 3u;
+                value ^= value >> 11u;
+                value += value << 15u;
+                return value;
+            }
+
+            float RotationXYHash01(uint value)
+            {
+                return (RotationXYHashU32(value) & 0x00FFFFFFu) /
+                    16777216.0;
+            }
+
+            bool RotationXYInEmit(
+                uint particleId,
+                uint start,
+                uint count,
+                uint capacity)
+            {
+                if (count == 0u) return false;
+                uint end = start + count;
+                return (particleId >= start && particleId < end) ||
+                       (end > capacity && particleId < end - capacity);
+            }
+
+            uint RotationXYEmitOrdinal(
+                uint particleId,
+                uint start,
+                uint capacity)
+            {
+                return (particleId + capacity - start) % capacity;
+            }
+
+            float RotationXYBurstComponent(
+                float4 first,
+                float4 second,
+                int index)
+            {
+                if (index == 0) return first.x;
+                if (index == 1) return first.y;
+                if (index == 2) return first.z;
+                if (index == 3) return first.w;
+                if (index == 4) return second.x;
+                if (index == 5) return second.y;
+                if (index == 6) return second.z;
+                return second.w;
+            }
+
+            float RotationXYSpawnAgeThisFrame(uint emitOrdinal)
+            {
+                if (emitOrdinal < _ContinuousEmitCount)
+                {
+                    if (_EmissionRate <= 1e-6)
+                    {
+                        return 0.0;
+                    }
+
+                    float spawnTime = _ContinuousEmissionWindowStart +
+                        ((float)emitOrdinal + 1.0 - _EmitCarryPrev) /
+                            _EmissionRate;
+                    return clamp(
+                        _DeltaTime - spawnTime,
+                        0.0,
+                        _DeltaTime);
+                }
+
+                uint distanceOrdinal =
+                    emitOrdinal - _ContinuousEmitCount;
+                if (distanceOrdinal < _DistanceEmitCount)
+                {
+                    return 0.0;
+                }
+
+                uint burstOrdinal = distanceOrdinal - _DistanceEmitCount;
+                uint cumulativeCount = 0u;
+                [unroll]
+                for (int burstIndex = 0; burstIndex < 8; burstIndex++)
+                {
+                    uint burstCount = (uint)round(
+                        RotationXYBurstComponent(
+                            _BurstCounts0,
+                            _BurstCounts1,
+                            burstIndex));
+                    if (burstOrdinal < cumulativeCount + burstCount)
+                    {
+                        return clamp(
+                            RotationXYBurstComponent(
+                                _BurstAges0,
+                                _BurstAges1,
+                                burstIndex),
+                            0.0,
+                            _DeltaTime);
+                    }
+                    cumulativeCount += burstCount;
+                }
+
+                return 0.0;
+            }
+
+            float RotationXYSpeedPosition(float speed)
+            {
+                float width =
+                    _RotationBySpeedRange.y - _RotationBySpeedRange.x;
+                if (width <= 1e-6)
+                {
+                    return speed > _RotationBySpeedRange.x ? 1.0 : 0.0;
+                }
+                return saturate(
+                    (speed - _RotationBySpeedRange.x) / width);
+            }
+
+            float RotationXYLUTPosition(float position, float inverseWidth)
+            {
+                return saturate(position) * (1.0 - inverseWidth) +
+                    0.5 * inverseWidth;
+            }
+
+            float RotationBySpeedX(uint particleId, float speedPosition)
+            {
+                float x = RotationXYLUTPosition(
+                    speedPosition,
+                    _RotationBySpeedXLUTInvWidth);
+                float minimum = SAMPLE_TEXTURE2D_LOD(
+                    _RotationBySpeedXLUT,
+                    sampler_RotationBySpeedXLUT,
+                    float2(x, 0.25),
+                    0).r;
+                float maximum = SAMPLE_TEXTURE2D_LOD(
+                    _RotationBySpeedXLUT,
+                    sampler_RotationBySpeedXLUT,
+                    float2(x, 0.75),
+                    0).r;
+                return lerp(
+                    minimum,
+                    maximum,
+                    RotationXYHash01(particleId ^ 0x3C6EF372u));
+            }
+
+            float RotationBySpeedY(uint particleId, float speedPosition)
+            {
+                float x = RotationXYLUTPosition(
+                    speedPosition,
+                    _RotationBySpeedYLUTInvWidth);
+                float minimum = SAMPLE_TEXTURE2D_LOD(
+                    _RotationBySpeedYLUT,
+                    sampler_RotationBySpeedYLUT,
+                    float2(x, 0.25),
+                    0).r;
+                float maximum = SAMPLE_TEXTURE2D_LOD(
+                    _RotationBySpeedYLUT,
+                    sampler_RotationBySpeedYLUT,
+                    float2(x, 0.75),
+                    0).r;
+                return lerp(
+                    minimum,
+                    maximum,
+                    RotationXYHash01(particleId ^ 0xDAA66D2Bu));
+            }
+
+            float2 WrapRotationXY(float2 phase)
+            {
+                const float twoPi = 6.28318530718;
+                return frac((phase + 3.14159265359) / twoPi) * twoPi -
+                    3.14159265359;
+            }
+
+            float4 FragRotationXY(RotationXYVaryings input) : SV_Target
+            {
+                int2 pixel = int2(input.positionHCS.xy);
+                uint particleId =
+                    (uint)(pixel.y * _GridSize + pixel.x);
+                if (particleId >= (uint)_MaxParticles ||
+                    _RotationBySpeedEnabled == 0 ||
+                    _RotationBySpeedSeparateAxes == 0)
+                {
+                    return 0.0;
+                }
+
+                float2 uv = (float2(pixel) + 0.5) / _GridSize;
+                float4 nextPosLife = SAMPLE_TEXTURE2D_LOD(
+                    _NextPosLife,
+                    sampler_NextPosLife,
+                    uv,
+                    0);
+                bool spawn = RotationXYInEmit(
+                    particleId,
+                    _EmitStart,
+                    _EmitCount,
+                    (uint)_MaxParticles);
+                if (nextPosLife.w <= 0.0)
+                {
+                    return 0.0;
+                }
+
+                float4 currentPosLife = SAMPLE_TEXTURE2D_LOD(
+                    _CurPosLife,
+                    sampler_CurPosLife,
+                    uv,
+                    0);
+                if (!spawn && currentPosLife.w <= 0.0)
+                {
+                    return 0.0;
+                }
+
+                float nextSpeed = length(SAMPLE_TEXTURE2D_LOD(
+                    _NextVelSize,
+                    sampler_NextVelSize,
+                    uv,
+                    0).xyz);
+                float nextSpeedPosition =
+                    RotationXYSpeedPosition(nextSpeed);
+                float2 angularVelocityNext = float2(
+                    RotationBySpeedX(
+                        particleId,
+                        nextSpeedPosition),
+                    RotationBySpeedY(
+                        particleId,
+                        nextSpeedPosition));
+                float2 phase = spawn
+                    ? 0.0
+                    : SAMPLE_TEXTURE2D_LOD(
+                        _CurRotationXYPhase,
+                        sampler_CurRotationXYPhase,
+                        uv,
+                        0).rg;
+                float stepDeltaTime = spawn
+                    ? RotationXYSpawnAgeThisFrame(
+                        RotationXYEmitOrdinal(
+                            particleId,
+                            _EmitStart,
+                            (uint)_MaxParticles))
+                    : _DeltaTime;
+                // Match the main Z path and Shuriken's post-velocity sampling.
+                phase += angularVelocityNext * stepDeltaTime;
+                return float4(WrapRotationXY(phase), 0.0, 0.0);
             }
             ENDHLSL
         }

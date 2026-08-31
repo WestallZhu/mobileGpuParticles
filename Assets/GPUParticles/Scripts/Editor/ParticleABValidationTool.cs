@@ -3751,6 +3751,7 @@ namespace GPUParticles.Editor
                 }
 
                 ValidateSeparateAxisSizeMapping();
+                ValidateSeparateAxisRotationMapping();
                 ValidateShapeMappings();
                 ValidateNoiseMapping();
                 ValidateCollisionMapping();
@@ -4201,6 +4202,210 @@ namespace GPUParticles.Editor
                     CleanupGeneratedValidationTexture(generatedTextures[i]);
                 }
             }
+        }
+
+        static void ValidateSeparateAxisRotationMapping()
+        {
+            var owner = new GameObject(
+                "ParticleSeparateAxisRotationMappingValidation");
+            owner.SetActive(false);
+            var generatedTextures = new Texture2D[12];
+            try
+            {
+                var shuriken = owner.AddComponent<ParticleSystem>();
+                ConfigureSeparateAxisRotationMappingSource(shuriken);
+
+                ShurikenConverter.Convert(owner);
+                var convertedGPU = owner.GetComponent<GPUParticleSystem>();
+                Require(convertedGPU != null,
+                    "Separate-axis rotation conversion did not create " +
+                    "GPUParticleSystem.");
+                ValidateSeparateAxisRotationMappingResult(
+                    convertedGPU,
+                    "Converter");
+                generatedTextures[0] =
+                    convertedGPU.rotationOverLifetimeXIntegralLUT;
+                generatedTextures[1] =
+                    convertedGPU.rotationOverLifetimeYIntegralLUT;
+                generatedTextures[2] =
+                    convertedGPU.rotationOverLifetimeIntegralLUT;
+                generatedTextures[3] = convertedGPU.rotationBySpeedXLUT;
+                generatedTextures[4] = convertedGPU.rotationBySpeedYLUT;
+                generatedTextures[5] = convertedGPU.rotationBySpeedLUT;
+                for (int i = 0; i < 6; i++)
+                {
+                    Require(!string.IsNullOrEmpty(
+                            AssetDatabase.GetAssetPath(generatedTextures[i])),
+                        "Converter separate-axis rotation LUT was not saved " +
+                        $"as an asset (index {i}).");
+                }
+
+                var syncObject = new GameObject("RotationSyncTarget");
+                syncObject.transform.SetParent(owner.transform, false);
+                var syncedGPU = syncObject.AddComponent<GPUParticleSystem>();
+                var sync = syncObject.AddComponent<ParticleSystemSync>();
+                const System.Reflection.BindingFlags flags =
+                    System.Reflection.BindingFlags.Instance |
+                    System.Reflection.BindingFlags.NonPublic;
+                var sourceField = typeof(ParticleSystemSync).GetField(
+                    "sourceParticleSystem",
+                    flags);
+                var targetField = typeof(ParticleSystemSync).GetField(
+                    "targetGPUParticleSystem",
+                    flags);
+                var syncLifetimeMethod = typeof(ParticleSystemSync).GetMethod(
+                    "SyncRotationParameters",
+                    flags);
+                var syncBySpeedMethod = typeof(ParticleSystemSync).GetMethod(
+                    "SyncRotationBySpeed",
+                    flags);
+                Require(sourceField != null && targetField != null &&
+                        syncLifetimeMethod != null &&
+                        syncBySpeedMethod != null,
+                    "ParticleSystemSync rotation validation hooks were not found.");
+                sourceField.SetValue(sync, shuriken);
+                targetField.SetValue(sync, syncedGPU);
+                syncLifetimeMethod.Invoke(sync, new object[] { true });
+                syncBySpeedMethod.Invoke(sync, new object[] { true });
+
+                ValidateSeparateAxisRotationMappingResult(
+                    syncedGPU,
+                    "Runtime sync");
+                generatedTextures[6] =
+                    syncedGPU.rotationOverLifetimeXIntegralLUT;
+                generatedTextures[7] =
+                    syncedGPU.rotationOverLifetimeYIntegralLUT;
+                generatedTextures[8] =
+                    syncedGPU.rotationOverLifetimeIntegralLUT;
+                generatedTextures[9] = syncedGPU.rotationBySpeedXLUT;
+                generatedTextures[10] = syncedGPU.rotationBySpeedYLUT;
+                generatedTextures[11] = syncedGPU.rotationBySpeedLUT;
+                for (int i = 6; i < generatedTextures.Length; i++)
+                {
+                    Require(string.IsNullOrEmpty(
+                            AssetDatabase.GetAssetPath(generatedTextures[i])),
+                        "Runtime sync separate-axis rotation LUT should be " +
+                        $"transient (index {i}).");
+                }
+            }
+            finally
+            {
+                Object.DestroyImmediate(owner);
+                for (int i = 0; i < generatedTextures.Length; i++)
+                {
+                    CleanupGeneratedValidationTexture(generatedTextures[i]);
+                }
+            }
+        }
+
+        static void ConfigureSeparateAxisRotationMappingSource(
+            ParticleSystem shuriken)
+        {
+            var main = shuriken.main;
+            main.playOnAwake = false;
+
+            var lifetime = shuriken.rotationOverLifetime;
+            lifetime.enabled = true;
+            lifetime.separateAxes = true;
+            lifetime.x = new ParticleSystem.MinMaxCurve(
+                1f,
+                AnimationCurve.Linear(0f, 0.2f, 1f, 0.6f),
+                AnimationCurve.Linear(0f, 0.8f, 1f, 1.2f));
+            lifetime.y = new ParticleSystem.MinMaxCurve(
+                1f,
+                AnimationCurve.Linear(0f, -0.8f, 1f, -0.4f),
+                AnimationCurve.Linear(0f, 0.1f, 1f, 0.5f));
+            lifetime.z = new ParticleSystem.MinMaxCurve(
+                1f,
+                AnimationCurve.Linear(0f, -0.2f, 1f, 0.2f),
+                AnimationCurve.Linear(0f, 0.5f, 1f, 0.9f));
+
+            var bySpeed = shuriken.rotationBySpeed;
+            bySpeed.enabled = true;
+            bySpeed.separateAxes = true;
+            bySpeed.range = new Vector2(1.5f, 5.5f);
+            bySpeed.x = new ParticleSystem.MinMaxCurve(
+                1f,
+                AnimationCurve.Linear(0f, -0.4f, 1f, 0.2f),
+                AnimationCurve.Linear(0f, 0.6f, 1f, 1f));
+            bySpeed.y = new ParticleSystem.MinMaxCurve(
+                1f,
+                AnimationCurve.Linear(0f, -0.7f, 1f, -0.3f),
+                AnimationCurve.Linear(0f, 0.2f, 1f, 0.8f));
+            bySpeed.z = new ParticleSystem.MinMaxCurve(
+                1f,
+                AnimationCurve.Linear(0f, -0.1f, 1f, 0.3f),
+                AnimationCurve.Linear(0f, 0.4f, 1f, 1.2f));
+        }
+
+        static void ValidateSeparateAxisRotationMappingResult(
+            GPUParticleSystem gpu,
+            string label)
+        {
+            Require(gpu.rotationOverLifetimeSeparateAxes,
+                $"{label} Rotation over Lifetime Separate Axes was not mapped.");
+            RequireTwoRowLUT(
+                gpu.rotationOverLifetimeXIntegralLUT,
+                $"{label} Rotation over Lifetime X integral");
+            RequireTwoRowLUT(
+                gpu.rotationOverLifetimeYIntegralLUT,
+                $"{label} Rotation over Lifetime Y integral");
+            RequireTwoRowLUT(
+                gpu.rotationOverLifetimeIntegralLUT,
+                $"{label} Rotation over Lifetime Z integral");
+            RequireLUTEndRows(
+                gpu.rotationOverLifetimeXIntegralLUT,
+                0.4f,
+                1f,
+                $"{label} Rotation over Lifetime X integral");
+            RequireLUTEndRows(
+                gpu.rotationOverLifetimeYIntegralLUT,
+                -0.6f,
+                0.3f,
+                $"{label} Rotation over Lifetime Y integral");
+            RequireLUTEndRows(
+                gpu.rotationOverLifetimeIntegralLUT,
+                0f,
+                0.7f,
+                $"{label} Rotation over Lifetime Z integral");
+
+            Require(gpu.rotationBySpeedEnabled &&
+                    gpu.rotationBySpeedSeparateAxes,
+                $"{label} Rotation by Speed Separate Axes was not mapped.");
+            RequireApproximately(gpu.rotationBySpeedRange.x, 1.5f,
+                $"{label} Rotation by Speed range minimum");
+            RequireApproximately(gpu.rotationBySpeedRange.y, 5.5f,
+                $"{label} Rotation by Speed range maximum");
+            RequireTwoRowLUT(
+                gpu.rotationBySpeedXLUT,
+                $"{label} Rotation by Speed X");
+            RequireTwoRowLUT(
+                gpu.rotationBySpeedYLUT,
+                $"{label} Rotation by Speed Y");
+            RequireTwoRowLUT(
+                gpu.rotationBySpeedLUT,
+                $"{label} Rotation by Speed Z");
+            RequireLUTEndpoints(
+                gpu.rotationBySpeedXLUT,
+                -0.4f,
+                0.2f,
+                0.6f,
+                1f,
+                $"{label} Rotation by Speed X");
+            RequireLUTEndpoints(
+                gpu.rotationBySpeedYLUT,
+                -0.7f,
+                -0.3f,
+                0.2f,
+                0.8f,
+                $"{label} Rotation by Speed Y");
+            RequireLUTEndpoints(
+                gpu.rotationBySpeedLUT,
+                -0.1f,
+                0.3f,
+                0.4f,
+                1.2f,
+                $"{label} Rotation by Speed Z");
         }
 
         static void ValidateNoiseMapping()
@@ -5353,6 +5558,23 @@ namespace GPUParticles.Editor
                 maximumStart, $"{label} maximum start");
             RequireApproximately(texture.GetPixel(texture.width - 1, 1).r,
                 maximumEnd, $"{label} maximum end");
+        }
+
+        static void RequireLUTEndRows(
+            Texture2D texture,
+            float minimumEnd,
+            float maximumEnd,
+            string label)
+        {
+            int finalColumn = texture.width - 1;
+            RequireApproximately(
+                texture.GetPixel(finalColumn, 0).r,
+                minimumEnd,
+                $"{label} minimum end");
+            RequireApproximately(
+                texture.GetPixel(finalColumn, 1).r,
+                maximumEnd,
+                $"{label} maximum end");
         }
 
         static void CleanupGeneratedValidationTexture(Texture2D texture)

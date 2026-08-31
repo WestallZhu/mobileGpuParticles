@@ -47,6 +47,7 @@ Shader "GPUParticles/UnlitBillboardURP"
             TEXTURE2D(_CurVelSize); SAMPLER(sampler_CurVelSize);
             TEXTURE2D(_CurColor);   SAMPLER(sampler_CurColor);
             TEXTURE2D(_CurRotationPhase); SAMPLER(sampler_CurRotationPhase);
+            TEXTURE2D(_CurRotationXYPhase);
             TEXTURE2D(_BaseMap);    SAMPLER(sampler_BaseMap);
             TEXTURE2D(_StartLifetimeLUT);
             TEXTURE2D(_StartSizeLUT); SAMPLER(sampler_StartSizeLUT);
@@ -62,6 +63,8 @@ Shader "GPUParticles/UnlitBillboardURP"
             TEXTURE2D(_StartRotationXLUT);
             TEXTURE2D(_StartRotationYLUT);
             TEXTURE2D(_RotationOverLifetimeIntegralLUT);
+            TEXTURE2D(_RotationOverLifetimeXIntegralLUT);
+            TEXTURE2D(_RotationOverLifetimeYIntegralLUT);
             SAMPLER(sampler_RotationOverLifetimeIntegralLUT);
             TEXTURE2D(_LifetimeByEmitterSpeedLUT);
             SAMPLER(sampler_LifetimeByEmitterSpeedLUT);
@@ -137,7 +140,11 @@ Shader "GPUParticles/UnlitBillboardURP"
                 float _RotationOverLifetimeMin;
                 int   _RandomizeRotationOverLifetime;
                 float _RotationOverLifetimeIntegralLUTInvWidth;
+                int   _RotationOverLifetimeSeparateAxes;
+                float _RotationOverLifetimeXIntegralLUTInvWidth;
+                float _RotationOverLifetimeYIntegralLUTInvWidth;
                 int   _UseRotationOverLifetimeIntegralLUT;
+                int   _RotationBySpeedSeparateAxes;
 
                 int   _TextureSheetEnabled;
                 int   _TextureSheetTilesX;
@@ -680,48 +687,127 @@ Shader "GPUParticles/UnlitBillboardURP"
                 return float3(sizeX, sizeY, sizeZ);
             }
 
-            float SampleRotationIntegral(uint id, float normalizedAge)
+            float RotationIntegralInvWidth(int axis)
+            {
+                if (axis == 0)
+                {
+                    return _RotationOverLifetimeXIntegralLUTInvWidth;
+                }
+                if (axis == 1)
+                {
+                    return _RotationOverLifetimeYIntegralLUTInvWidth;
+                }
+                return _RotationOverLifetimeIntegralLUTInvWidth;
+            }
+
+            float2 SampleRotationIntegralRows(
+                float normalizedAge,
+                int axis)
             {
                 float x = LUTCoordinate(
-                    normalizedAge, _RotationOverLifetimeIntegralLUTInvWidth);
-                float minimum = SAMPLE_TEXTURE2D_LOD(
-                    _RotationOverLifetimeIntegralLUT,
-                    sampler_RotationOverLifetimeIntegralLUT,
-                    float2(x, 0.25), 0).r;
-                float maximum = SAMPLE_TEXTURE2D_LOD(
-                    _RotationOverLifetimeIntegralLUT,
-                    sampler_RotationOverLifetimeIntegralLUT,
-                    float2(x, 0.75), 0).r;
-                return lerp(minimum, maximum, Hash01(id ^ 0xD3A2646Cu));
+                    normalizedAge,
+                    RotationIntegralInvWidth(axis));
+                float minimum;
+                float maximum;
+                if (axis == 0)
+                {
+                    minimum = SAMPLE_TEXTURE2D_LOD(
+                        _RotationOverLifetimeXIntegralLUT,
+                        sampler_RotationOverLifetimeIntegralLUT,
+                        float2(x, 0.25),
+                        0).r;
+                    maximum = SAMPLE_TEXTURE2D_LOD(
+                        _RotationOverLifetimeXIntegralLUT,
+                        sampler_RotationOverLifetimeIntegralLUT,
+                        float2(x, 0.75),
+                        0).r;
+                }
+                else if (axis == 1)
+                {
+                    minimum = SAMPLE_TEXTURE2D_LOD(
+                        _RotationOverLifetimeYIntegralLUT,
+                        sampler_RotationOverLifetimeIntegralLUT,
+                        float2(x, 0.25),
+                        0).r;
+                    maximum = SAMPLE_TEXTURE2D_LOD(
+                        _RotationOverLifetimeYIntegralLUT,
+                        sampler_RotationOverLifetimeIntegralLUT,
+                        float2(x, 0.75),
+                        0).r;
+                }
+                else
+                {
+                    minimum = SAMPLE_TEXTURE2D_LOD(
+                        _RotationOverLifetimeIntegralLUT,
+                        sampler_RotationOverLifetimeIntegralLUT,
+                        float2(x, 0.25),
+                        0).r;
+                    maximum = SAMPLE_TEXTURE2D_LOD(
+                        _RotationOverLifetimeIntegralLUT,
+                        sampler_RotationOverLifetimeIntegralLUT,
+                        float2(x, 0.75),
+                        0).r;
+                }
+                return float2(minimum, maximum);
+            }
+
+            float SampleRotationIntegral(
+                uint id,
+                float normalizedAge,
+                int axis)
+            {
+                float2 rows = SampleRotationIntegralRows(
+                    normalizedAge,
+                    axis);
+                uint salt = axis == 0
+                    ? 0x3C6EF372u
+                    : axis == 1
+                        ? 0xDAA66D2Bu
+                        : 0xD3A2646Cu;
+                return lerp(rows.x, rows.y, Hash01(id ^ salt));
             }
 
             float SampleRotationAngularVelocity(
                 uint id,
-                float normalizedAge)
+                float normalizedAge,
+                int axis)
             {
                 float sampleStep = max(
-                    _RotationOverLifetimeIntegralLUTInvWidth,
+                    RotationIntegralInvWidth(axis),
                     1.0 / 1024.0);
                 float lowerAge = max(0.0, normalizedAge - sampleStep);
                 float upperAge = min(1.0, normalizedAge + sampleStep);
                 float ageWidth = max(1e-6, upperAge - lowerAge);
-                return (SampleRotationIntegral(id, upperAge) -
-                        SampleRotationIntegral(id, lowerAge)) / ageWidth;
+                return (SampleRotationIntegral(id, upperAge, axis) -
+                        SampleRotationIntegral(id, lowerAge, axis)) /
+                    ageWidth;
             }
 
             float RotationOverLifetimeAngle(
                 uint id,
                 float totalParticleAge,
-                float particleStartLifetime)
+                float particleStartLifetime,
+                int axis)
             {
                 float lifetime = max(0.001, particleStartLifetime);
                 float totalAge = max(0.0, totalParticleAge);
                 float normalizedTotalAge = totalAge / lifetime;
                 if (_RingBufferMode == 0)
                 {
+                    // Shuriken samples lifetime angular velocity before each
+                    // simulation update. A half-step shift converts the
+                    // continuous LUT integral to that left-endpoint timing;
+                    // preserve the curve's birth value over the shifted lead.
+                    float leadDuration = min(
+                        totalAge,
+                        max(0.0, _DeltaTime) * 0.5);
+                    float sampledAge = max(0.0, totalAge - leadDuration);
                     return SampleRotationIntegral(
-                        id,
-                        saturate(normalizedTotalAge)) * lifetime;
+                               id,
+                               saturate(sampledAge / lifetime),
+                               axis) * lifetime +
+                           SampleRotationAngularVelocity(id, 0.0, axis) *
+                               leadDuration;
                 }
 
                 if (_RingBufferMode == 1)
@@ -730,17 +816,20 @@ Shader "GPUParticles/UnlitBillboardURP"
                     {
                         return SampleRotationIntegral(
                             id,
-                            saturate(normalizedTotalAge)) * lifetime;
+                            saturate(normalizedTotalAge),
+                            axis) * lifetime;
                     }
 
                     float endIntegral =
-                        SampleRotationIntegral(id, 1.0) * lifetime;
-                    float endAngularVelocity = RandomRange(
-                        id,
-                        0xD3A2646Cu,
-                        _RandomizeRotationOverLifetime,
-                        _RotationOverLifetimeMin,
-                        _RotationOverLifetime);
+                        SampleRotationIntegral(id, 1.0, axis) * lifetime;
+                    float endAngularVelocity = axis == 2
+                        ? RandomRange(
+                            id,
+                            0xD3A2646Cu,
+                            _RandomizeRotationOverLifetime,
+                            _RotationOverLifetimeMin,
+                            _RotationOverLifetime)
+                        : SampleRotationAngularVelocity(id, 1.0, axis);
                     return endIntegral +
                            (totalAge - lifetime) * endAngularVelocity;
                 }
@@ -752,16 +841,17 @@ Shader "GPUParticles/UnlitBillboardURP"
                 {
                     return SampleRotationIntegral(
                         id,
-                        saturate(normalizedTotalAge)) * lifetime;
+                        saturate(normalizedTotalAge),
+                        axis) * lifetime;
                 }
 
                 float loopLength = loopEnd - loopStart;
                 if (loopLength <= 1e-6)
                 {
                     float heldIntegral =
-                        SampleRotationIntegral(id, loopStart) * lifetime;
+                        SampleRotationIntegral(id, loopStart, axis) * lifetime;
                     float heldAngularVelocity =
-                        SampleRotationAngularVelocity(id, loopStart);
+                        SampleRotationAngularVelocity(id, loopStart, axis);
                     return heldIntegral +
                            max(0.0, totalAge - loopStart * lifetime) *
                                heldAngularVelocity;
@@ -775,14 +865,15 @@ Shader "GPUParticles/UnlitBillboardURP"
                 float loopRemainder = elapsedLoopTime -
                     completedLoops * loopLength;
                 float loopIntegral =
-                    SampleRotationIntegral(id, loopEnd) -
-                    SampleRotationIntegral(id, loopStart);
+                    SampleRotationIntegral(id, loopEnd, axis) -
+                    SampleRotationIntegral(id, loopStart, axis);
                 float partialIntegral =
                     SampleRotationIntegral(
                         id,
-                        loopStart + loopRemainder) -
-                    SampleRotationIntegral(id, loopStart);
-                return (SampleRotationIntegral(id, loopStart) +
+                        loopStart + loopRemainder,
+                        axis) -
+                    SampleRotationIntegral(id, loopStart, axis);
+                return (SampleRotationIntegral(id, loopStart, axis) +
                         completedLoops * loopIntegral +
                         partialIntegral) * lifetime;
             }
@@ -1237,6 +1328,11 @@ Shader "GPUParticles/UnlitBillboardURP"
                 float4 moduleState = SAMPLE_TEXTURE2D_LOD(
                     _CurRotationPhase, sampler_CurRotationPhase, tuv, 0);
                 float rotationBySpeedPhase = moduleState.r;
+                float2 rotationBySpeedPhaseXY = SAMPLE_TEXTURE2D_LOD(
+                    _CurRotationXYPhase,
+                    sampler_CurRotationPhase,
+                    tuv,
+                    0).rg;
 
                 float3 posWS, velWS; ToWS(posLife.xyz, velSize.xyz, posWS, velWS);
 
@@ -1376,7 +1472,8 @@ Shader "GPUParticles/UnlitBillboardURP"
                         RotationOverLifetimeAngle(
                             quadId,
                             totalParticleAge,
-                            particleStartLifetime);
+                            particleStartLifetime,
+                            2);
                 }
                 else
                 {
@@ -1396,15 +1493,34 @@ Shader "GPUParticles/UnlitBillboardURP"
                         _Pivot * _MeshBoundsSize *
                         float3(1.0, 1.0, -1.0);
                     meshPosition *= sizeXYZ;
-                    float3 meshEuler = float3(
+                    float2 meshRotationXY = float2(
                         StartRotationXAtBirth(
                             quadId,
                             totalParticleAge),
                         StartRotationYAtBirth(
                             quadId,
-                            totalParticleAge),
+                            totalParticleAge));
+                    if (_UseRotationOverLifetimeIntegralLUT != 0 &&
+                        _RotationOverLifetimeSeparateAxes != 0)
+                    {
+                        meshRotationXY.x += RotationOverLifetimeAngle(
+                            quadId,
+                            totalParticleAge,
+                            particleStartLifetime,
+                            0);
+                        meshRotationXY.y += RotationOverLifetimeAngle(
+                            quadId,
+                            totalParticleAge,
+                            particleStartLifetime,
+                            1);
+                    }
+                    if (_RotationBySpeedSeparateAxes != 0)
+                    {
+                        meshRotationXY += rotationBySpeedPhaseXY;
+                    }
+                    float3 meshEuler = float3(
+                        meshRotationXY * rotationDirection,
                         particleAngle);
-                    meshEuler.xy *= rotationDirection;
                     meshPosition = RotateMeshEulerZXY(
                         meshPosition,
                         meshEuler);

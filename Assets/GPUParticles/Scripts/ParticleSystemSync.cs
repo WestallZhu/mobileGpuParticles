@@ -159,7 +159,11 @@ namespace GPUParticles
         private Texture2D generatedSizeBySpeedYLUT;
         private Texture2D generatedSizeBySpeedZLUT;
         private Texture2D generatedRotationLUT;
+        private Texture2D generatedRotationXLUT;
+        private Texture2D generatedRotationYLUT;
         private Texture2D generatedRotationBySpeedLUT;
+        private Texture2D generatedRotationBySpeedXLUT;
+        private Texture2D generatedRotationBySpeedYLUT;
         private Texture2D generatedShapeArcSpeedLUT;
         private const float LUT_UPDATE_INTERVAL = 0.1f; // 每0.1秒更新一次LUT
 
@@ -1724,20 +1728,16 @@ namespace GPUParticles
 
         void DestroyGeneratedRotationLUT()
         {
-            if (generatedRotationLUT == null) return;
-
-            if (Application.isPlaying) Destroy(generatedRotationLUT);
-            else DestroyImmediate(generatedRotationLUT);
-            generatedRotationLUT = null;
+            DestroyGeneratedTexture(ref generatedRotationLUT);
+            DestroyGeneratedTexture(ref generatedRotationXLUT);
+            DestroyGeneratedTexture(ref generatedRotationYLUT);
         }
 
         void DestroyGeneratedRotationBySpeedLUT()
         {
-            if (generatedRotationBySpeedLUT == null) return;
-
-            if (Application.isPlaying) Destroy(generatedRotationBySpeedLUT);
-            else DestroyImmediate(generatedRotationBySpeedLUT);
-            generatedRotationBySpeedLUT = null;
+            DestroyGeneratedTexture(ref generatedRotationBySpeedLUT);
+            DestroyGeneratedTexture(ref generatedRotationBySpeedXLUT);
+            DestroyGeneratedTexture(ref generatedRotationBySpeedYLUT);
         }
 
         void SyncRendererParameters(bool force = false)
@@ -1888,10 +1888,17 @@ namespace GPUParticles
             if (!force && !timeToUpdate) return;
 
             DestroyGeneratedRotationLUT();
+            targetGPUParticleSystem.rotationOverLifetimeSeparateAxes =
+                rotationOverLifetime.enabled &&
+                rotationOverLifetime.separateAxes;
             if (!rotationOverLifetime.enabled)
             {
                 targetGPUParticleSystem.SetRotationOverLifetimeRange(0f, 0f);
                 targetGPUParticleSystem.rotationOverLifetimeIntegralLUT =
+                    CurveLUTBuilder.GetDefaultZeroLUT();
+                targetGPUParticleSystem.rotationOverLifetimeXIntegralLUT =
+                    CurveLUTBuilder.GetDefaultZeroLUT();
+                targetGPUParticleSystem.rotationOverLifetimeYIntegralLUT =
                     CurveLUTBuilder.GetDefaultZeroLUT();
                 lastRotationLUTUpdate = Time.realtimeSinceStartup;
                 return;
@@ -1904,6 +1911,24 @@ namespace GPUParticles
             generatedRotationLUT = CurveLUTBuilder.BuildIntegral(curve);
             targetGPUParticleSystem.rotationOverLifetimeIntegralLUT =
                 generatedRotationLUT;
+            if (rotationOverLifetime.separateAxes)
+            {
+                generatedRotationXLUT = CurveLUTBuilder.BuildIntegral(
+                    rotationOverLifetime.x);
+                generatedRotationYLUT = CurveLUTBuilder.BuildIntegral(
+                    rotationOverLifetime.y);
+                targetGPUParticleSystem.rotationOverLifetimeXIntegralLUT =
+                    generatedRotationXLUT;
+                targetGPUParticleSystem.rotationOverLifetimeYIntegralLUT =
+                    generatedRotationYLUT;
+            }
+            else
+            {
+                targetGPUParticleSystem.rotationOverLifetimeXIntegralLUT =
+                    CurveLUTBuilder.GetDefaultZeroLUT();
+                targetGPUParticleSystem.rotationOverLifetimeYIntegralLUT =
+                    CurveLUTBuilder.GetDefaultZeroLUT();
+            }
             lastRotationLUTUpdate = Time.realtimeSinceStartup;
         }
 
@@ -2266,6 +2291,8 @@ namespace GPUParticles
             if (!force && !timeToUpdate) return;
 
             targetGPUParticleSystem.rotationBySpeedEnabled = rotation.enabled;
+            targetGPUParticleSystem.rotationBySpeedSeparateAxes =
+                rotation.enabled && rotation.separateAxes;
             targetGPUParticleSystem.SetRotationBySpeedRange(rotation.range);
             DestroyGeneratedRotationBySpeedLUT();
             if (rotation.enabled)
@@ -2275,10 +2302,36 @@ namespace GPUParticles
                     assetName: "RotationBySpeed_LUT");
                 targetGPUParticleSystem.rotationBySpeedLUT =
                     generatedRotationBySpeedLUT;
+                if (rotation.separateAxes)
+                {
+                    generatedRotationBySpeedXLUT =
+                        CurveLUTBuilder.BuildSigned(
+                            rotation.x,
+                            assetName: "RotationBySpeedX_LUT");
+                    generatedRotationBySpeedYLUT =
+                        CurveLUTBuilder.BuildSigned(
+                            rotation.y,
+                            assetName: "RotationBySpeedY_LUT");
+                    targetGPUParticleSystem.rotationBySpeedXLUT =
+                        generatedRotationBySpeedXLUT;
+                    targetGPUParticleSystem.rotationBySpeedYLUT =
+                        generatedRotationBySpeedYLUT;
+                }
+                else
+                {
+                    targetGPUParticleSystem.rotationBySpeedXLUT =
+                        CurveLUTBuilder.GetDefaultZeroLUT();
+                    targetGPUParticleSystem.rotationBySpeedYLUT =
+                        CurveLUTBuilder.GetDefaultZeroLUT();
+                }
             }
             else
             {
                 targetGPUParticleSystem.rotationBySpeedLUT =
+                    CurveLUTBuilder.GetDefaultZeroLUT();
+                targetGPUParticleSystem.rotationBySpeedXLUT =
+                    CurveLUTBuilder.GetDefaultZeroLUT();
+                targetGPUParticleSystem.rotationBySpeedYLUT =
                     CurveLUTBuilder.GetDefaultZeroLUT();
             }
 
